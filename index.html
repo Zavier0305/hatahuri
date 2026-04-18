@@ -18,7 +18,7 @@
             width: 190mm;
         }
 
-        /* 編集エリアを分かりやすく */
+        /* 編集エリア */
         [contenteditable="true"] {
             outline: 1px dashed #ccc;
             min-height: 1.2em;
@@ -32,7 +32,7 @@
         table {
             border-collapse: collapse;
             width: 100%;
-            table-layout: fixed; /* 列の幅を固定 */
+            table-layout: fixed;
         }
 
         th, td {
@@ -48,7 +48,7 @@
         .keisho { width: 100%; text-align: right; font-size: 9pt; margin-top: 2mm; }
         .contact { width: 100%; margin-top: 4mm; font-size: 11pt; border: 1pt solid #000; padding: 3mm; box-sizing: border-box; }
 
-        /* 設定パネル（印刷には出ない） */
+        /* 設定パネル */
         .controls {
             margin-bottom: 5mm;
             padding: 10px;
@@ -71,6 +71,12 @@
             font-weight: bold;
         }
 
+        .save-msg {
+            font-size: 8pt;
+            color: #666;
+            margin-left: auto;
+        }
+
         @media print {
             .controls { display: none; }
             [contenteditable="true"] { outline: none; }
@@ -78,57 +84,65 @@
         }
     </style>
 </head>
-<body>
+<body oninput="saveData()">
 
     <div class="controls">
         <label>日数：<input type="number" id="rowCount" value="5" min="1" max="12" style="width: 40px;"></label>
         <label>1日の人数：<input type="number" id="colCount" value="2" min="1" max="3" style="width: 40px;"></label>
-        <button onclick="updateTable()" style="cursor: pointer;">表を更新</button>
+        <button onclick="confirmUpdate()" style="cursor: pointer;">表をリセットして更新</button>
         <button class="print-btn" onclick="window.print()">印刷する</button>
+        <div class="save-msg">自動保存中...</div>
     </div>
 
-    <h1>令和<span contenteditable="true">8</span>年度 <span contenteditable="true">〇〇町</span> 旗振り当番表</h1>
-    
-    <div class="info">
-        場所：<span contenteditable="true">〇〇交差点</span> ／ 時間：<span contenteditable="true">7:40 ～ 8:05</span>
-    </div>
+    <div id="main-content">
+        <h1>令和<span contenteditable="true" id="year">8</span>年度 <span contenteditable="true" id="town">〇〇町</span> 旗振り当番表</h1>
+        
+        <div class="info">
+            場所：<span contenteditable="true" id="place">〇〇交差点</span> ／ 時間：<span contenteditable="true" id="time">7:40 ～ 8:05</span>
+        </div>
 
-    <table id="targetTable">
-        <thead>
-            <tr id="tableHeader">
-                </tr>
-        </thead>
-        <tbody id="tableBody">
-            </tbody>
-    </table>
+        <table id="targetTable">
+            <thead>
+                <tr id="tableHeader"></tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
 
-    <div class="keisho">（敬称略）</div>
+        <div class="keisho">（敬称略）</div>
 
-    <div class="contact">
-        <span contenteditable="true">〇〇町</span> 旗振り担当：<span contenteditable="true">氏名（TEL 090-0000-0000）</span>
+        <div class="contact" contenteditable="true" id="contact-info">
+            〇〇町 旗振り委員：氏名（TEL 090-0000-0000）
+        </div>
     </div>
 
     <script>
+        // 表を更新（データが消えるため確認を入れる）
+        function confirmUpdate() {
+            if (confirm("表をリセットします。入力中の内容は消去されますがよろしいですか？")) {
+                updateTable();
+                saveData();
+            }
+        }
+
         function updateTable() {
             const rowCount = document.getElementById('rowCount').value;
             const colCount = document.getElementById('colCount').value;
             const thead = document.getElementById('tableHeader');
             const tbody = document.getElementById('tableBody');
 
-            // ヘッダーの生成
+            // ヘッダー生成
             let headerHtml = `<th style="width: 30%;">日付</th>`;
             for (let j = 0; j < colCount; j++) {
                 headerHtml += `<th>氏名</th>`;
             }
             thead.innerHTML = headerHtml;
 
-            // 行の生成
+            // 行生成
             tbody.innerHTML = '';
             for (let i = 0; i < rowCount; i++) {
                 const tr = document.createElement('tr');
                 let rowHtml = `<td><span contenteditable="true"> / （ ）</span></td>`;
                 for (let j = 0; j < colCount; j++) {
-                    // 入力しやすいように「氏名」という文字をあらかじめ入れる
                     rowHtml += `<td><span contenteditable="true">氏名</span></td>`;
                 }
                 tr.innerHTML = rowHtml;
@@ -136,8 +150,42 @@
             }
         }
 
-        // 起動時に表を作成
-        window.onload = updateTable;
+        // データの保存
+        function saveData() {
+            const data = {
+                rowCount: document.getElementById('rowCount').value,
+                colCount: document.getElementById('colCount').value,
+                // テーブルの中身をまるごと保存
+                tableContent: document.getElementById('targetTable').innerHTML,
+                // その他のテキスト項目
+                year: document.getElementById('year').innerText,
+                town: document.getElementById('town').innerText,
+                place: document.getElementById('place').innerText,
+                time: document.getElementById('time').innerText,
+                contact: document.getElementById('contact-info').innerHTML
+            };
+            localStorage.setItem('tobanData', JSON.stringify(data));
+        }
+
+        // データの読み込み
+        function loadData() {
+            const savedData = localStorage.getItem('tobanData');
+            if (savedData) {
+                const data = JSON.parse(savedData);
+                document.getElementById('rowCount').value = data.rowCount;
+                document.getElementById('colCount').value = data.colCount;
+                document.getElementById('targetTable').innerHTML = data.tableContent;
+                document.getElementById('year').innerText = data.year;
+                document.getElementById('town').innerText = data.town;
+                document.getElementById('place').innerText = data.place;
+                document.getElementById('time').innerText = data.time;
+                document.getElementById('contact-info').innerHTML = data.contact;
+            } else {
+                updateTable(); // データがない初回のみ初期表を作成
+            }
+        }
+
+        window.onload = loadData;
     </script>
 
 </body>
