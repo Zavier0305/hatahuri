@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        /* 印刷設定: ヘッダー・フッター（日付やURL）を消す */
+        @page {
+            size: A5 landscape;
+            margin: 0; 
+        }
+        
+        body {
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            margin: 0;
+            padding: 10mm;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            width: 190mm; /* A5横の有効幅に合わせる */
+            height: auto;
+        }
+
+        /* 編集可能エリア */
+        [contenteditable="true"] {
+            outline: 1px dashed #ccc;
+        }
+
+        h1 {
+            font-size: 18pt;
+            margin: 0 0 3mm 0;
+        }
+
+        .info {
+            font-size: 12pt;
+            margin-bottom: 3mm;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th, td {
+            border: 1.5pt solid #000;
+            padding: 8pt 6pt;
+            font-size: 13pt;
+            text-align: center;
+        }
+
+        th {
+            background-color: #eee;
+        }
+
+        .keisho {
+            width: 100%;
+            text-align: right;
+            font-size: 9pt;
+            margin-top: 2mm;
+        }
+
+        .contact {
+            width: 100%;
+            margin-top: 4mm;
+            font-size: 11pt;
+            border: 1pt solid #000;
+            padding: 3mm;
+            box-sizing: border-box;
+        }
+
+        .print-btn {
+            margin-top: 10mm;
+            padding: 3mm 10mm;
+            font-size: 10pt;
+            cursor: pointer;
+            background: #f0f0f0;
+            border: 1px solid #999;
+            border-radius: 4px;
+        }
+
+        /* 印刷時の制御 */
+        @media print {
+            .print-btn {
+                display: none;
+            }
+            [contenteditable="true"] {
+                outline: none;
+            }
+            body {
+                padding: 10mm;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>令和<span contenteditable="true">8</span>年度 <span contenteditable="true">〇〇町</span> 旗振り当番表</h1>
+    
+    <div class="info">
+        場所：<span contenteditable="true">〇〇交差点（〇〇商店前）</span> ／ 時間：<span contenteditable="true">7:40 ～ 8:05</span>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 30%;">日付</th>
+                <th>氏名</th>
+                <th>氏名</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><span contenteditable="true">4/6（月）</span></td>
+                <td><span contenteditable="true">佐藤</span></td>
+                <td><span contenteditable="true">鈴木</span></td>
+            </tr>
+            <tr>
+                <td><span contenteditable="true">4/7（火）</span></td>
+                <td><span contenteditable="true">高橋</span></td>
+                <td><span contenteditable="true">田中</span></td>
+            </tr>
+            <tr>
+                <td><span contenteditable="true">4/8（水）</span></td>
+                <td><span contenteditable="true">伊藤</span></td>
+                <td><span contenteditable="true">渡辺</span></td>
+            </tr>
+            <tr>
+                <td><span contenteditable="true">4/9（木）</span></td>
+                <td><span contenteditable="true">山本</span></td>
+                <td><span contenteditable="true">中村</span></td>
+            </tr>
+            <tr>
+                <td><span contenteditable="true">4/10（金）</span></td>
+                <td><span contenteditable="true">小林</span></td>
+                <td><span contenteditable="true">加藤</span></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="keisho">（敬称略）</div>
+
+    <div class="contact">
+        <span contenteditable="true">〇〇町</span> 旗振り担当：<span contenteditable="true">氏名（TEL 090-0000-0000）</span>
+    </div>
+
+    <button class="print-btn" onclick="window.print()">
+        この画面を印刷する
+    </button>
+
+</body>
+</html>
