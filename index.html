@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <style>
-        /* 印刷設定: ヘッダー・フッター（日付やURL）を消す */
         @page {
             size: A5 landscape;
             margin: 0; 
@@ -16,97 +15,75 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: flex-start;
             width: 190mm;
-            height: auto;
         }
 
+        /* 編集エリアを分かりやすく */
         [contenteditable="true"] {
             outline: 1px dashed #ccc;
+            min-height: 1.2em;
+            display: inline-block;
+            min-width: 20px;
         }
 
-        h1 {
-            font-size: 18pt;
-            margin: 0 0 3mm 0;
-        }
-
-        .info {
-            font-size: 12pt;
-            margin-bottom: 3mm;
-        }
+        h1 { font-size: 18pt; margin: 0 0 3mm 0; }
+        .info { font-size: 12pt; margin-bottom: 3mm; }
 
         table {
             border-collapse: collapse;
             width: 100%;
+            table-layout: fixed; /* 列の幅を固定 */
         }
 
         th, td {
             border: 1.5pt solid #000;
-            padding: 6pt;
+            padding: 8pt 4pt;
             font-size: 13pt;
             text-align: center;
+            word-break: break-all;
         }
 
-        th {
-            background-color: #eee;
-        }
+        th { background-color: #eee; }
 
-        .keisho {
-            width: 100%;
-            text-align: right;
-            font-size: 9pt;
-            margin-top: 2mm;
-        }
+        .keisho { width: 100%; text-align: right; font-size: 9pt; margin-top: 2mm; }
+        .contact { width: 100%; margin-top: 4mm; font-size: 11pt; border: 1pt solid #000; padding: 3mm; box-sizing: border-box; }
 
-        .contact {
-            width: 100%;
-            margin-top: 4mm;
-            font-size: 11pt;
-            border: 1pt solid #000;
-            padding: 3mm;
-            box-sizing: border-box;
-        }
-
-        /* 操作パネル（印刷時には非表示） */
+        /* 設定パネル（印刷には出ない） */
         .controls {
             margin-bottom: 5mm;
-            padding: 5mm;
-            background: #f9f9f9;
-            border: 1px solid #ccc;
-            border-radius: 5px;
+            padding: 10px;
+            background: #f0f4f8;
+            border: 1px solid #cfd8dc;
+            border-radius: 6px;
             display: flex;
-            gap: 10px;
+            gap: 15px;
             align-items: center;
+            font-size: 10pt;
         }
 
         .print-btn {
             padding: 2mm 6mm;
-            font-size: 10pt;
             cursor: pointer;
-            background: #007bff;
+            background: #2196F3;
             color: white;
             border: none;
             border-radius: 4px;
+            font-weight: bold;
         }
 
         @media print {
-            .controls {
-                display: none;
-            }
-            [contenteditable="true"] {
-                outline: none;
-            }
-            body {
-                padding: 10mm;
-            }
+            .controls { display: none; }
+            [contenteditable="true"] { outline: none; }
+            body { padding: 10mm; }
         }
     </style>
 </head>
 <body>
 
     <div class="controls">
-        <label>表示日数：<input type="number" id="rowCount" value="5" min="1" max="15" style="width: 50px;"></label>
-        <button onclick="updateRows()" style="padding: 2mm 4mm; cursor: pointer;">日数を更新</button>
+        <label>日数：<input type="number" id="rowCount" value="5" min="1" max="12" style="width: 40px;"></label>
+        <label>1日の人数：<input type="number" id="colCount" value="2" min="1" max="3" style="width: 40px;"></label>
+        <button onclick="updateTable()" style="cursor: pointer;">表を更新</button>
         <button class="print-btn" onclick="window.print()">印刷する</button>
     </div>
 
@@ -118,13 +95,10 @@
 
     <table id="targetTable">
         <thead>
-            <tr>
-                <th style="width: 30%;">日付</th>
-                <th>氏名</th>
-                <th>氏名</th>
-            </tr>
+            <tr id="tableHeader">
+                </tr>
         </thead>
-        <tbody>
+        <tbody id="tableBody">
             </tbody>
     </table>
 
@@ -135,27 +109,35 @@
     </div>
 
     <script>
-        function updateRows() {
-            const count = document.getElementById('rowCount').value;
-            const tbody = document.querySelector('#targetTable tbody');
-            
-            // 現在の内容をクリア
-            tbody.innerHTML = '';
+        function updateTable() {
+            const rowCount = document.getElementById('rowCount').value;
+            const colCount = document.getElementById('colCount').value;
+            const thead = document.getElementById('tableHeader');
+            const tbody = document.getElementById('tableBody');
 
-            // 指定された数だけ行を作成
-            for (let i = 0; i < count; i++) {
+            // ヘッダーの生成
+            let headerHtml = `<th style="width: 30%;">日付</th>`;
+            for (let j = 0; j < colCount; j++) {
+                headerHtml += `<th>氏名</th>`;
+            }
+            thead.innerHTML = headerHtml;
+
+            // 行の生成
+            tbody.innerHTML = '';
+            for (let i = 0; i < rowCount; i++) {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><span contenteditable="true"> / （ ）</span></td>
-                    <td><span contenteditable="true"> </span></td>
-                    <td><span contenteditable="true"> </span></td>
-                `;
+                let rowHtml = `<td><span contenteditable="true"> / （ ）</span></td>`;
+                for (let j = 0; j < colCount; j++) {
+                    // 入力しやすいように「氏名」という文字をあらかじめ入れる
+                    rowHtml += `<td><span contenteditable="true">氏名</span></td>`;
+                }
+                tr.innerHTML = rowHtml;
                 tbody.appendChild(tr);
             }
         }
 
-        // 初回読み込み時に実行
-        window.onload = updateRows;
+        // 起動時に表を作成
+        window.onload = updateTable;
     </script>
 
 </body>
