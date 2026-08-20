@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>旗キャッチゲーム</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        background: linear-gradient(#bfe6ff, #eaf7ff);
+        color: #223;
+        touch-action: none;
+        user-select: none;
+    }
+    h1 { margin: 14px 0 4px; font-size: 22px; }
+    .sub { font-size: 12px; color: #567; margin-bottom: 10px; }
+    #hud {
+        display: flex;
+        gap: 18px;
+        font-size: 15px;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+    #hud span { background: #fff; padding: 4px 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+    #stage {
+        position: relative;
+        width: 360px;
+        max-width: 94vw;
+        height: 560px;
+        max-height: 78vh;
+        background: #ffffff;
+        border: 3px solid #2196F3;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    #overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(20, 30, 40, 0.72);
+        color: #fff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 20px;
+    }
+    #overlay h2 { margin: 0 0 8px; font-size: 24px; }
+    #overlay p { margin: 4px 0; font-size: 14px; }
+    #overlay button {
+        margin-top: 16px;
+        padding: 10px 26px;
+        font-size: 15px;
+        font-weight: bold;
+        color: #fff;
+        background: #2196F3;
+        border: none;
+        border-radius: 999px;
+        cursor: pointer;
+    }
+    #overlay button:active { background: #1769aa; }
+    .hint { margin-top: 12px; font-size: 11px; color: #78889a; text-align: center; max-width: 360px; }
+</style>
+</head>
+<body>
+
+    <h1>🚩 旗キャッチゲーム</h1>
+    <div class="sub">落ちてくる旗をキャッチしよう！爆弾は避けて！</div>
+
+    <div id="hud">
+        <span>スコア: <span id="score">0</span></span>
+        <span>ライフ: <span id="lives">3</span></span>
+        <span>ベスト: <span id="best">0</span></span>
+    </div>
+
+    <div id="stage">
+        <canvas id="game"></canvas>
+        <div id="overlay">
+            <h2 id="overlayTitle">旗キャッチゲーム</h2>
+            <p id="overlayText">左右に動いてカゴで旗をキャッチしよう。爆弾を取るとライフが減るよ。</p>
+            <button id="startBtn">スタート</button>
+        </div>
+    </div>
+
+    <div class="hint">操作：←→キー / A・D キー / 画面タップ&ドラッグ</div>
+
+<script>
+(function () {
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const stage = document.getElementById('stage');
+    const overlay = document.getElementById('overlay');
+    const overlayTitle = document.getElementById('overlayTitle');
+    const overlayText = document.getElementById('overlayText');
+    const startBtn = document.getElementById('startBtn');
+    const scoreEl = document.getElementById('score');
+    const livesEl = document.getElementById('lives');
+    const bestEl = document.getElementById('best');
+
+    const BEST_KEY = 'hataCatchBest';
+    let best = parseInt(localStorage.getItem(BEST_KEY) || '0', 10);
+    bestEl.textContent = best;
+
+    let W, H;
+    function resize() {
+        W = canvas.width = stage.clientWidth;
+        H = canvas.height = stage.clientHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    const basket = { w: 70, h: 22, x: 0, y: 0, speed: 6 };
+    let items = [];
+    let score = 0;
+    let lives = 3;
+    let running = false;
+    let spawnTimer = 0;
+    let spawnInterval = 70;
+    let fallSpeedBase = 2.2;
+    let frame = 0;
+    let keys = { left: false, right: false };
+    let pointerX = null;
+
+    function resetGame() {
+        basket.x = W / 2 - basket.w / 2;
+        basket.y = H - basket.h - 10;
+        items = [];
+        score = 0;
+        lives = 3;
+        spawnTimer = 0;
+        spawnInterval = 70;
+        fallSpeedBase = 2.2;
+        frame = 0;
+        pointerX = null;
+        scoreEl.textContent = score;
+        livesEl.textContent = lives;
+    }
+
+    function spawnItem() {
+        const isBomb = Math.random() < 0.25;
+        const size = 26;
+        items.push({
+            x: Math.random() * (W - size),
+            y: -size,
+            size,
+            isBomb,
+            speed: fallSpeedBase + Math.random() * 1.5,
+        });
+    }
+
+    function drawFlag(x, y, size) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.strokeStyle = '#5d4037';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(size * 0.2, 0);
+        ctx.lineTo(size * 0.2, size);
+        ctx.stroke();
+        ctx.fillStyle = '#e53935';
+        ctx.beginPath();
+        ctx.moveTo(size * 0.2, 2);
+        ctx.lineTo(size, size * 0.28);
+        ctx.lineTo(size * 0.2, size * 0.56);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawBomb(x, y, size) {
+        ctx.save();
+        ctx.translate(x + size / 2, y + size / 2);
+        ctx.fillStyle = '#333';
+        ctx.beginPath();
+        ctx.arc(0, 4, size * 0.42, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(size * 0.1, -size * 0.3);
+        ctx.lineTo(size * 0.28, -size * 0.55);
+        ctx.stroke();
+        ctx.fillStyle = '#ff9800';
+        ctx.beginPath();
+        ctx.arc(size * 0.28, -size * 0.58, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawBasket() {
+        ctx.save();
+        ctx.fillStyle = '#8d6e63';
+        ctx.fillRect(basket.x, basket.y, basket.w, basket.h);
+        ctx.strokeStyle = '#5d4037';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(basket.x, basket.y, basket.w, basket.h);
+        ctx.restore();
+    }
+
+    function endGame(win) {
+        running = false;
+        if (score > best) {
+            best = score;
+            localStorage.setItem(BEST_KEY, String(best));
+            bestEl.textContent = best;
+        }
+        overlayTitle.textContent = 'ゲームオーバー';
+        overlayText.textContent = `スコア: ${score} ／ ベスト: ${best}`;
+        startBtn.textContent = 'もう一度あそぶ';
+        overlay.style.display = 'flex';
+    }
+
+    function update() {
+        frame++;
+
+        if (keys.left) basket.x -= basket.speed;
+        if (keys.right) basket.x += basket.speed;
+        if (pointerX !== null) {
+            basket.x += (pointerX - (basket.x + basket.w / 2)) * 0.25;
+        }
+        basket.x = Math.max(0, Math.min(W - basket.w, basket.x));
+
+        spawnTimer++;
+        if (spawnTimer >= spawnInterval) {
+            spawnTimer = 0;
+            spawnItem();
+            if (spawnInterval > 32) spawnInterval -= 0.6;
+            fallSpeedBase += 0.02;
+        }
+
+        for (let i = items.length - 1; i >= 0; i--) {
+            const it = items[i];
+            it.y += it.speed;
+
+            const caught =
+                it.y + it.size >= basket.y &&
+                it.y <= basket.y + basket.h &&
+                it.x + it.size >= basket.x &&
+                it.x <= basket.x + basket.w;
+
+            if (caught) {
+                items.splice(i, 1);
+                if (it.isBomb) {
+                    lives--;
+                    livesEl.textContent = lives;
+                    if (lives <= 0) {
+                        endGame(false);
+                        return;
+                    }
+                } else {
+                    score += 10;
+                    scoreEl.textContent = score;
+                }
+                continue;
+            }
+
+            if (it.y > H) {
+                if (!it.isBomb) {
+                    lives--;
+                    livesEl.textContent = lives;
+                    if (lives <= 0) {
+                        items.splice(i, 1);
+                        endGame(false);
+                        return;
+                    }
+                }
+                items.splice(i, 1);
+            }
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, W, H);
+        for (const it of items) {
+            if (it.isBomb) drawBomb(it.x, it.y, it.size);
+            else drawFlag(it.x, it.y, it.size);
+        }
+        drawBasket();
+    }
+
+    function loop() {
+        if (!running) return;
+        update();
+        if (running) {
+            draw();
+            requestAnimationFrame(loop);
+        }
+    }
+
+    function startGame() {
+        resize();
+        resetGame();
+        overlay.style.display = 'none';
+        running = true;
+        requestAnimationFrame(loop);
+    }
+
+    startBtn.addEventListener('click', startGame);
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+    });
+    window.addEventListener('keyup', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+    });
+
+    function pointerFromEvent(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        return (clientX - rect.left) * (W / rect.width);
+    }
+
+    canvas.addEventListener('mousedown', (e) => { pointerX = pointerFromEvent(e); });
+    canvas.addEventListener('mousemove', (e) => { if (e.buttons === 1) pointerX = pointerFromEvent(e); });
+    window.addEventListener('mouseup', () => { pointerX = null; });
+
+    canvas.addEventListener('touchstart', (e) => { pointerX = pointerFromEvent(e); }, { passive: true });
+    canvas.addEventListener('touchmove', (e) => { pointerX = pointerFromEvent(e); }, { passive: true });
+    canvas.addEventListener('touchend', () => { pointerX = null; });
+
+    resetGame();
+    draw();
+})();
+</script>
+
+</body>
+</html>
