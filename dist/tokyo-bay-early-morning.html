@@ -1,366 +1,469 @@
 <meta charset="utf-8">
-<title>湾岸MIDNIGHT</title>
+<meta name="description" content="東京湾アーリーモーニング — 湾岸の夜明けを走る、三人称視点のハイスピードレース。">
+<title>東京湾アーリーモーニング</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Roboto+Condensed:wght@400;600;700&display=swap">
 <style>
-/* ===================== 基本 ===================== */
+/* ============================================================
+   東京湾アーリーモーニング
+   配色は明け方の空そのものから採っています。
+   夜のまま残る藍（night）／白みはじめた水平線（haze）／東の空の焼け（dawn）。
+   ============================================================ */
 :root{
-  --bg:#05070d;
-  --ink:#e8eef7;
-  --dim:#8d9bb0;
-  --line:rgba(140,170,210,.18);
-  --cyan:#3fd8ff;
-  --amber:#ffb43c;
-  --red:#ff4438;
-  --panel:rgba(10,14,22,.86);
-  --glass:rgba(18,24,36,.72);
+  --night:#070c17;        /* 天頂に残る夜 */
+  --deep:#0c1424;         /* 面の地色 */
+  --panel:rgba(11,17,29,.92);
+  --glass:rgba(18,26,42,.62);
+  --ink:#eaf0f8;
+  --dim:#8494ab;
+  --faint:#59677d;
+  --line:rgba(146,176,214,.16);
+  --line-strong:rgba(146,176,214,.34);
+  --dawn:#ff9a52;         /* 東の空 */
+  --dawn-soft:#ffc08a;
+  --cold:#6fd5ff;         /* 残った夜側 */
+  --danger:#ff6a55;
+  --ok:#5fdc9a;
+  --f-display:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --f-data:"Roboto Condensed","DIN Alternate",system-ui,sans-serif;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
-  margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
-  font-family:"Hiragino Sans","Noto Sans JP","Yu Gothic UI",system-ui,-apple-system,sans-serif;
+  margin:0;background:var(--night);color:var(--ink);overflow:hidden;
+  font-family:var(--f-display);font-weight:400;
   -webkit-font-smoothing:antialiased;
-  user-select:none;-webkit-user-select:none;
-  touch-action:none;
+  user-select:none;-webkit-user-select:none;touch-action:none;
 }
 canvas#scene{position:fixed;inset:0;width:100%;height:100%;display:block}
 .hidden{display:none!important}
-button{font-family:inherit;color:inherit}
+button{font-family:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--dawn);outline-offset:2px}
 
-/* ===================== HUD ===================== */
+/* ============================ HUD ============================ */
 #hud{position:fixed;inset:0;pointer-events:none;z-index:5}
-#hud-top{position:absolute;top:0;left:0;right:0;padding:14px 18px}
+#hud-top{position:absolute;top:0;left:0;right:0;padding:14px 20px}
 
-#hud-battle{display:flex;align-items:center;gap:14px;max-width:900px;margin:0 auto}
+#hud-battle{display:flex;align-items:center;gap:16px;max-width:940px;margin:0 auto}
 #hud-battle .bl{flex:1}
 #hud-battle .bl.right{text-align:right}
 #hud-battle .nm{
-  display:block;font-size:12px;letter-spacing:.16em;color:var(--dim);
-  text-transform:uppercase;margin-bottom:4px
+  display:block;font:700 11px/1 var(--f-data);letter-spacing:.22em;color:var(--dim);
+  text-transform:uppercase;margin-bottom:5px
 }
 #hud-battle .bar{
-  height:11px;border-radius:2px;background:rgba(255,255,255,.09);
+  height:9px;background:rgba(255,255,255,.07);
   border:1px solid var(--line);overflow:hidden;position:relative
 }
-#hud-battle .bar i{
-  display:block;height:100%;width:100%;transition:width .12s linear;
-  box-shadow:0 0 14px currentColor
-}
-#hud-battle .bar.me i{background:linear-gradient(90deg,#1e9fd0,#5ff0ff);color:#5ff0ff}
-#hud-battle .bar.you i{
-  background:linear-gradient(270deg,#c62d20,#ff7a4d);color:#ff7a4d;
-  margin-left:auto
-}
+#hud-battle .bar i{display:block;height:100%;width:100%;transition:width .12s linear}
+#hud-battle .bar.me i{background:linear-gradient(90deg,#1c86b8,#6fd5ff);box-shadow:0 0 16px rgba(110,210,255,.7)}
 #hud-battle .bar.you{display:flex}
-#hud-gap{
-  font:700 22px/1 "Roboto Condensed",system-ui,sans-serif;min-width:110px;text-align:center;
-  letter-spacing:.02em;text-shadow:0 0 18px currentColor
+#hud-battle .bar.you i{
+  background:linear-gradient(270deg,#c4441c,#ff9a52);
+  box-shadow:0 0 16px rgba(255,150,80,.7);margin-left:auto
 }
-#hud-gap.ahead{color:#5ff0ff}
-#hud-gap.behind{color:#ff7a4d}
+#hud-gap{
+  font:700 23px/1 var(--f-data);min-width:112px;text-align:center;
+  letter-spacing:.02em;text-shadow:0 0 20px currentColor;font-variant-numeric:tabular-nums
+}
+#hud-gap.ahead{color:var(--cold)}
+#hud-gap.behind{color:var(--dawn)}
 
 #hud-info{
-  display:flex;gap:18px;justify-content:center;margin-top:10px;
-  font:600 12px/1 system-ui,sans-serif;letter-spacing:.10em;color:var(--dim)
+  display:flex;gap:20px;justify-content:center;margin-top:11px;
+  font:600 11px/1 var(--f-data);letter-spacing:.14em;color:var(--dim)
 }
 #hud-info span{text-shadow:0 1px 8px #000}
 
 #hud-center{position:absolute;inset:0;display:grid;place-content:center;text-align:center}
 #hud-msg{
-  font:800 74px/1 "Hiragino Sans",system-ui,sans-serif;letter-spacing:.06em;
-  text-shadow:0 0 40px rgba(255,180,60,.55),0 4px 20px #000
+  font:900 68px/1 var(--f-display);letter-spacing:.08em;
+  text-shadow:0 0 42px rgba(255,154,82,.4),0 4px 22px #000
 }
-#hud-msg.pop{animation:pop .38s cubic-bezier(.2,1.6,.4,1)}
-@keyframes pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
-#hud-sub{margin-top:6px;font-size:16px;color:var(--dim);letter-spacing:.14em}
+#hud-msg.pop{animation:pop .34s cubic-bezier(.2,1.5,.4,1)}
+@keyframes pop{from{transform:scale(.68);opacity:0}to{transform:scale(1);opacity:1}}
+#hud-sub{margin-top:8px;font-size:15px;color:var(--dim);letter-spacing:.12em}
 
 #hud-minimap{
-  position:absolute;right:18px;top:96px;width:150px;height:150px;
-  background:rgba(6,10,18,.45);border:1px solid var(--line);border-radius:8px
+  position:absolute;right:20px;top:98px;width:152px;height:152px;
+  background:rgba(7,12,23,.74);border:1px solid var(--line-strong);
+  box-shadow:0 8px 28px rgba(0,0,0,.55)
 }
 
-#hud-bottom{position:absolute;left:0;right:0;bottom:0;padding:0 20px 18px}
-#hud-meter{
-  display:flex;align-items:flex-end;gap:16px;justify-content:flex-start
-}
-#hud-tacho{width:210px;height:118px}
-#hud-readout{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+#hud-bottom{position:absolute;left:0;right:0;bottom:0;padding:0 22px 20px}
+#hud-meter{display:flex;align-items:flex-end;gap:18px}
+#hud-tacho{width:212px;height:118px}
+#hud-readout{display:flex;align-items:baseline;gap:9px;margin-bottom:6px}
 #hud-speed{
-  font:800 76px/0.85 "Roboto Condensed","DIN Alternate",system-ui,sans-serif;
-  letter-spacing:-.02em;color:#f2f8ff;text-shadow:0 0 26px rgba(80,200,255,.45),0 3px 14px #000;
-  font-variant-numeric:tabular-nums
+  font:700 78px/0.82 var(--f-data);letter-spacing:-.01em;color:#f4f8ff;
+  text-shadow:0 0 26px rgba(110,210,255,.4),0 3px 14px #000;font-variant-numeric:tabular-nums
 }
-#hud-unit{font:700 14px/1 system-ui,sans-serif;color:var(--dim);letter-spacing:.18em}
-#hud-gearbox{text-align:center;margin-bottom:10px}
-#hud-gear{
-  font:800 46px/1 "Roboto Condensed",system-ui,sans-serif;color:var(--amber);
-  text-shadow:0 0 22px rgba(255,180,60,.6)
-}
-#hud-gearbox .lbl{font:700 10px/1 system-ui;letter-spacing:.24em;color:var(--dim);margin-top:3px}
+#hud-unit{font:600 13px/1 var(--f-data);color:var(--dim);letter-spacing:.24em}
+#hud-gearbox{text-align:center;margin-bottom:12px}
+#hud-gear{font:700 46px/1 var(--f-data);color:var(--dawn);text-shadow:0 0 22px rgba(255,154,82,.6)}
+#hud-gearbox .lbl{font:700 9px/1 var(--f-data);letter-spacing:.28em;color:var(--faint);margin-top:4px}
+#hud-gear.shift{color:#ff5a3c;text-shadow:0 0 32px rgba(255,90,50,.95);animation:shiftpulse .16s steps(2) infinite}
+@keyframes shiftpulse{0%{opacity:1}100%{opacity:.5}}
+#hud.fast #hud-speed{text-shadow:0 0 46px rgba(110,210,255,.7),0 3px 14px #000}
 
 #hud-boost{
-  position:relative;width:210px;height:8px;margin-top:8px;border:1px solid var(--line);
-  border-radius:2px;background:rgba(255,255,255,.06);overflow:hidden
+  position:relative;width:212px;height:6px;margin-top:10px;
+  border:1px solid var(--line);background:rgba(255,255,255,.05);overflow:hidden
 }
 #hud-boost i{
-  display:block;height:100%;width:0%;background:linear-gradient(90deg,#ff8a2b,#ffd54a);
-  box-shadow:0 0 14px rgba(255,160,50,.8);transition:width .08s linear
+  display:block;height:100%;width:0%;
+  background:linear-gradient(90deg,#e0691f,#ffc08a);
+  box-shadow:0 0 12px rgba(255,150,70,.8);transition:width .08s linear
 }
 #hud-boost span{
-  position:absolute;left:0;top:12px;font:700 9px/1 system-ui;letter-spacing:.24em;color:var(--dim)
+  position:absolute;left:0;top:11px;font:700 8px/1 var(--f-data);
+  letter-spacing:.3em;color:var(--faint)
 }
 
 #speedvignette{
-  position:absolute;inset:0;opacity:0;transition:opacity .3s;
-  background:radial-gradient(ellipse at center,transparent 42%,rgba(0,0,0,.62) 100%)
+  position:absolute;inset:0;opacity:0;transition:opacity .25s;
+  background:
+    radial-gradient(ellipse 62% 58% at 50% 52%,transparent 55%,rgba(4,7,14,.55) 88%,rgba(3,5,10,.86) 100%),
+    radial-gradient(ellipse 90% 80% at 50% 50%,transparent 60%,rgba(255,154,82,.07) 100%)
 }
+
+/* 体力ゲージが少ないときの警告 */
+#hud.danger #hud-battle .bar.me i{animation:dangerblink .5s steps(2) infinite}
+@keyframes dangerblink{0%{filter:brightness(1)}100%{filter:brightness(2.2)}}
+#hud.danger::after{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  box-shadow:inset 0 0 150px rgba(220,50,35,.4);animation:dangerblink .5s steps(2) infinite
+}
+
+/* 初回のみの操作ガイド */
+#first-hint{position:absolute;left:50%;bottom:26%;transform:translateX(-50%);pointer-events:none}
+.fh-box{
+  background:rgba(9,14,24,.9);border:1px solid var(--line-strong);
+  padding:15px 22px;backdrop-filter:blur(8px);box-shadow:0 18px 52px rgba(0,0,0,.62)
+}
+.fh-box b{display:block;font:700 10px/1 var(--f-data);letter-spacing:.3em;color:var(--dawn);margin-bottom:10px}
+.fh-box ul{margin:0;padding:0;list-style:none;display:grid;gap:7px;font-size:12px;color:#c3d1e3}
+.fh-close{display:block;margin-top:12px;font:600 10px/1 var(--f-data);letter-spacing:.16em;color:var(--faint)}
 
 /* タッチ操作 */
 #touch{position:absolute;inset:0;pointer-events:none}
-#touch .tc{position:absolute;bottom:22px;display:flex;gap:10px;pointer-events:auto}
-#touch .tc.left{left:20px}
-#touch .tc.right{right:20px}
+#touch .tc{position:absolute;bottom:24px;display:flex;gap:10px;pointer-events:auto}
+#touch .tc.left{left:22px}
+#touch .tc.right{right:22px}
 #touch button{
-  width:74px;height:74px;border-radius:50%;border:1px solid rgba(150,190,230,.35);
-  background:rgba(12,18,28,.5);color:#dbe7f5;font:700 13px/1 system-ui;backdrop-filter:blur(6px)
+  width:74px;height:74px;border-radius:50%;border:1px solid rgba(150,190,230,.32);
+  background:rgba(11,17,29,.55);color:#d7e3f2;font:700 12px/1 var(--f-data);
+  letter-spacing:.1em;backdrop-filter:blur(6px)
 }
-#touch button.on{background:rgba(60,180,240,.35);border-color:#5fd8ff}
+#touch button.on{background:rgba(255,154,82,.3);border-color:var(--dawn)}
 
-/* ===================== 画面 ===================== */
+/* ============================ 画面共通 ============================ */
 #ui{position:fixed;inset:0;z-index:10;pointer-events:none}
 .screen{
-  position:absolute;inset:0;display:none;overflow:auto;
-  padding:28px;pointer-events:auto;
-  background:radial-gradient(1200px 800px at 50% 10%,rgba(30,50,90,.35),transparent 70%),rgba(4,6,11,.9);
-  backdrop-filter:blur(3px);
-  animation:fade .28s ease
+  position:absolute;inset:0;display:none;overflow:auto;padding:30px;
+  pointer-events:auto;animation:fade .26s ease;
+  background:
+    linear-gradient(180deg,rgba(6,10,19,.94) 0%,rgba(6,10,19,.8) 45%,rgba(9,14,25,.94) 100%),
+    radial-gradient(900px 520px at 78% 88%,rgba(255,154,82,.10),transparent 70%);
+  backdrop-filter:blur(3px)
 }
-.screen.overlay{background:rgba(4,6,11,.72)}
+.screen.overlay{background:rgba(6,10,19,.78)}
 .screen.active{display:grid;place-items:center}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 
 /* ローディング */
-.loading-box{text-align:center}
-.logo-min{font:800 20px/1 system-ui;letter-spacing:.44em;color:var(--dim)}
-.bar-load{
-  width:280px;height:2px;background:rgba(255,255,255,.1);margin:22px auto 12px;overflow:hidden
+#scr-loading{backdrop-filter:none;background:rgba(5,9,17,.97)}
+.loading-box{text-align:center;width:min(420px,90vw)}
+.horizon{
+  height:2px;width:100%;
+  background:linear-gradient(90deg,transparent,var(--dawn),transparent);
+  box-shadow:0 0 26px rgba(255,154,82,.7);margin-bottom:20px;
+  animation:sweep 2.2s ease-in-out infinite
 }
-.bar-load i{display:block;height:100%;width:35%;background:var(--cyan);animation:slide 1.1s infinite ease-in-out}
-@keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(320%)}}
-#load-text{color:var(--dim);font-size:13px;letter-spacing:.1em}
+@keyframes sweep{0%,100%{opacity:.35}50%{opacity:1}}
+.logo-min{font:700 12px/1 var(--f-data);letter-spacing:.48em;color:var(--dim)}
+#load-text{margin-top:16px;color:var(--faint);font-size:12px;letter-spacing:.12em}
 
-/* タイトル */
-.title-wrap{max-width:760px;width:100%;text-align:center}
-.kicker{font:700 11px/1 system-ui;letter-spacing:.42em;color:var(--amber);opacity:.85}
-.logo{
-  margin:12px 0 6px;font:800 68px/0.95 "Hiragino Sans",system-ui,sans-serif;letter-spacing:.02em;
-  text-shadow:0 0 60px rgba(70,190,255,.35)
+/* ============================ タイトル ============================ */
+/* タイトルでは背景のゲーム画面を見せます。
+   全面を暗幕で覆うと、いちばん見せたい夜明けの湾岸が死んでしまうためです。 */
+#scr-title{
+  backdrop-filter:none;
+  background:linear-gradient(101deg,
+    rgba(5,9,17,.97) 0%, rgba(5,9,17,.93) 30%,
+    rgba(5,9,17,.62) 52%, rgba(5,9,17,.22) 76%, rgba(5,9,17,.05) 100%)
 }
-.logo span{
-  display:block;font:800 40px/1 "Roboto Condensed",system-ui;letter-spacing:.30em;
-  color:var(--cyan);margin-top:8px;text-shadow:0 0 34px rgba(60,200,255,.6)
+#scr-title.active{place-items:center start;padding-left:min(7vw,90px)}
+@media(max-width:820px){
+  #scr-title{background:linear-gradient(180deg,rgba(5,9,17,.96),rgba(5,9,17,.88))}
+  #scr-title.active{place-items:center;padding-left:30px}
 }
-.tagline{color:var(--dim);font-size:14px;letter-spacing:.06em;margin:14px 0 26px}
-.disclaimer{
-  margin-top:26px;font-size:11px;line-height:1.8;color:#63708a;letter-spacing:.02em;
-  max-width:640px;margin-inline:auto
+.title-wrap{width:min(520px,100%)}
+.brand{margin-bottom:6px}
+.brand-jp{
+  font:900 52px/1.02 var(--f-display);letter-spacing:.02em;
+  text-shadow:0 6px 40px rgba(0,0,0,.7)
 }
+.brand-jp span{
+  display:block;font-size:29px;font-weight:700;letter-spacing:.06em;
+  color:var(--dawn-soft);margin-top:6px
+}
+.brand-rule{
+  height:2px;margin:18px 0 12px;
+  background:linear-gradient(90deg,var(--dawn),rgba(255,154,82,.15) 55%,transparent);
+  box-shadow:0 0 20px rgba(255,154,82,.5)
+}
+.brand-en{font:600 11px/1 var(--f-data);letter-spacing:.42em;color:var(--dim)}
+.tagline{margin:22px 0 26px;color:#b3c2d6;font-size:14px;letter-spacing:.05em}
 
-.menu{display:grid;gap:9px;max-width:460px;margin:0 auto;width:100%}
-.menu.compact{max-width:340px}
+.menu{display:grid;gap:1px;background:var(--line);border-block:1px solid var(--line)}
+.menu.compact{gap:1px}
 .menu button{
-  display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;
-  padding:13px 18px;border:1px solid var(--line);border-radius:6px;
-  background:var(--glass);cursor:pointer;text-align:left;transition:.16s
+  display:grid;grid-template-columns:auto 1fr;align-items:baseline;gap:0 14px;
+  width:100%;padding:14px 16px;border:0;background:rgba(9,14,25,.72);
+  text-align:left;transition:background .14s,padding .14s
 }
-.menu button b{font-size:15px;letter-spacing:.08em}
-.menu button span{font-size:11px;color:var(--dim);letter-spacing:.04em}
-.menu button:hover,.menu button:focus-visible{
-  border-color:var(--cyan);background:rgba(30,60,90,.6);transform:translateX(3px);outline:none
+.menu button .mi{
+  grid-row:span 2;font:700 11px/1 var(--f-data);letter-spacing:.16em;
+  color:var(--faint);align-self:center
 }
-.menu button.primary,button.primary{
-  background:linear-gradient(90deg,rgba(40,140,190,.5),rgba(20,70,110,.5));border-color:rgba(90,220,255,.5)
+.menu button b{font-size:15px;font-weight:700;letter-spacing:.09em}
+.menu button i{
+  grid-column:2;font-style:normal;font-size:11px;color:var(--dim);
+  letter-spacing:.04em;margin-top:4px
 }
+.menu button:hover,.menu button:focus-visible,.menu button.sel{
+  background:rgba(255,154,82,.13);padding-left:22px;outline:none
+}
+.menu button:hover .mi,.menu button.sel .mi{color:var(--dawn)}
+.menu button.primary{background:linear-gradient(90deg,rgba(255,154,82,.24),rgba(255,154,82,.06))}
 
-/* パネル */
+.title-foot{
+  margin-top:20px;font:600 10px/1.7 var(--f-data);letter-spacing:.1em;color:var(--faint)
+}
+.title-foot .dot{margin:0 8px;opacity:.5}
+
+/* ============================ パネル ============================ */
 .panel{
-  width:min(920px,100%);background:var(--panel);border:1px solid var(--line);
-  border-radius:10px;padding:22px 24px;box-shadow:0 30px 80px rgba(0,0,0,.6)
+  width:min(880px,100%);background:var(--panel);border:1px solid var(--line);
+  padding:24px 26px;box-shadow:0 34px 90px rgba(0,0,0,.6)
 }
 .panel.wide{width:min(1180px,100%)}
-.panel.narrow{width:min(460px,100%);text-align:center}
-.panel header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
-.panel h2{margin:0;font-size:19px;letter-spacing:.18em;font-weight:800}
-.panel header .back,.panel footer button,.detail-actions button,.settings button{
-  margin-left:auto;padding:8px 16px;border:1px solid var(--line);border-radius:5px;
-  background:var(--glass);cursor:pointer;font-size:12px;letter-spacing:.1em;transition:.15s
+.panel.narrow{width:min(440px,100%);text-align:center}
+.panel header{display:flex;align-items:baseline;gap:14px;margin-bottom:20px;
+  padding-bottom:13px;border-bottom:1px solid var(--line)}
+.panel h2{margin:0;font:700 17px/1 var(--f-display);letter-spacing:.2em}
+.panel header .sub{font-size:11px;color:var(--faint);letter-spacing:.08em}
+.panel header .money{
+  margin-left:auto;color:var(--dawn);font:700 16px/1 var(--f-data);
+  font-variant-numeric:tabular-nums
 }
-.panel header .money{margin-left:auto;color:var(--amber);font:700 15px/1 "Roboto Condensed",system-ui}
-.panel header .money+.back{margin-left:14px}
-.panel footer{display:flex;gap:10px;margin-top:20px;justify-content:flex-end}
-.panel footer button{margin-left:0}
-button:hover{border-color:var(--cyan)}
+.panel header .money+.back{margin-left:16px}
+.panel header .back{margin-left:auto}
+.panel footer{display:flex;gap:10px;margin-top:22px;justify-content:flex-end;
+  padding-top:16px;border-top:1px solid var(--line)}
 
-/* ライバル一覧 */
-.rival-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+button.back,.panel footer button,.detail-actions button,.settings button{
+  padding:9px 18px;border:1px solid var(--line-strong);background:var(--glass);
+  font:600 12px/1 var(--f-display);letter-spacing:.1em;transition:.14s
+}
+button.back:hover,.panel footer button:hover,.detail-actions button:hover,.settings button:hover{
+  border-color:var(--dawn);background:rgba(255,154,82,.14)
+}
+button.primary{
+  background:linear-gradient(90deg,rgba(255,154,82,.3),rgba(255,154,82,.12));
+  border-color:rgba(255,154,82,.6);color:#fff
+}
+button:disabled{opacity:.34;cursor:not-allowed}
+
+/* ============================ ライバル一覧 ============================ */
+.rival-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(238px,1fr));gap:1px;background:var(--line)}
 .rival-card{
-  border:1px solid var(--line);border-radius:8px;padding:14px;background:var(--glass);
-  cursor:pointer;transition:.16s;position:relative;overflow:hidden
+  padding:16px;background:rgba(9,14,25,.8);cursor:pointer;
+  transition:.15s;position:relative;overflow:hidden
 }
-.rival-card:hover{border-color:var(--cyan);transform:translateY(-2px)}
-.rival-card.locked{opacity:.34;cursor:not-allowed;filter:grayscale(.6)}
+.rival-card:hover{background:rgba(255,154,82,.12)}
+.rival-card.locked{opacity:.3;cursor:not-allowed;filter:grayscale(.7)}
 .rival-card.cleared::after{
-  content:"CLEAR";position:absolute;top:10px;right:12px;font:800 10px/1 system-ui;
-  letter-spacing:.2em;color:#4de08a
+  content:"CLEAR";position:absolute;top:14px;right:14px;
+  font:700 9px/1 var(--f-data);letter-spacing:.22em;color:var(--ok)
 }
-.rival-card .no{font:800 11px/1 "Roboto Condensed";letter-spacing:.2em;color:var(--amber)}
-.rival-card .nm{font-size:17px;font-weight:800;margin:6px 0 2px;letter-spacing:.06em}
+.rival-card .no{font:700 10px/1 var(--f-data);letter-spacing:.24em;color:var(--dawn)}
+.rival-card .nm{font-size:17px;font-weight:700;margin:8px 0 3px;letter-spacing:.06em}
 .rival-card .tt{font-size:11px;color:var(--dim);letter-spacing:.1em}
-.rival-card .cr{margin-top:10px;font-size:11px;color:#a9b8cc;border-top:1px solid var(--line);padding-top:9px}
+.rival-card .cr{
+  margin-top:12px;font:600 10px/1.7 var(--f-data);color:#93a4ba;
+  border-top:1px solid var(--line);padding-top:10px;letter-spacing:.06em
+}
 
-/* ブリーフィング */
-.brief{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+/* ============================ ブリーフィング ============================ */
+.brief{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
 @media(max-width:760px){.brief{grid-template-columns:1fr}}
-.rv-name{font-size:26px;font-weight:800;letter-spacing:.06em}
-.rv-title{color:var(--amber);font-size:12px;letter-spacing:.22em;margin-top:4px}
-.rv-car{margin-top:12px;font-size:13px;color:#b9c7da;line-height:1.7}
+.brief-col{padding:18px;background:rgba(9,14,25,.6)}
+.col-lbl{font:700 9px/1 var(--f-data);letter-spacing:.3em;color:var(--faint);margin-bottom:12px}
+.rv-name{font-size:26px;font-weight:900;letter-spacing:.05em}
+.rv-title{color:var(--dawn);font-size:12px;letter-spacing:.2em;margin-top:5px}
+.rv-car{margin-top:14px;font:600 12px/1.85 var(--f-data);color:#a9b9cd;letter-spacing:.05em}
 .quote{
-  margin-top:14px;padding-left:12px;border-left:2px solid var(--line);
-  color:#cfd9e8;font-size:13px;line-height:1.9
+  margin-top:16px;padding-left:13px;border-left:2px solid var(--line-strong);
+  color:#c9d5e5;font-size:13px;line-height:1.95
 }
-.brief-you .lbl{font:700 10px/1 system-ui;letter-spacing:.26em;color:var(--dim)}
-.statline{margin-top:10px;font-size:12px;color:#a9b8cc;line-height:2}
-.warn{margin-top:12px;font-size:12px;color:var(--amber);line-height:1.8}
+.statline{margin-top:12px;font:600 12px/2 var(--f-data);color:#a9b9cd;letter-spacing:.04em}
+.warn{margin-top:14px;font-size:12px;color:var(--dawn);line-height:1.8}
 
-/* ガレージ */
-.garage-body{display:grid;grid-template-columns:280px 1fr;gap:18px}
-@media(max-width:860px){.garage-body{grid-template-columns:1fr}}
-.car-list{display:grid;gap:6px;max-height:74vh;overflow:auto;padding-right:4px;align-content:start}
+/* ============================ ガレージ ============================ */
+.garage-body{display:grid;grid-template-columns:268px 1fr;gap:1px;background:var(--line)}
+@media(max-width:880px){.garage-body{grid-template-columns:1fr}}
+.car-list{
+  display:grid;gap:1px;max-height:72vh;overflow:auto;align-content:start;background:var(--line)
+}
 .car-row{
-  display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);
-  border-radius:6px;background:var(--glass);cursor:pointer;transition:.14s
+  display:flex;align-items:center;gap:11px;padding:11px 13px;
+  background:rgba(9,14,25,.8);cursor:pointer;transition:.13s
 }
-.car-row:hover{border-color:var(--cyan)}
-.car-row.sel{border-color:var(--cyan);background:rgba(30,70,100,.5)}
-.car-row .sw{width:14px;height:14px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.25)}
-.car-row .nm{font-size:13px;font-weight:700}
-.car-row .ch{font-size:10px;color:var(--dim);letter-spacing:.08em}
-.car-row .own{margin-left:auto;font:700 9px/1 system-ui;letter-spacing:.18em;color:#4de08a}
-.car-row .lock{margin-left:auto;font:700 10px/1 "Roboto Condensed";color:var(--amber)}
+.car-row:hover{background:rgba(255,154,82,.1)}
+.car-row.sel{background:rgba(255,154,82,.2);box-shadow:inset 3px 0 0 var(--dawn)}
+.car-row .sw{width:13px;height:13px;flex:none;border:1px solid rgba(255,255,255,.22)}
+.car-row .nm{font-size:13px;font-weight:700;letter-spacing:.03em}
+.car-row .ch{font:600 9px/1.5 var(--f-data);color:var(--faint);letter-spacing:.12em;margin-top:2px}
+.car-row .own{margin-left:auto;font:700 8px/1 var(--f-data);letter-spacing:.2em;color:var(--ok)}
+.car-row .lock{margin-left:auto;font:700 10px/1 var(--f-data);color:var(--dawn);font-variant-numeric:tabular-nums}
 
-.car-detail{
-  border:1px solid var(--line);border-radius:8px;padding:16px;background:rgba(8,12,20,.6);
-  max-height:74vh;overflow:auto
-}
-#preview{width:100%;height:250px;display:block;border-radius:6px;background:#070a11;margin-bottom:14px}
-.detail-head{display:flex;align-items:flex-start;gap:12px}
-.maker{font:700 10px/1 system-ui;letter-spacing:.28em;color:var(--dim)}
-.cname{font-size:23px;font-weight:800;letter-spacing:.04em;margin:4px 0 2px}
-.chassis{font:700 11px/1 "Roboto Condensed";letter-spacing:.14em;color:var(--cyan)}
-.price{margin-left:auto;text-align:right;font:700 16px/1 "Roboto Condensed";color:var(--amber)}
-.engine{margin:12px 0 4px;font-size:12px;color:#b9c7da}
-.note{margin:0 0 12px;font-size:12px;color:var(--dim);line-height:1.8}
-.specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;margin-bottom:14px}
-.spec{border:1px solid var(--line);border-radius:5px;padding:7px 9px}
-.spec .k{font:700 9px/1 system-ui;letter-spacing:.16em;color:var(--dim)}
-.spec .v{font:700 15px/1.2 "Roboto Condensed",system-ui;margin-top:4px}
-.spec .v small{font-size:10px;color:var(--dim);margin-left:2px}
+.car-detail{padding:18px;background:rgba(9,14,25,.6);max-height:72vh;overflow:auto}
+#preview{width:100%;height:238px;display:block;background:#070b13;margin-bottom:16px}
+.detail-head{display:flex;align-items:flex-start;gap:14px}
+.maker{font:700 10px/1 var(--f-data);letter-spacing:.32em;color:var(--dim)}
+.cname{font-size:24px;font-weight:900;letter-spacing:.03em;margin:6px 0 3px}
+.chassis{font:700 11px/1 var(--f-data);letter-spacing:.18em;color:var(--cold)}
+.price{margin-left:auto;text-align:right;font:700 16px/1 var(--f-data);color:var(--dawn);font-variant-numeric:tabular-nums}
+.engine{margin:14px 0 5px;font-size:12px;color:#b0c0d4}
+.note{margin:0 0 16px;font-size:12px;color:var(--dim);line-height:1.85}
+.specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(94px,1fr));gap:1px;
+  background:var(--line);margin-bottom:18px;border:1px solid var(--line)}
+.spec{padding:9px 10px;background:rgba(9,14,25,.85)}
+.spec .k{font:700 8px/1 var(--f-data);letter-spacing:.2em;color:var(--faint)}
+.spec .v{font:700 16px/1.2 var(--f-data);margin-top:5px;font-variant-numeric:tabular-nums}
+.spec .v small{font-size:9px;color:var(--dim);margin-left:2px;font-weight:600}
 
-.tune{display:grid;gap:7px;margin-bottom:12px}
-.tune-row{display:flex;align-items:center;gap:9px}
-.tune-row .k{width:74px;font-size:11px;color:#b9c7da;letter-spacing:.06em}
+.tune-head{font:700 9px/1 var(--f-data);letter-spacing:.3em;color:var(--faint);margin:0 0 10px}
+.tune{display:grid;gap:8px;margin-bottom:18px}
+.tune-row{display:flex;align-items:center;gap:10px}
+.tune-row .k{width:70px;font-size:11px;color:#b0c0d4;letter-spacing:.05em}
 .tune-row .pips{display:flex;gap:3px;flex:1}
-.tune-row .pips i{
-  flex:1;height:7px;border-radius:2px;background:rgba(255,255,255,.09);border:1px solid var(--line)
+.tune-row .pips i{flex:1;height:6px;background:rgba(255,255,255,.07);border:1px solid var(--line)}
+.tune-row .pips i.on{
+  background:linear-gradient(90deg,#e0691f,#ffc08a);border-color:transparent;
+  box-shadow:0 0 7px rgba(255,150,70,.6)
 }
-.tune-row .pips i.on{background:linear-gradient(90deg,#2b9fd8,#6fe6ff);border-color:transparent;box-shadow:0 0 8px rgba(80,210,255,.6)}
 .tune-row button{
-  width:26px;height:24px;border-radius:4px;border:1px solid var(--line);background:var(--glass);
-  cursor:pointer;font-size:14px;line-height:1
+  width:26px;height:24px;border:1px solid var(--line-strong);background:var(--glass);
+  font:600 14px/1 var(--f-data)
 }
-.tune-row .cost{width:76px;text-align:right;font:700 11px/1 "Roboto Condensed";color:var(--amber)}
-.tune-row button:disabled{opacity:.3;cursor:not-allowed}
+.tune-row button:hover:not(:disabled){border-color:var(--dawn)}
+.tune-row .cost{width:80px;text-align:right;font:700 11px/1 var(--f-data);color:var(--dawn);font-variant-numeric:tabular-nums}
 
-.colors{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}
-.colors button{width:24px;height:24px;border-radius:5px;border:2px solid transparent;cursor:pointer}
+.colors{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}
+.colors button{width:24px;height:24px;border:2px solid transparent}
 .colors button.sel{border-color:#fff}
-.detail-actions{display:flex;gap:9px}
-.detail-actions button{margin-left:0;flex:1;text-align:center}
+.detail-actions{display:flex;gap:10px}
+.detail-actions button{flex:1;text-align:center}
 
-/* 操作方法 */
+/* ============================ 操作方法 ============================ */
 .howto table{width:100%;border-collapse:collapse;font-size:13px}
 .howto th{
-  text-align:left;padding:9px 10px;width:150px;color:var(--dim);font-weight:600;
+  text-align:left;padding:10px 10px;width:150px;color:var(--dim);font-weight:600;
   border-bottom:1px solid var(--line);letter-spacing:.08em
 }
-.howto td{padding:9px 10px;border-bottom:1px solid var(--line)}
+.howto td{padding:10px;border-bottom:1px solid var(--line)}
+.howto .pad{margin-left:10px;font:600 11px/1 var(--f-data);color:var(--faint);letter-spacing:.1em}
 kbd{
-  display:inline-block;padding:2px 7px;margin-right:4px;border:1px solid var(--line);
-  border-bottom-width:2px;border-radius:4px;background:rgba(255,255,255,.06);
-  font:600 11px/1.5 "Roboto Condensed",system-ui
+  display:inline-block;padding:3px 8px;margin-right:4px;
+  border:1px solid var(--line-strong);border-bottom-width:2px;
+  background:rgba(255,255,255,.05);font:600 11px/1.4 var(--f-data)
 }
-.hint{margin-top:16px;font-size:12px;color:var(--dim);line-height:1.9}
+.tips{margin-top:22px;padding:16px;border:1px solid var(--line);background:rgba(255,154,82,.05)}
+.tips b{display:block;font:700 10px/1 var(--f-data);letter-spacing:.26em;color:var(--dawn);margin-bottom:10px}
+.tips p{margin:0;font-size:12px;line-height:2;color:#b0c0d4}
 
-/* 設定 */
-.settings{display:grid;gap:12px}
+/* ============================ 設定 ============================ */
+.settings{display:grid;gap:22px}
+.set-group{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+.set-head{
+  padding:10px 14px;background:rgba(9,14,25,.9);
+  font:700 9px/1 var(--f-data);letter-spacing:.3em;color:var(--dawn)
+}
 .settings label{
-  display:flex;align-items:center;gap:14px;padding:11px 14px;border:1px solid var(--line);
-  border-radius:6px;background:var(--glass);font-size:13px
+  display:flex;align-items:center;gap:16px;padding:13px 14px;
+  background:rgba(9,14,25,.7);font-size:13px
 }
 .settings label span{flex:1}
-.settings label small{display:block;margin-top:3px;font-size:11px;color:var(--dim);line-height:1.5}
-.settings input[type=checkbox]{width:18px;height:18px;accent-color:#3fd8ff}
+.settings label i{
+  display:block;margin-top:4px;font-style:normal;font-size:11px;
+  color:var(--faint);line-height:1.6
+}
+.settings input[type=checkbox]{width:18px;height:18px;accent-color:var(--dawn);flex:none}
 .settings select{
-  background:rgba(8,12,20,.9);color:var(--ink);border:1px solid var(--line);
-  border-radius:4px;padding:6px 10px;font-family:inherit
+  background:rgba(7,11,19,.95);color:var(--ink);border:1px solid var(--line-strong);
+  padding:7px 11px;font-family:var(--f-display);font-size:12px
 }
-.settings .danger{margin-top:8px;text-align:right}
-.settings .danger button{color:#ff7a6b;border-color:rgba(255,90,70,.4)}
+.set-group.danger .set-head{color:var(--danger)}
+.settings .danger button{color:#ff8f7d;border-color:rgba(255,90,70,.42)}
+.settings .danger button:hover{border-color:var(--danger);background:rgba(255,80,60,.14)}
 
-/* リザルト */
-.res-head{
-  font:800 56px/1 "Roboto Condensed",system-ui;letter-spacing:.14em;margin:6px 0 12px;
-  text-shadow:0 0 50px currentColor
+/* ============================ クレジット ============================ */
+.credits{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+.cr-row{
+  display:flex;gap:20px;padding:12px 15px;background:rgba(9,14,25,.75);font-size:12px
 }
-.res-head.win{color:#5ff0ff}
-.res-head.lose{color:#ff6a55}
+.cr-row span{width:110px;flex:none;color:var(--faint);font:600 10px/1.6 var(--f-data);letter-spacing:.18em}
+.cr-row b{font-weight:600;color:#c3d1e3;letter-spacing:.03em}
+.cr-note{padding:16px;background:rgba(9,14,25,.55)}
+.cr-note p{margin:0 0 12px;font-size:11px;line-height:2;color:var(--faint)}
+.cr-note p:last-child{margin:0}
+
+/* ============================ リザルト ============================ */
+.res-head{
+  font:700 52px/1 var(--f-data);letter-spacing:.18em;margin:8px 0 14px;
+  text-shadow:0 0 46px currentColor
+}
+.res-head.win{color:var(--cold)}
+.res-head.lose{color:var(--dawn)}
 .res-stats{
-  display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:18px 0 20px;
+  display:grid;grid-template-columns:1fr 1fr;gap:0 22px;margin:20px 0 22px;
   font-size:12px;text-align:left
 }
-.res-stats div{
-  display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:7px 2px
-}
-.res-stats span:last-child{font:700 13px/1 "Roboto Condensed";color:var(--amber)}
+.res-stats div{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 2px}
+.res-stats span:last-child{font:700 13px/1 var(--f-data);color:var(--dawn);font-variant-numeric:tabular-nums}
 
+/* ============================ レスポンシブ ============================ */
 @media(max-width:640px){
-  .logo{font-size:44px}
-  .logo span{font-size:26px}
+  .brand-jp{font-size:34px}
+  .brand-jp span{font-size:19px}
   #hud-speed{font-size:52px}
-  #hud-tacho{width:150px;height:88px}
-  #hud-boost{width:150px}
-  #hud-minimap{width:98px;height:98px;top:80px;right:12px}
-  #hud-msg{font-size:44px}
+  #hud-tacho{width:152px;height:88px}
+  #hud-boost{width:152px}
+  #hud-minimap{width:96px;height:96px;top:82px;right:12px}
+  #hud-msg{font-size:40px}
   .screen{padding:16px}
+  .res-stats{grid-template-columns:1fr}
 }
-
-/* 画面が縦に狭いとき（ノートPCや横向きスマホ）に詰める */
 @media(max-height:760px){
-  .logo{font-size:46px}
-  .logo span{font-size:28px;margin-top:4px}
-  .tagline{margin:10px 0 16px;font-size:13px}
-  .menu button{padding:9px 16px}
-  .menu button b{font-size:14px}
-  .disclaimer{margin-top:16px;font-size:10px;line-height:1.7}
-  .kicker{font-size:10px}
+  .brand-jp{font-size:40px}
+  .brand-jp span{font-size:23px}
+  .tagline{margin:16px 0 18px;font-size:13px}
+  .menu button{padding:11px 16px}
   #preview{height:190px}
 }
 @media(max-height:620px){
-  .logo{font-size:34px;margin:6px 0 2px}
-  .logo span{font-size:20px}
-  .menu button span{display:none}
-  .menu button{padding:8px 14px}
+  .brand-jp{font-size:30px}
+  .brand-jp span{font-size:17px}
+  .menu button i{display:none}
+  .menu button{padding:9px 14px}
+  .title-foot{margin-top:12px}
+}
+@media(prefers-reduced-motion:reduce){
+  #hud-gear.shift,#hud.danger #hud-battle .bar.me i,#hud.danger::after,.horizon{animation:none}
+  .screen,#hud-msg.pop{animation:none}
 }
 
 </style>
@@ -413,58 +516,76 @@ kbd{
 
   <div id="touch" class="hidden">
     <div class="tc left">
-      <button id="tc-left">◀</button>
-      <button id="tc-right">▶</button>
+      <button id="tc-left" aria-label="左">◀</button>
+      <button id="tc-right" aria-label="右">▶</button>
     </div>
     <div class="tc right">
-      <button id="tc-down">▼</button>
-      <button id="tc-up">▲</button>
+      <button id="tc-down" aria-label="シフトダウン">▼</button>
+      <button id="tc-up" aria-label="シフトアップ">▲</button>
       <button id="tc-brk">BRAKE</button>
       <button id="tc-acc">ACCEL</button>
     </div>
   </div>
 
   <div id="speedvignette"></div>
+
+  <div id="first-hint" class="hidden">
+    <div class="fh-box">
+      <b>操作</b>
+      <ul>
+        <li><kbd>↑</kbd> アクセル　<kbd>↓</kbd> ブレーキ</li>
+        <li><kbd>←</kbd><kbd>→</kbd> ハンドル</li>
+        <li><kbd>C</kbd> カメラ切替　<kbd>Esc</kbd> ポーズ</li>
+        <li>前車の40m以内はスリップストリームで伸びる</li>
+      </ul>
+      <span class="fh-close">何かキーを押すと消えます</span>
+    </div>
+  </div>
 </div>
 
-<!-- ============================ 画面群 ============================ -->
+<!-- ============================ 画面 ============================ -->
 <div id="ui">
 
   <!-- ローディング -->
   <section id="scr-loading" class="screen active">
     <div class="loading-box">
-      <div class="logo-min">WANGAN&nbsp;MIDNIGHT</div>
-      <div class="bar-load"><i></i></div>
-      <p id="load-text">コースを生成しています…</p>
+      <div class="horizon"></div>
+      <div class="logo-min">TOKYO BAY EARLY MORNING</div>
+      <p id="load-text">湾岸を生成しています…</p>
     </div>
   </section>
 
   <!-- タイトル -->
   <section id="scr-title" class="screen">
     <div class="title-wrap">
-      <div class="kicker">UNOFFICIAL FAN GAME</div>
-      <h1 class="logo">湾岸<span>MIDNIGHT</span></h1>
-      <p class="tagline">首都高・湾岸線をモチーフにした、三人称視点のハイスピードバトル。</p>
-      <nav class="menu">
-        <button data-go="story"><b>ストーリー</b><span>9人のライバルと1対1のバトル</span></button>
-        <button data-go="free"><b>フリーラン</b><span>交通量のある湾岸を自由に流す</span></button>
-        <button data-go="ta"><b>タイムアタック</b><span>1周のベストラップに挑戦</span></button>
-        <button data-go="garage"><b>ガレージ</b><span>マシン選択・チューン・カラー</span></button>
-        <button data-go="howto"><b>操作方法</b><span>キーボード / パッド / タッチ</span></button>
-        <button data-go="settings"><b>設定</b><span>画質・サウンド・AT/MT</span></button>
+      <header class="brand">
+        <div class="brand-jp">東京湾<span>アーリーモーニング</span></div>
+        <div class="brand-rule"></div>
+        <div class="brand-en">TOKYO BAY EARLY MORNING</div>
+      </header>
+      <p class="tagline">午前2時。夜が明けるまでに、あと9台。</p>
+
+      <nav class="menu" id="title-menu">
+        <button data-go="story"><span class="mi">01</span><b>ストーリー</b><i>9人のライバルと1対1</i></button>
+        <button data-go="free"><span class="mi">02</span><b>フリーラン</b><i>交通量のある湾岸を流す</i></button>
+        <button data-go="ta"><span class="mi">03</span><b>タイムアタック</b><i>1周14.7kmのベストラップ</i></button>
+        <button data-go="garage"><span class="mi">04</span><b>ガレージ</b><i>マシン・チューン・カラー</i></button>
+        <button data-go="howto"><span class="mi">05</span><b>操作方法</b><i>キーボード / パッド / タッチ</i></button>
+        <button data-go="settings"><span class="mi">06</span><b>設定</b><i>画質・操作・サウンド</i></button>
+        <button data-go="credits"><span class="mi">07</span><b>クレジット</b><i>制作について</i></button>
       </nav>
-      <p class="disclaimer">
-        本作は漫画『湾岸MIDNIGHT』へのオマージュとして制作された非公式のファン作品です。
-        登場人物・ストーリーはオリジナルで、権利者とは一切関係ありません。
-        車両は実在の市販車を参考にしていますが、性能値はゲーム用の調整値です。
-      </p>
+      <div class="title-foot">
+        <span id="build-ver">v1.0</span>
+        <span class="dot">·</span>
+        <span>登場する車両・人物・企業はすべて架空のものです</span>
+      </div>
     </div>
   </section>
 
   <!-- ストーリー -->
   <section id="scr-story" class="screen">
     <div class="panel wide">
-      <header><h2>ストーリー</h2><button class="back" data-go="title">戻る</button></header>
+      <header><h2>ストーリー</h2><span class="sub">夜明けまでに、順に潰していく</span><button class="back" data-go="title">戻る</button></header>
       <div id="rival-list" class="rival-list"></div>
     </div>
   </section>
@@ -474,22 +595,23 @@ kbd{
     <div class="panel">
       <header><h2 id="brief-title">バトル</h2><button class="back" data-go="story">戻る</button></header>
       <div class="brief">
-        <div class="brief-rival">
+        <div class="brief-col">
+          <div class="col-lbl">RIVAL</div>
           <div class="rv-name" id="brief-name"></div>
           <div class="rv-title" id="brief-subtitle"></div>
           <div class="rv-car" id="brief-car"></div>
           <p class="quote" id="brief-quote"></p>
         </div>
-        <div class="brief-you">
-          <div class="lbl">YOUR MACHINE</div>
+        <div class="brief-col">
+          <div class="col-lbl">YOUR MACHINE</div>
           <div class="rv-car" id="brief-mycar"></div>
           <div id="brief-mystats" class="statline"></div>
           <div class="warn" id="brief-warn"></div>
         </div>
       </div>
       <footer>
-        <button class="primary" id="brief-start">バトル開始</button>
         <button data-go="garage">ガレージで整備する</button>
+        <button class="primary" id="brief-start">バトル開始</button>
       </footer>
     </div>
   </section>
@@ -497,7 +619,11 @@ kbd{
   <!-- ガレージ -->
   <section id="scr-garage" class="screen">
     <div class="panel wide garage">
-      <header><h2>ガレージ</h2><span id="garage-money" class="money"></span><button class="back" data-go="title">戻る</button></header>
+      <header>
+        <h2>ガレージ</h2>
+        <span id="garage-money" class="money"></span>
+        <button class="back" data-go="title">戻る</button>
+      </header>
       <div class="garage-body">
         <div class="car-list" id="car-list"></div>
         <div class="car-detail">
@@ -513,11 +639,13 @@ kbd{
           <p class="engine" id="d-engine"></p>
           <p class="note" id="d-note"></p>
           <div class="specs" id="d-specs"></div>
+          <div class="tune-head">チューニング</div>
           <div class="tune" id="tune-list"></div>
+          <div class="tune-head">カラー</div>
           <div class="colors" id="color-row"></div>
           <div class="detail-actions">
-            <button class="primary" id="btn-select">この車に乗る</button>
             <button id="btn-buy">購入する</button>
+            <button class="primary" id="btn-select">この車に乗る</button>
           </div>
         </div>
       </div>
@@ -530,20 +658,22 @@ kbd{
       <header><h2>操作方法</h2><button class="back" data-go="title">戻る</button></header>
       <div class="howto">
         <table>
-          <tr><th>アクセル</th><td><kbd>↑</kbd> / <kbd>W</kbd> / パッドRT</td></tr>
-          <tr><th>ブレーキ</th><td><kbd>↓</kbd> / <kbd>S</kbd> / パッドLT</td></tr>
-          <tr><th>ステア</th><td><kbd>←</kbd><kbd>→</kbd> / <kbd>A</kbd><kbd>D</kbd> / 左スティック</td></tr>
-          <tr><th>シフトアップ</th><td><kbd>E</kbd> / <kbd>Shift</kbd> / パッドRB</td></tr>
-          <tr><th>シフトダウン</th><td><kbd>Q</kbd> / <kbd>Ctrl</kbd> / パッドLB</td></tr>
-          <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> / パッドA</td></tr>
+          <tr><th>アクセル</th><td><kbd>↑</kbd> <kbd>W</kbd> <span class="pad">パッド RT</span></td></tr>
+          <tr><th>ブレーキ</th><td><kbd>↓</kbd> <kbd>S</kbd> <span class="pad">パッド LT</span></td></tr>
+          <tr><th>ステア</th><td><kbd>←</kbd><kbd>→</kbd> <kbd>A</kbd><kbd>D</kbd> <span class="pad">左スティック</span></td></tr>
+          <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
+          <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
+          <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
           <tr><th>カメラ切替</th><td><kbd>C</kbd></td></tr>
           <tr><th>リスタート</th><td><kbd>R</kbd></td></tr>
           <tr><th>ポーズ</th><td><kbd>Esc</kbd></td></tr>
         </table>
-        <p class="hint">
-          コツ：レッドゾーン手前でシフトアップ、コーナーはブレーキで前荷重をかけてから曲げる。
-          前車の真後ろ（40m以内）はスリップストリームが効いて空気抵抗が約4割減ります。
-        </p>
+        <div class="tips">
+          <b>走らせかた</b>
+          <p>レッドゾーン手前でシフトアップ。コーナーはブレーキで前に荷重をかけてから曲げる。
+          前車の40m以内に入るとスリップストリームが効き、空気抵抗が約4割減ります。
+          追越車線には一般車が出てこないので、全開で使えます。</p>
+        </div>
       </div>
     </div>
   </section>
@@ -553,20 +683,51 @@ kbd{
     <div class="panel">
       <header><h2>設定</h2><button class="back" data-go="title">戻る</button></header>
       <div class="settings">
-        <label><span>ブルーム（光のにじみ）</span><input type="checkbox" id="set-bloom"></label>
-        <label><span>サウンド</span><input type="checkbox" id="set-sound"></label>
-        <label><span>オートマチック変速</span><input type="checkbox" id="set-at"></label>
-        <label><span>ドライビングアシスト<br><small>滑ったぶんだけ自動でカウンターを当てます</small></span><input type="checkbox" id="set-assist"></label>
-        <label><span>画質</span>
-          <select id="set-quality">
-            <option value="high">高</option>
-            <option value="mid">中</option>
-            <option value="low">低（軽量）</option>
-          </select>
-        </label>
-        <label><span>タッチ操作パネル</span><input type="checkbox" id="set-touch"></label>
-        <div class="danger">
-          <button id="btn-reset">セーブデータを消去</button>
+        <div class="set-group">
+          <div class="set-head">画面</div>
+          <label><span>画質</span>
+            <select id="set-quality">
+              <option value="high">高</option>
+              <option value="mid">中</option>
+              <option value="low">低（軽量）</option>
+            </select>
+          </label>
+          <label><span>ブルーム<i>光のにじみ。切ると軽くなります</i></span><input type="checkbox" id="set-bloom"></label>
+        </div>
+        <div class="set-group">
+          <div class="set-head">操作</div>
+          <label><span>オートマチック変速</span><input type="checkbox" id="set-at"></label>
+          <label><span>ドライビングアシスト<i>滑ったぶんだけ自動でカウンターを当てます</i></span><input type="checkbox" id="set-assist"></label>
+          <label><span>タッチ操作パネル</span><input type="checkbox" id="set-touch"></label>
+        </div>
+        <div class="set-group">
+          <div class="set-head">サウンド</div>
+          <label><span>効果音<i>エンジン音はすべてリアルタイム合成です</i></span><input type="checkbox" id="set-sound"></label>
+        </div>
+        <div class="set-group danger">
+          <div class="set-head">データ</div>
+          <label><span>セーブデータ<i>所持金・所有車・チューン・記録</i></span><button id="btn-reset">消去する</button></label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- クレジット -->
+  <section id="scr-credits" class="screen">
+    <div class="panel">
+      <header><h2>クレジット</h2><button class="back" data-go="title">戻る</button></header>
+      <div class="credits">
+        <div class="cr-row"><span>タイトル</span><b>東京湾アーリーモーニング</b></div>
+        <div class="cr-row"><span>ジャンル</span><b>三人称視点 ハイスピードレース</b></div>
+        <div class="cr-row"><span>実装</span><b>WebGL (three.js) / ビルド不要の素のES Modules</b></div>
+        <div class="cr-row"><span>3Dモデル</span><b>すべて実行時に手続き生成（外部アセットなし）</b></div>
+        <div class="cr-row"><span>サウンド</span><b>WebAudio によるリアルタイム合成（音声ファイルなし）</b></div>
+        <div class="cr-row"><span>コース</span><b>1周 14.7km の周回路を手続き生成</b></div>
+        <div class="cr-note">
+          <p>登場する車両・メーカー・人物・企業はすべて架空のものであり、実在のいかなる存在とも関係ありません。
+          車両の性能値は1990年代の同クラス車を参考にした、ゲーム用の調整値です。</p>
+          <p>物理は前後2輪モデル（バイシクルモデル）に摩擦円・荷重移動・空力を組み合わせています。
+          最高速はカタログ値ではなく、出力と空気抵抗の釣り合いで決まります。</p>
         </div>
       </div>
     </div>
@@ -578,9 +739,9 @@ kbd{
       <header><h2>ポーズ</h2></header>
       <nav class="menu compact">
         <button id="pz-resume"><b>再開</b></button>
+        <button id="pz-camera"><b>カメラ切替</b><i id="pz-camlabel"></i></button>
         <button id="pz-restart"><b>やり直す</b></button>
-        <button id="pz-finish"><b>走行を終える</b><span>ここまでの記録でリザルトへ</span></button>
-        <button id="pz-camera"><b>カメラ切替</b><span id="pz-camlabel"></span></button>
+        <button id="pz-finish"><b>走行を終える</b><i>ここまでの記録でリザルトへ</i></button>
         <button id="pz-quit"><b>タイトルへ戻る</b></button>
       </nav>
     </div>
@@ -672,8 +833,13 @@ function formatMoney(v) {
 
 
 // ============================== src/cars.js ==============================
-// 実在車をモチーフにしたマシンデータ。
-// スペックは市販当時の公表値を目安にした「参考値」で、ゲーム用に調整しています。
+// マシンデータ。
+//
+// 【名称について】
+// 車名・メーカー名は実在の商標です。商用配信（Steam等）では許諾が要るため、
+// 既定では「架空のメーカー／モデル名」で表示します。
+// 実車名で遊びたい場合は NAMING を 'reference' に変えてください（挙動は変わりません）。
+// 性能値は1990年代の同クラス車を参考にしたゲーム用の調整値です。
 // 断面(section)は [t, y0, y1, wBottom, wTop] の配列。
 //   t  : 車体前端0 〜 後端1 の位置
 //   y0 : その断面の下端（全高に対する比率）
@@ -893,9 +1059,12 @@ const CARS = [
     name: 'フェアレディZ',
     maker: 'NISSAN',
     chassis: 'S30 / L28改',
+    alt: { maker: 'NISHIMURA', name: 'ゼファー 280', chassis: 'NS30' },
+    altEngine: '直列6気筒 SOHC 2.8L ターボ',
     year: 1971,
     engine: '直列6気筒 SOHC 2.8L ターボ',
     layout: 'FR',
+    cyl: 6, sound: 'i6',   // エンジン音の作り分けに使います
     mass: 1080, power: 480, torque: 520, redline: 8200, idle: 850, turbo: 0.9,
     gears: [3.32, 2.08, 1.46, 1.13, 0.86], topSpeed: 320,
     cd: 0.44, area: 1.78, grip: 1.16, downforce: 0.45, wheelR: 0.315,
@@ -911,9 +1080,12 @@ const CARS = [
     name: '911 ターボ 3.3',
     maker: 'PORSCHE',
     chassis: '930',
+    alt: { maker: 'BRENNER', name: 'ターボ 3.3', chassis: 'B930' },
+    altEngine: '水平対向6気筒 3.3L ターボ',
     year: 1978,
     engine: '水平対向6気筒 3.3L ターボ',
     layout: 'RR',
+    cyl: 6, sound: 'flat6',   // エンジン音の作り分けに使います
     mass: 1300, power: 300, torque: 412, redline: 7000, idle: 900, turbo: 1.0,
     gears: [3.18, 1.83, 1.26, 0.93], topSpeed: 290,
     cd: 0.40, area: 1.77, grip: 1.24, downforce: 0.60, wheelR: 0.33,
@@ -929,9 +1101,12 @@ const CARS = [
     name: 'スカイライン GT-R',
     maker: 'NISSAN',
     chassis: 'BNR34',
+    alt: { maker: 'NISHIMURA', name: 'スカイワード GTX', chassis: 'NR34' },
+    altEngine: '直列6気筒 2.6L ツインターボ',
     year: 1999,
     engine: 'RB26DETT 直列6気筒 2.6L ツインターボ',
     layout: 'AWD',
+    cyl: 6, sound: 'i6',   // エンジン音の作り分けに使います
     mass: 1560, power: 280, torque: 392, redline: 8000, idle: 850, turbo: 0.85,
     gears: [3.83, 2.36, 1.69, 1.31, 1.00, 0.79], topSpeed: 280,
     cd: 0.35, area: 1.90, grip: 1.30, downforce: 0.85, wheelR: 0.33,
@@ -947,9 +1122,12 @@ const CARS = [
     name: 'スカイライン GT-R',
     maker: 'NISSAN',
     chassis: 'BNR32',
+    alt: { maker: 'NISHIMURA', name: 'スカイワード GTX', chassis: 'NR32' },
+    altEngine: '直列6気筒 2.6L ツインターボ',
     year: 1989,
     engine: 'RB26DETT 直列6気筒 2.6L ツインターボ',
     layout: 'AWD',
+    cyl: 6, sound: 'i6',   // エンジン音の作り分けに使います
     mass: 1430, power: 280, torque: 353, redline: 8000, idle: 850, turbo: 0.9,
     gears: [3.21, 1.93, 1.30, 1.00, 0.75], topSpeed: 275,
     cd: 0.40, area: 1.86, grip: 1.24, downforce: 0.70, wheelR: 0.32,
@@ -965,9 +1143,12 @@ const CARS = [
     name: 'RX-7',
     maker: 'MAZDA',
     chassis: 'FD3S',
+    alt: { maker: 'KAMIYA', name: 'ロータ セブン', chassis: 'KD3' },
+    altEngine: '2ローター シーケンシャルツインターボ',
     year: 1991,
     engine: '13B-REW 2ローター シーケンシャルツインターボ',
     layout: 'FR',
+    cyl: 4, sound: 'rotary',   // エンジン音の作り分けに使います
     mass: 1260, power: 280, torque: 314, redline: 8000, idle: 900, turbo: 0.95,
     gears: [3.48, 2.02, 1.39, 1.00, 0.72], topSpeed: 290,
     cd: 0.31, area: 1.76, grip: 1.22, downforce: 0.72, wheelR: 0.32,
@@ -983,9 +1164,12 @@ const CARS = [
     name: 'スープラ',
     maker: 'TOYOTA',
     chassis: 'JZA80',
+    alt: { maker: 'AKATSUKI', name: 'アロー 3000GT', chassis: 'AZ80' },
+    altEngine: '直列6気筒 3.0L ツインターボ',
     year: 1993,
     engine: '2JZ-GTE 直列6気筒 3.0L ツインターボ',
     layout: 'FR',
+    cyl: 6, sound: 'i6',   // エンジン音の作り分けに使います
     mass: 1510, power: 280, torque: 441, redline: 7200, idle: 800, turbo: 0.8,
     gears: [3.25, 1.95, 1.31, 1.00, 0.75, 0.63], topSpeed: 300,
     cd: 0.32, area: 1.90, grip: 1.22, downforce: 0.78, wheelR: 0.33,
@@ -1001,9 +1185,12 @@ const CARS = [
     name: 'NSX',
     maker: 'HONDA',
     chassis: 'NA1',
+    alt: { maker: 'MISORA', name: 'エイペックス MR', chassis: 'MA1' },
+    altEngine: 'V型6気筒 3.0L 可変バルブ（自然吸気）',
     year: 1990,
     engine: 'C30A V型6気筒 3.0L VTEC（自然吸気）',
     layout: 'MR',
+    cyl: 6, sound: 'v6',   // エンジン音の作り分けに使います
     mass: 1350, power: 280, torque: 294, redline: 8300, idle: 900, turbo: 0,
     gears: [3.07, 1.96, 1.42, 1.10, 0.87], topSpeed: 270,
     cd: 0.32, area: 1.79, grip: 1.28, downforce: 0.75, wheelR: 0.32,
@@ -1019,9 +1206,12 @@ const CARS = [
     name: 'シルビア',
     maker: 'NISSAN',
     chassis: 'S15',
+    alt: { maker: 'NISHIMURA', name: 'セイレン 2000', chassis: 'NS15' },
+    altEngine: '直列4気筒 2.0L ターボ',
     year: 1999,
     engine: 'SR20DET 直列4気筒 2.0L ターボ',
     layout: 'FR',
+    cyl: 4, sound: 'i4',   // エンジン音の作り分けに使います
     mass: 1240, power: 250, torque: 275, redline: 7600, idle: 850, turbo: 1.0,
     gears: [3.63, 2.19, 1.49, 1.19, 1.00, 0.77], topSpeed: 250,
     cd: 0.34, area: 1.82, grip: 1.14, downforce: 0.55, wheelR: 0.31,
@@ -1037,9 +1227,12 @@ const CARS = [
     name: 'ランサー エボリューションVI',
     maker: 'MITSUBISHI',
     chassis: 'CP9A',
+    alt: { maker: 'ISUKA', name: 'テンペスト VI', chassis: 'IS9' },
+    altEngine: '直列4気筒 2.0L ターボ',
     year: 1999,
     engine: '4G63 直列4気筒 2.0L ターボ',
     layout: 'AWD',
+    cyl: 4, sound: 'i4',   // エンジン音の作り分けに使います
     mass: 1360, power: 280, torque: 373, redline: 7500, idle: 900, turbo: 0.95,
     gears: [2.93, 1.95, 1.41, 1.03, 0.76], topSpeed: 255,
     cd: 0.36, area: 1.98, grip: 1.32, downforce: 0.88, wheelR: 0.31,
@@ -1055,9 +1248,12 @@ const CARS = [
     name: 'インプレッサ WRX STI',
     maker: 'SUBARU',
     chassis: 'GC8',
+    alt: { maker: 'HOSHIKAWA', name: 'ポラリス RS', chassis: 'HG8' },
+    altEngine: '水平対向4気筒 2.0L ターボ',
     year: 1998,
     engine: 'EJ20 水平対向4気筒 2.0L ターボ',
     layout: 'AWD',
+    cyl: 4, sound: 'boxer4',   // エンジン音の作り分けに使います
     mass: 1270, power: 280, torque: 353, redline: 7500, idle: 900, turbo: 0.95,
     gears: [3.08, 2.06, 1.45, 1.09, 0.82], topSpeed: 250,
     cd: 0.36, area: 1.94, grip: 1.30, downforce: 0.82, wheelR: 0.31,
@@ -1069,6 +1265,23 @@ const CARS = [
     note: '低重心の水平対向＋四駆。雨のC1でいちばん怖くない。',
   },
 ];
+
+/**
+ * 表示名の切り替え。
+ *   'original'  … 架空のメーカー／モデル名（商用配信でも安全。既定）
+ *   'reference' … 実在の車名（個人で遊ぶ用）
+ */
+const NAMING = 'original';
+
+// NAMING に応じて表示名を差し替えます（id は変えないのでセーブデータは互換のままです）
+for (const c of CARS) {
+  if (NAMING === 'original' && c.alt) {
+    c.refMaker = c.maker; c.refName = c.name; c.refChassis = c.chassis;
+    c.maker = c.alt.maker; c.name = c.alt.name; c.chassis = c.alt.chassis;
+    // エンジン型式（RB26DETT 等）もメーカーの商標なので、構成だけの表記に置き換えます
+    if (c.altEngine) { c.refEngine = c.engine; c.engine = c.altEngine; }
+  }
+}
 
 const CAR_BY_ID = Object.fromEntries(CARS.map((c) => [c.id, c]));
 
@@ -1159,20 +1372,27 @@ function loft(sections, o) {
 
 // ---------------------------------------------------------------- マテリアル
 
-function bodyMaterial(color, metal = 0.85) {
+/**
+ * 車の塗装。metalness を上げると拡散色が消えて「色つきクロム」になり、
+ * 夜は周囲の暖色を映すだけの物体になってしまいます。
+ * 実車の塗装は金属ではなく、クリア層を持つ誘電体なので、
+ * metalness は低く・roughness はごく低く・環境の映り込みは控えめにします。
+ */
+function bodyMaterial(color, metal = 0.18) {
   return new THREE.MeshStandardMaterial({
     color,
     metalness: metal,
-    roughness: 0.22,
-    envMapIntensity: 1.2,
+    roughness: 0.24,
+    envMapIntensity: 1.15,
   });
 }
 
 const glassMaterial = () =>
   new THREE.MeshStandardMaterial({
-    color: 0x090c11,
-    metalness: 0.35,
-    roughness: 0.06,
+    color: 0x070a0e,
+    metalness: 0.12,
+    roughness: 0.04,
+    envMapIntensity: 1.6,
     transparent: true,
     opacity: 0.88,
   });
@@ -1271,7 +1491,7 @@ function buildCar(spec, opts = {}) {
   const color = opts.color ?? spec.color;
   const paint = bodyMaterial(color);
   const dark = new THREE.MeshStandardMaterial({
-    color: spec.accent ?? 0x15181d, metalness: 0.5, roughness: 0.55,
+    color: spec.accent ?? 0x15181d, metalness: 0.05, roughness: 0.72, envMapIntensity: 0.5,
   });
 
   // ボディ本体
@@ -1344,7 +1564,7 @@ function buildCar(spec, opts = {}) {
       lamp.position.set(sx * D.W * 0.31, D.H * (spec.lights === 'popup' ? 0.46 : 0.40), D.L * 0.5 - 0.06);
       root.add(lamp);
       headOff.push(lamp);
-      const gl = lampGlow(0xfff0cc, D.W * 0.75, 0.42);
+      const gl = lampGlow(0xfff0cc, D.W * 0.38, 0.34);
       gl.position.set(sx * D.W * 0.31, D.H * (spec.lights === 'popup' ? 0.46 : 0.40), D.L * 0.5 + 0.03);
       root.add(gl);
     }
@@ -1354,7 +1574,7 @@ function buildCar(spec, opts = {}) {
       lamp.position.set(sx * D.W * 0.31, D.H * 0.42, D.L * 0.5 - 0.05);
       root.add(lamp);
       headOff.push(lamp);
-      const gl = lampGlow(0xfff0cc, D.W * 0.75, 0.42);
+      const gl = lampGlow(0xfff0cc, D.W * 0.38, 0.34);
       gl.position.set(sx * D.W * 0.31, D.H * 0.42, D.L * 0.5 + 0.03);
       root.add(gl);
     }
@@ -1371,7 +1591,7 @@ function buildCar(spec, opts = {}) {
     t.position.set(sx * D.W * 0.31, D.H * 0.46, -D.L * 0.5 + 0.03);
     root.add(t);
     brakeLights.push(t);
-    const gl = lampGlow(0xff2a16, D.W * 0.85, 0.5);
+    const gl = lampGlow(0xff2a16, D.W * 0.40, 0.34);
     gl.position.set(sx * D.W * 0.31, D.H * 0.46, -D.L * 0.5 - 0.02);
     gl.rotation.y = Math.PI;
     root.add(gl);
@@ -1413,6 +1633,40 @@ function buildCar(spec, opts = {}) {
     }
   }
 
+  // ホイールアーチ（フェンダーの膨らみ）。のっぺりしたロフト面に立体感を出します。
+  {
+    const archG = new THREE.TorusGeometry(spec.wheelR * 1.10, 0.052, 6, 14, Math.PI);
+    archG.rotateY(Math.PI / 2);
+    const axleZ = [D.WB * 0.5, -D.WB * 0.5];
+    for (let i = 0; i < 4; i++) {
+      const front = i < 2;
+      const sx = i % 2 === 0 ? -1 : 1;
+      const arch = new THREE.Mesh(archG, paint);
+      arch.position.set(sx * (D.W * 0.5 - 0.035), spec.wheelR, axleZ[front ? 0 : 1]);
+      arch.scale.set(1, 1, 1.06);
+      root.add(arch);
+    }
+  }
+
+  // フロントグリル / インテーク
+  {
+    const grille = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.46, 0.16, 0.06), dark);
+    grille.position.set(0, D.H * 0.28, D.L * 0.5 - 0.03);
+    root.add(grille);
+    for (const sx of [-1, 1]) {
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.16, 0.09, 0.05), dark);
+      vent.position.set(sx * D.W * 0.33, D.H * 0.26, D.L * 0.5 - 0.02);
+      root.add(vent);
+    }
+  }
+
+  // ボディサイドのプレスライン（細い暗い帯を腰の高さに入れて面を割ります）
+  for (const sx of [-1, 1]) {
+    const crease = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.035, D.L * 0.52), dark);
+    crease.position.set(sx * (D.W * 0.5 - 0.01), D.H * 0.46, -D.L * 0.02);
+    root.add(crease);
+  }
+
   // ホイール4輪
   const wr = spec.wheelR;
   const ww = D.W * 0.155;
@@ -1432,8 +1686,25 @@ function buildCar(spec, opts = {}) {
 
   // 車高を合わせる（タイヤ半径ぶん持ち上げ済みなので、ボディを少しだけ落とす）
   body.position.y = 0;
+  // 路面への映り込み（濡れたアスファルトにテールランプが伸びる表現）
+  const reflections = [];
+  for (const sx of [-1, 1]) {
+    const rf = new THREE.Mesh(
+      new THREE.PlaneGeometry(D.W * 0.42, 2.4),
+      new THREE.MeshBasicMaterial({
+        map: lampGlowTexture(), color: 0xff2010, transparent: true, opacity: 0.075,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    rf.rotation.x = -Math.PI / 2;
+    rf.position.set(sx * D.W * 0.31, 0.012, -D.L * 0.5 - 1.35);
+    rf.renderOrder = 2;
+    root.add(rf);
+    reflections.push(rf);
+  }
+
   root.userData = { spec, brakeLights, headOff, wheels };
-  return { root, wheels, brakeLights, tailGlows, headlights: headOff, paint, spec };
+  return { root, wheels, brakeLights, tailGlows, reflections, headlights: headOff, paint, spec };
 }
 
 /** 一般車（交通量）用の簡易モデル。3種類をランダムに使い分けます。 */
@@ -1772,18 +2043,18 @@ function makeRoadTexture() {
   }
   g.globalAlpha = 1;
 
-  const solid = (u, w = 0.15, color = '#e8e8e4') => {
+  const solid = (u, w = 0.15, color = '#cfd3ca') => {
     g.fillStyle = color;
     g.fillRect(toPx(u - w / 2), 0, Math.max(2, toPx(u + w / 2) - toPx(u - w / 2)), cv.height);
   };
   const dashed = (u, w = 0.15) => {
-    g.fillStyle = '#eef0ec';
+    g.fillStyle = '#cfd3ca';
     const x = toPx(u - w / 2);
     const ww = Math.max(2, toPx(u + w / 2) - toPx(u - w / 2));
     g.fillRect(x, 0, ww, toPy(8));   // 8m 引いて 12m 空ける
     // 車線境界の反射鋲（キャッツアイ）
-    g.fillStyle = '#fffef2';
-    g.fillRect(x - ww * 0.4, toPy(14), ww * 1.8, Math.max(2, toPy(0.25)));
+    g.fillStyle = '#f2f4e8';
+    g.fillRect(x - ww * 0.35, toPy(14), ww * 1.6, Math.max(2, toPy(0.22)));
   };
 
   // 自車線側（u<0）
@@ -1796,6 +2067,20 @@ function makeRoadTexture() {
   dashed(ROAD.laneW * 1 + 1.1);
   dashed(ROAD.laneW * 2 + 1.1);
   solid(ROAD.medianHalf + 0.35, 0.18);
+
+  // 白線の摩耗（一部を薄く削る）と、車線中央の油じみ
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 90; i++) {
+    g.globalAlpha = 0.10 + Math.random() * 0.35;
+    g.fillRect(Math.random() * cv.width, Math.random() * cv.height, 3 + Math.random() * 10, 3 + Math.random() * 14);
+  }
+  g.globalCompositeOperation = 'source-over';
+  g.globalAlpha = 0.16;
+  g.fillStyle = '#0b0d11';
+  for (const u of [...LANE_U, ...ONCOMING_U]) {
+    g.fillRect(toPx(u - 0.32), 0, toPx(u + 0.32) - toPx(u - 0.32), cv.height);
+  }
+  g.globalAlpha = 1;
 
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = THREE.RepeatWrapping;
@@ -1816,13 +2101,18 @@ function buildRoad(track) {
   group.name = 'road';
   const { tex, TILE, W } = makeRoadTexture();
   const roadMat = new THREE.MeshStandardMaterial({
-    map: tex, roughness: 0.80, metalness: 0.05, color: 0xffffff,
+    // 環境マップを弱く反射させると、街灯が路面に薄く伸びて「濡れたアスファルト」に見えます
+    map: tex, roughness: 0.62, metalness: 0.16, color: 0xffffff, envMapIntensity: 0.55,
   });
+  // コンクリートは光を返さない。艶を出すと「白い壁」に見えてしまいます。
   const wallMat = new THREE.MeshStandardMaterial({
-    color: 0x767c86, roughness: 0.75, metalness: 0.15, side: THREE.DoubleSide,
+    color: 0x4e535b, roughness: 0.95, metalness: 0.0,
+    envMapIntensity: 0.35, side: THREE.DoubleSide,
   });
+  // ガードレールだけは亜鉛メッキの金属なので、細く鋭く光らせます
   const railMat = new THREE.MeshStandardMaterial({
-    color: 0xc3cad5, roughness: 0.38, metalness: 0.8, side: THREE.DoubleSide,
+    color: 0x9aa3b0, roughness: 0.30, metalness: 0.85,
+    envMapIntensity: 1.4, side: THREE.DoubleSide,
   });
 
   const H = ROAD.halfRoad;
@@ -1913,8 +2203,8 @@ function buildRoad(track) {
   // 外側の壁とガードレール
   ribbon(-H - 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat));
   ribbon(H + 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat));
-  ribbon(-H - 0.5, 0.78, 0.98, railMat);
-  ribbon(H + 0.5, 0.78, 0.98, railMat);
+  ribbon(-H - 0.5, 0.80, 0.94, railMat);
+  ribbon(H + 0.5, 0.80, 0.94, railMat);
 
   function wallM(m) { return m; }
 
@@ -1927,29 +2217,37 @@ function buildRoad(track) {
 // ---------------------------------------------------------------- 空と海
 
 function buildSky(scene) {
-  const geo = new THREE.SphereGeometry(9000, 32, 24);
+  const geo = new THREE.SphereGeometry(9000, 48, 32);
+  // 明け方（薄明）の空。太陽はまだ地平線の下にあり、東の空だけが焼けています。
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      top: { value: new THREE.Color(0x05070f) },
-      mid: { value: new THREE.Color(0x121a30) },
-      hor: { value: new THREE.Color(0x3a2a44) },
-      glow: { value: new THREE.Color(0x6b4a3a) },
+      zenith: { value: new THREE.Color(0x070d1e) },   // 天頂：まだ夜
+      upper: { value: new THREE.Color(0x16233f) },
+      lower: { value: new THREE.Color(0x2b4767) },    // 地平線ぎわ：白みはじめた青
+      dawn: { value: new THREE.Color(0xd87a44) },     // 東の空の焼け
+      dawnDir: { value: new THREE.Vector3(0.82, 0, 0.57).normalize() },
     },
     vertexShader: `
       varying vec3 vP;
       void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
     `,
     fragmentShader: `
-      uniform vec3 top, mid, hor, glow;
+      uniform vec3 zenith, upper, lower, dawn;
+      uniform vec3 dawnDir;
       varying vec3 vP;
       void main(){
-        float h = normalize(vP).y;
-        vec3 c = mix(hor, mid, smoothstep(-0.02, 0.30, h));
-        c = mix(c, top, smoothstep(0.25, 0.85, h));
-        // 地平線ぎわの街明かり
-        c += glow * pow(clamp(1.0 - abs(h) * 6.0, 0.0, 1.0), 2.0) * 0.55;
+        vec3 d = normalize(vP);
+        float h = d.y;
+        vec3 c = mix(lower, upper, smoothstep(-0.03, 0.32, h));
+        c = mix(c, zenith, smoothstep(0.22, 0.9, h));
+        // 東の空だけを焼く（方位と高度の両方で絞り込みます）
+        float az = max(0.0, dot(normalize(vec3(d.x, 0.0, d.z)), dawnDir));
+        float band = pow(clamp(1.0 - abs(h) * 4.2, 0.0, 1.0), 2.2);
+        c += dawn * pow(az, 3.0) * band * 0.85;
+        // 反対側にもわずかな街明かりの照り返し
+        c += vec3(0.10, 0.07, 0.05) * band * 0.5;
         gl_FragColor = vec4(c, 1.0);
       }
     `,
@@ -1958,39 +2256,91 @@ function buildSky(scene) {
   sky.frustumCulled = false;
   scene.add(sky);
 
-  // 星
-  const N = 1400;
+  // 星（東の空と地平線ぎわでは薄れます）
+  const N = 1100;
   const p = new Float32Array(N * 3);
   const r = rng(7);
+  let k = 0;
   for (let i = 0; i < N; i++) {
     const a = r() * TAU;
-    const y = 0.08 + r() * 0.92;
+    const y = 0.10 + r() * 0.90;
     const rad = Math.sqrt(1 - y * y);
-    p[i * 3] = Math.cos(a) * rad * 7600;
-    p[i * 3 + 1] = y * 7600;
-    p[i * 3 + 2] = Math.sin(a) * rad * 7600;
+    const dx = Math.cos(a) * rad, dz = Math.sin(a) * rad;
+    // 東側（明けている方角）の低い星は間引く
+    const east = dx * 0.82 + dz * 0.57;
+    if (east > 0.2 && y < 0.45 && r() < 0.85) continue;
+    if (y < 0.25 && r() < 0.6) continue;
+    p[k * 3] = dx * 7600; p[k * 3 + 1] = y * 7600; p[k * 3 + 2] = dz * 7600;
+    k++;
   }
   const sg = new THREE.BufferGeometry();
-  sg.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  sg.setAttribute('position', new THREE.Float32BufferAttribute(p.slice(0, k * 3), 3));
   const stars = new THREE.Points(
     sg,
     new THREE.PointsMaterial({
-      color: 0xbfd0ff, size: 16, sizeAttenuation: true,
-      transparent: true, opacity: 0.8, fog: false, depthWrite: false,
+      color: 0xcfdcff, size: 15, sizeAttenuation: true,
+      transparent: true, opacity: 0.62, fog: false, depthWrite: false,
     })
   );
   stars.frustumCulled = false;
   scene.add(stars);
 
-  // 月
+  // 沈みかけの月（明けていく側の反対に置きます）
   const moon = new THREE.Mesh(
-    new THREE.CircleGeometry(150, 32),
-    new THREE.MeshBasicMaterial({ color: 0xf6f3e6, transparent: true, opacity: 0.95, fog: false })
+    new THREE.CircleGeometry(120, 32),
+    new THREE.MeshBasicMaterial({ color: 0xe8eaf2, transparent: true, opacity: 0.75, fog: false })
   );
-  moon.position.set(3200, 2400, -5200);
+  moon.position.set(-4600, 1500, -3200);
   moon.lookAt(0, 0, 0);
   scene.add(moon);
   return { sky, stars, moon };
+}
+
+function buildEnvironment(renderer, skyMesh) {
+  const envScene = new THREE.Scene();
+  const sky = skyMesh.clone();
+  sky.material = skyMesh.material.clone();
+  sky.scale.setScalar(0.02);
+  envScene.add(sky);
+
+  // 地平線の街明かり（帯）。明け方なので東側だけ少し明るくします。
+  const bandMat = new THREE.MeshBasicMaterial({ color: 0xffb974, side: THREE.DoubleSide });
+  const dawnMat = new THREE.MeshBasicMaterial({ color: 0xffb27a, side: THREE.DoubleSide });
+  for (let i = 0; i < 22; i++) {
+    const a = (i / 22) * TAU;
+    const east = Math.cos(a) * 0.82 + Math.sin(a) * 0.57;
+    const q = new THREE.Mesh(
+      new THREE.PlaneGeometry(22, 3 + Math.random() * 7),
+      east > 0.25 ? dawnMat : bandMat
+    );
+    q.position.set(Math.cos(a) * 90, 2 + Math.random() * 6, Math.sin(a) * 90);
+    q.lookAt(0, 4, 0);
+    envScene.add(q);
+  }
+  // 頭上の街灯列（ボディに縦に流れるハイライトを作ります）
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff0d2 });
+  for (const side of [-1, 1]) {
+    for (let i = -3; i <= 3; i++) {
+      const q = new THREE.Mesh(new THREE.PlaneGeometry(3, 26), lampMat);
+      q.position.set(side * 16, 26, i * 34);
+      q.rotation.x = Math.PI / 2;
+      envScene.add(q);
+    }
+  }
+  // 足元（路面）の暗い面
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(400, 400),
+    new THREE.MeshBasicMaterial({ color: 0x0a0d14 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -6;
+  envScene.add(ground);
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  const rt = pmrem.fromScene(envScene, 0.04);
+  pmrem.dispose();
+  return rt.texture;
 }
 
 function buildSea(scene) {
@@ -2038,9 +2388,9 @@ function glowTexture() {
   cv.width = cv.height = 128;
   const g = cv.getContext('2d');
   const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grd.addColorStop(0, 'rgba(255,243,222,0.95)');
-  grd.addColorStop(0.35, 'rgba(255,231,190,0.38)');
-  grd.addColorStop(1, 'rgba(255,222,165,0)');
+  grd.addColorStop(0, 'rgba(255,246,232,0.8)');
+  grd.addColorStop(0.30, 'rgba(255,238,214,0.26)');
+  grd.addColorStop(1, 'rgba(255,232,196,0)');
   g.fillStyle = grd;
   g.fillRect(0, 0, 128, 128);
   const t = new THREE.CanvasTexture(cv);
@@ -2089,10 +2439,10 @@ function buildStreetLights(track, scene) {
   const armG = new THREE.BoxGeometry(0.10, 0.10, 2.2);
   const arms = new THREE.InstancedMesh(armG, poleM, count);
 
-  const poolG = new THREE.PlaneGeometry(19, 32);
+  const poolG = new THREE.PlaneGeometry(17, 30);
   const poolM = new THREE.MeshBasicMaterial({
     map: glowTexture(), transparent: true, blending: THREE.AdditiveBlending,
-    depthWrite: false, opacity: 0.28,
+    depthWrite: false, opacity: 0.17,
   });
   const pools = new THREE.InstancedMesh(poolG, poolM, count);
   pools.renderOrder = 2;
@@ -2133,10 +2483,34 @@ function buildStreetLights(track, scene) {
     m.compose(pos, qp, sc);
     pools.setMatrixAt(i, m);
   }
+  // 灯りのにじみ。Points は常にカメラを向くので、遠くの灯りが点々と連なって見えます
+  // （インスタンス化した板だと向きが固定され、横から見ると消えてしまいます）
+  const flarePos = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    track.sample(i * step, sm);
+    const side = i % 2 === 0 ? -1 : 1;
+    pos.copy(sm.pos)
+      .addScaledVector(sm.lat, side * (ROAD.halfRoad - 0.8))
+      .addScaledVector(sm.up, 9.05);
+    flarePos[i * 3] = pos.x; flarePos[i * 3 + 1] = pos.y; flarePos[i * 3 + 2] = pos.z;
+  }
+  const flareGeo = new THREE.BufferGeometry();
+  flareGeo.setAttribute('position', new THREE.Float32BufferAttribute(flarePos, 3));
+  const flares = new THREE.Points(flareGeo, new THREE.PointsMaterial({
+    // size はワールド単位。大きくすると発光する球が浮いているように見えるので、
+    // 実際の灯具に近い 3m 程度にとどめ、遠くでも見えることは fog:false とブルームに任せます。
+    map: glowTexture(), color: 0xffe6bb, size: 3.0, sizeAttenuation: true,
+    transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending,
+    depthWrite: false, fog: false,
+  }));
+  flares.frustumCulled = false;
+  flares.renderOrder = 3;
+  group.add(flares);
+
   for (const im of [poles, arms, heads, pools]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; }
   group.add(poles, arms, heads, pools);
   scene.add(group);
-  return { group, pools, heads };
+  return { group, pools, heads, flares };
 }
 
 // ---------------------------------------------------------------- 高架の橋脚
@@ -2174,6 +2548,51 @@ function buildPiers(track, scene) {
   grp.add(im, beams);
   scene.add(grp);
   return grp;
+}
+
+/**
+ * 市街地区間の地面。
+ * これがないと、ビルの足元が真っ黒な海のままになり「宙に浮いた箱」に見えます。
+ * コースに沿った幅広の帯として1枚だけ張るので、重なりによるちらつきも起きません。
+ */
+function buildLand(track, scene) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x14171e, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.25,
+  });
+  const HALF = 460;
+  const Y = -1.4;
+  const sm = {};
+  for (const z of track.zones) {
+    if (z.kind !== 'city') continue;
+    const from = z.from - 120, to = z.to + 120;
+    const rows = Math.max(2, Math.floor((to - from) / 60));
+    const posA = new Float32Array((rows + 1) * 2 * 3);
+    const idx = [];
+    for (let r = 0; r <= rows; r++) {
+      const s2 = lerp(from, to, r / rows);
+      track.sample(s2, sm);
+      for (let q = 0; q < 2; q++) {
+        const u = q === 0 ? -HALF : HALF;
+        const o = (r * 2 + q) * 3;
+        posA[o] = sm.pos.x + sm.lat.x * u;
+        posA[o + 1] = Y;
+        posA[o + 2] = sm.pos.z + sm.lat.z * u;
+      }
+    }
+    for (let r = 0; r < rows; r++) {
+      const a = r * 2, b = a + 1, c = a + 2, d = a + 3;
+      idx.push(a, d, c, a, b, d);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, mat));
+  }
+  scene.add(group);
+  return group;
 }
 
 // ---------------------------------------------------------------- 路側の細かい造作
@@ -2530,14 +2949,21 @@ function buildSigns(track, scene) {
 
 function buildBridges(track, scene) {
   const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: 0x6d7078, roughness: 0.6, metalness: 0.35 });
-  const cableMat = new THREE.LineBasicMaterial({ color: 0x9fa8b6, transparent: true, opacity: 0.42 });
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x4a4e56, roughness: 0.8, metalness: 0.2, envMapIntensity: 0.4,
+  });
+  // ケーブルは細く・暗く。明るい線を長く張ると空を引っ掻いたように見えます。
+  const cableMat = new THREE.LineBasicMaterial({ color: 0x7d8694, transparent: true, opacity: 0.22 });
   const sm = {}, basis = new THREE.Matrix4(), q = new THREE.Quaternion();
   const back = new THREE.Vector3();
   for (const z of track.zones) {
     if (z.kind !== 'bridge') continue;
-    const mid = (z.from + z.to) / 2;
-    for (const s of [z.from + 90, mid, z.to - 90]) {
+    // 主塔は2基まで。3基だとケーブルが重なって収拾がつかなくなります。
+    const span = z.to - z.from;
+    const towers = span > 700
+      ? [z.from + span * 0.30, z.from + span * 0.70]
+      : [z.from + span * 0.5];
+    for (const s of towers) {
       track.sample(s, sm);
       basis.makeBasis(sm.lat, sm.up, back.copy(sm.tan).negate());
       q.setFromRotationMatrix(basis);
@@ -2554,16 +2980,14 @@ function buildBridges(track, scene) {
       top.position.set(0, H - 14, 0);
       g.add(top);
       // ケーブル
+      // 主塔から路面へ扇状に。届く距離を抑えて、隣の塔のケーブルと交差させません。
       const pts = [];
       for (const side of [-1, 1]) {
         for (let i = 1; i <= 5; i++) {
-          const dz = i * 34;
-          pts.push(
-            new THREE.Vector3(side * (ROAD.halfRoad + 3.2), H - 16, 0),
-            new THREE.Vector3(side * (ROAD.halfRoad + 1.0), 1.5, dz),
-            new THREE.Vector3(side * (ROAD.halfRoad + 3.2), H - 16, 0),
-            new THREE.Vector3(side * (ROAD.halfRoad + 1.0), 1.5, -dz)
-          );
+          const dz = i * 22;
+          const top = new THREE.Vector3(side * (ROAD.halfRoad + 3.2), H - 18 - i * 1.4, 0);
+          pts.push(top.clone(), new THREE.Vector3(side * (ROAD.halfRoad + 1.0), 1.4, dz));
+          pts.push(top.clone(), new THREE.Vector3(side * (ROAD.halfRoad + 1.0), 1.4, -dz));
         }
       }
       const cg = new THREE.BufferGeometry().setFromPoints(pts);
@@ -3040,7 +3464,7 @@ const COLORS = [0xd8dade, 0x1b1d22, 0x5a6068, 0x2a3a5a, 0x8f9298, 0x30425c, 0xbf
  * 通り過ぎたら前方へ「使い回し」ます（オブジェクトプール）。
  */
 class Traffic {
-  constructor(track, scene, count = 34, seed = 4242) {
+  constructor(track, scene, count = 44, seed = 4242) {
     this.track = track;
     this.rand = rng(seed);
     this.cars = [];
@@ -3083,8 +3507,10 @@ class Traffic {
     const base = car.kind === 'truck' ? 78 : car.kind === 'van' ? 88 : 95;
     car.cruise = (base + r() * 26 - car.lane * 9) / 3.6;
     car.vx = car.cruise;
-    const dist = 260 + r() * 900;
-    car.s = playerS + (ahead ? dist : -dist * 0.55);
+    // 前方に厚めに、後方にも少し。以前は最大1.1km先まで散らしていたため、
+    // 高速で走ると「誰もいない道」に見えていました。
+    const dist = 120 + Math.pow(r(), 1.4) * 620;
+    car.s = playerS + (ahead ? dist : -(90 + r() * 260));
     car.active = true;
     car.laneChange = 2 + r() * 12;
   }
@@ -3124,7 +3550,7 @@ class Traffic {
       let rel = c.s - playerS;
       if (rel > L / 2) rel -= L;
       if (rel < -L / 2) rel += L;
-      if (rel < -420 || rel > 1500) this.respawn(c, playerS, rel < 0);
+      if (rel < -300 || rel > 900) this.respawn(c, playerS, rel < 0);
 
       // 見た目の更新
       const sm = this.track.sample(c.s, this._tmp);
@@ -3194,6 +3620,7 @@ class AudioEngine {
     engFilter.connect(master);
 
     this.oscs = [];
+    // 基本の倍音構成。setVoice() でエンジン形式ごとに配合を変えます。
     const harmonics = [
       { type: 'sawtooth', mul: 0.5, gain: 0.55 },
       { type: 'square', mul: 1.0, gain: 0.40 },
@@ -3237,7 +3664,52 @@ class AudioEngine {
     this.tire = mkNoise('bandpass', 1800, 6, 0);
     this.turbo = mkNoise('bandpass', 3600, 9, 0);
 
+    // トンネル用の反響（ディレイのフィードバック）。区間に入ると混ざります。
+    const rev = ctx.createDelay(0.4);
+    rev.delayTime.value = 0.075;
+    const revFb = ctx.createGain();
+    revFb.gain.value = 0.42;
+    const revMix = ctx.createGain();
+    revMix.gain.value = 0;
+    const revTone = ctx.createBiquadFilter();
+    revTone.type = 'lowpass';
+    revTone.frequency.value = 2200;
+    engFilter.connect(rev);
+    rev.connect(revFb); revFb.connect(rev);
+    rev.connect(revTone); revTone.connect(revMix); revMix.connect(master);
+    this.reverb = revMix;
+
+    this.voice = null;
     this.ready = true;
+  }
+
+  /**
+   * エンジン形式に合わせて音色を切り替えます。
+   * 直6は倍音が整い、直4は粗く、ロータリーは基音が高く滑らか、
+   * 水平対向は独特の不等間隔感を弱いデチューンで表現します。
+   */
+  setVoice(spec) {
+    if (!this.ready) return;
+    const kind = spec.sound || 'i6';
+    if (this.voice === kind) return;
+    this.voice = kind;
+    const P = {
+      i6:     { mul: [0.5, 1, 2, 3.02], gain: [0.50, 0.40, 0.22, 0.12], type: ['sawtooth', 'square', 'sawtooth', 'sawtooth'], detune: 0 },
+      i4:     { mul: [0.5, 1, 1.5, 2.5], gain: [0.62, 0.44, 0.20, 0.14], type: ['square', 'sawtooth', 'square', 'sawtooth'], detune: 8 },
+      v6:     { mul: [0.5, 1, 2, 4.0],  gain: [0.44, 0.42, 0.26, 0.14], type: ['sawtooth', 'sawtooth', 'sawtooth', 'triangle'], detune: 4 },
+      flat6:  { mul: [0.5, 1, 2, 3.5],  gain: [0.48, 0.38, 0.30, 0.16], type: ['sawtooth', 'sawtooth', 'square', 'sawtooth'], detune: 12 },
+      boxer4: { mul: [0.5, 1, 1.5, 3.0], gain: [0.58, 0.40, 0.24, 0.12], type: ['square', 'sawtooth', 'sawtooth', 'square'], detune: 18 },
+      rotary: { mul: [1, 2, 3, 4.5],    gain: [0.40, 0.34, 0.24, 0.14], type: ['sawtooth', 'triangle', 'sawtooth', 'triangle'], detune: 2 },
+    }[kind] || P_i6_fallback();
+    for (let i = 0; i < this.oscs.length; i++) {
+      this.oscs[i].mul = P.mul[i];
+      this.oscs[i].g.gain.value = P.gain[i];
+      this.oscs[i].o.type = P.type[i];
+      this.oscs[i].o.detune.value = (i % 2 ? 1 : -1) * P.detune;
+    }
+    function P_i6_fallback() {
+      return { mul: [0.5, 1, 2, 3.02], gain: [0.5, 0.4, 0.22, 0.12], type: ['sawtooth', 'square', 'sawtooth', 'sawtooth'], detune: 0 };
+    }
   }
 
   resume() {
@@ -3256,8 +3728,10 @@ class AudioEngine {
     const ctx = this.ctx;
     const t = ctx.currentTime;
     const spec = v.spec;
-    const cyl = 6;
-    const base = clamp((v.rpm / 60) * (cyl / 2), 22, 420);
+    this.setVoice(spec);
+    // 4ストロークの発火周波数 = 回転数/60 × 気筒数/2（ロータリーは2ローターぶん）
+    const cyl = spec.cyl || 6;
+    const base = clamp((v.rpm / 60) * (cyl / 2), 22, 460);
     for (const h of this.oscs) {
       h.o.frequency.setTargetAtTime(base * h.mul, t, 0.02);
     }
@@ -3277,6 +3751,11 @@ class AudioEngine {
 
     this.turbo.g.gain.setTargetAtTime(v.boost * 0.05 * load, t, 0.08);
     this.turbo.f.frequency.setTargetAtTime(2600 + v.boost * 3200, t, 0.1);
+
+    // トンネルの反響
+    if (this.reverb) {
+      this.reverb.gain.setTargetAtTime(opts.tunnel ? 0.34 : 0.0, t, 0.35);
+    }
 
     // ブローオフ（アクセルオフの瞬間）
     if (this._lastThr === undefined) this._lastThr = 0;
@@ -3551,6 +4030,17 @@ class HUD {
     g.beginPath();
     g.arc(cx, cy, R - 5, A0, a);
     g.stroke();
+    // レッド手前のシフト警告（外周のリング）
+    const warn = clamp((rpm - redline * 0.90) / (redline * 0.10), 0, 1);
+    if (warn > 0) {
+      const blink = rpm >= redline ? (Math.sin(performance.now() * 0.03) > 0 ? 1 : 0.25) : 1;
+      g.strokeStyle = `rgba(255,${Math.round(90 - warn * 60)},40,${(0.35 + warn * 0.65) * blink})`;
+      g.lineWidth = 3.5;
+      g.beginPath();
+      g.arc(cx, cy, R + 3, A0, A1);
+      g.stroke();
+    }
+
     // 針
     g.strokeStyle = rpm > redline ? '#ff4d40' : '#eaf4ff';
     g.lineWidth = 3;
@@ -3568,27 +4058,52 @@ class HUD {
     g.clearRect(0, 0, w, h);
     if (w < 20 || h < 20) return;
     const t = this.track;
-    g.strokeStyle = 'rgba(150,175,205,0.45)';
-    g.lineWidth = 2.2;
-    g.beginPath();
-    for (let i = 0; i <= t.n; i += 6) {
-      const j = i % t.n;
-      const [x, y] = this._mmPt(t.pos[j * 3], t.pos[j * 3 + 2], w, h);
-      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-    }
-    g.closePath();
-    g.stroke();
+    // 下地（太く暗い線）→ 本線（明るい線）の二度描きで、暗い背景でも輪郭が読めます
+    const path = () => {
+      g.beginPath();
+      for (let i = 0; i <= t.n; i += 6) {
+        const j = i % t.n;
+        const [x, y] = this._mmPt(t.pos[j * 3], t.pos[j * 3 + 2], w, h);
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.closePath();
+    };
+    g.strokeStyle = 'rgba(6,10,18,0.9)';
+    g.lineWidth = 6;
+    path(); g.stroke();
+    g.strokeStyle = 'rgba(196,214,238,0.85)';
+    g.lineWidth = 2.4;
+    path(); g.stroke();
 
-    const dot = (s, color, r = 3.4) => {
+    // トンネル区間だけ色を変えて、いま自分がどこを走っているか分かるように
+    g.strokeStyle = 'rgba(255,180,60,0.9)';
+    g.lineWidth = 2.6;
+    for (const z of t.zones) {
+      if (z.kind !== 'tunnel') continue;
+      g.beginPath();
+      for (let s2 = z.from; s2 <= z.to; s2 += 40) {
+        const j = Math.floor((s2 / t.spacing)) % t.n;
+        const [x, y] = this._mmPt(t.pos[j * 3], t.pos[j * 3 + 2], w, h);
+        if (s2 === z.from) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+
+    const dot = (s, color, r = 3.4, ring = false) => {
       const sm = t.sample(s, {});
       const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
+      if (ring) {
+        g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.lineWidth = 3;
+        g.beginPath(); g.arc(x, y, r + 1.5, 0, Math.PI * 2); g.stroke();
+      }
       g.fillStyle = color;
       g.beginPath();
       g.arc(x, y, r, 0, Math.PI * 2);
       g.fill();
     };
-    for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.2);
-    dot(playerS, '#4fe3ff', 4.2);
+    for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.6, true);
+    dot(playerS, '#5ff0ff', 4.6, true);
   }
 
   setBattle(on, meName, youName) {
@@ -3637,9 +4152,10 @@ class HUD {
 
 
 // ============================== src/story.js ==============================
-// ストーリーモードの対戦相手。
-// 本作は湾岸ミッドナイトへのオマージュ（非公式のファン作品）で、
-// 登場人物は原作とは無関係のオリジナルです。
+// ストーリーモードの対戦相手。すべてオリジナルの登場人物です。
+//
+// 舞台は東京湾岸、深夜2時から夜が明けるまでのあいだ。
+// 各ステージのセリフは、勝ったとき／負けたときで別のものが出ます。
 
 const T = (power, weight, tire, aero, gear, turbo) => ({ power, weight, tire, aero, gear, turbo });
 
@@ -3701,20 +4217,20 @@ const RIVALS = [
     lose: '「机上の計算どおりでした」',
   },
   {
-    id: 'r8', name: '黒鳥 隼', title: 'ブラックバード',
+    id: 'r8', name: '黒鳥 隼', title: '夜鷹（よたか）',
     carId: 'p930', tune: T(5, 4, 5, 5, 4, 5), color: 0x101318,
     skill: 0.94, aggression: 0.68, reward: 6000000,
-    intro: '「この道で、俺より速いのは一台しか知らない」',
+    intro: '「この道で俺より速いのは、あと一台だけだ」',
     win: '「あいつと同じ匂いがする。……行ってこい」',
     lose: '「まだ早い。もっと踏めるようになってから来い」',
   },
   {
-    id: 'r9', name: '？？？', title: '悪魔のZ',
+    id: 'r9', name: '？？？', title: '群青（ぐんじょう）',
     carId: 's30z', tune: T(5, 5, 4, 3, 5, 5), color: 0x1b2733,
     skill: 0.97, aggression: 0.72, reward: 12000000,
-    intro: '「……」（テールランプだけが、遠くで待っている）',
-    win: '「―――」（Zは何も言わずに、夜へ消えていった）',
-    lose: '「―――」（追いつけない。まだ、届かない）',
+    intro: '「……」（テールランプだけが、白みはじめた空の下で待っている）',
+    win: '「―――」（何も言わず、明けていく湾岸へ消えていった）',
+    lose: '「―――」（追いつけない。空が明るくなる前に、見失った）',
   },
 ];
 
@@ -3724,7 +4240,7 @@ function rivalAt(stage) {
 
 
 // ============================== src/save.js ==============================
-const KEY = 'wangan-midnight-save-v1';
+const KEY = 'tokyo-bay-early-morning-v1';
 
 const DEFAULT = {
   money: 3200000,
@@ -3736,6 +4252,7 @@ const DEFAULT = {
   cleared: [],
   bestLap: {},               // carId -> ms
   bestTop: 0,                // 自己最高速[km/h]
+  hintSeen: false,           // 初回の操作ガイドを見たか
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
 
@@ -3786,11 +4303,13 @@ class Actor {
     this.mesh.rotation.order = 'YXZ';
     scene.add(this.mesh);
 
-    // 接地感を出す偽の影
+    // 接地感を出す偽の影。単色の板だと路面に長方形が浮くので、
+    // 中心が濃く縁が消えるテクスチャを使って輪郭をなくします。
     const shadow = new THREE.Mesh(
-      new THREE.PlaneGeometry(spec.dims.W * 1.45, spec.dims.L * 1.12),
+      new THREE.PlaneGeometry(spec.dims.W * 1.9, spec.dims.L * 1.35),
       new THREE.MeshBasicMaterial({
-        color: 0x000000, transparent: true, opacity: 0.42, depthWrite: false,
+        color: 0x000000, transparent: true, opacity: 0.5, depthWrite: false,
+        map: softDot(0.42), fog: true,
       })
     );
     shadow.rotation.x = -Math.PI / 2;
@@ -3818,10 +4337,18 @@ class Actor {
     this.mesh.quaternion.copy(this.q);
     this.mesh.position.copy(v.pos);
 
-    // ホイールの回転とステア
+    // ホイールの回転・ステア・サスペンションのストローク
+    // 加速で前が浮き、ブレーキで沈む。旋回では外輪が縮む。
+    const dive = clamp(v.lastAx / 26, -0.055, 0.055);
+    const roll = clamp(v.lastAy / 26, -0.05, 0.05);
     for (const w of this.built.wheels) {
       w.spin.rotation.x -= (v.vx / v.spec.wheelR) * (1 / 60);
-      if (w.front) w.pivot.rotation.y = v.steer;
+      if (w.front) {
+        w.pivot.rotation.y = v.steer;
+        w.pivot.rotation.z = -v.steer * 0.10 * w.side;   // 舵角に応じたキャンバー
+      }
+      const travel = (w.front ? dive : -dive * 0.7) + roll * w.side * 0.9;
+      w.pivot.position.y = v.spec.wheelR + clamp(travel, -0.075, 0.075);
     }
     // ブレーキランプ（にじみの板もあわせて強くします）
     const on = v.input.brake > 0.05;
@@ -3830,8 +4357,14 @@ class Actor {
     }
     if (this.built.tailGlows) {
       for (const g of this.built.tailGlows) {
-        g.material.opacity = on ? 0.95 : 0.5;
-        g.scale.setScalar(on ? 1.35 : 1);
+        g.material.opacity = on ? 0.72 : 0.34;
+        g.scale.setScalar(on ? 1.5 : 1);
+      }
+    }
+    if (this.built.reflections) {
+      for (const g of this.built.reflections) {
+        g.material.opacity = on ? 0.20 : 0.075;
+        g.scale.y = on ? 1.5 : 1;
       }
     }
     this.shadow.position.set(v.pos.x, v.pos.y + 0.04, v.pos.z);
@@ -3845,8 +4378,11 @@ class Actor {
   }
 }
 
-/** 粒子用の丸いスプライト（四角い点にならないように） */
+/** 粒子用の丸いスプライト（四角い点にならないように）。同じ設定は使い回します。 */
+const _softDots = new Map();
 function softDot(hard = 0.25) {
+  const hit = _softDots.get(hard);
+  if (hit) return hit;
   const cv = document.createElement('canvas');
   cv.width = cv.height = 64;
   const g = cv.getContext('2d');
@@ -3858,6 +4394,7 @@ function softDot(hard = 0.25) {
   g.fillRect(0, 0, 64, 64);
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
+  _softDots.set(hard, t);
   return t;
 }
 
@@ -3924,7 +4461,7 @@ class Game {
     this.renderer.toneMappingExposure = 1.55;
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x080c17, 0.0019);
+    this.scene.fog = new THREE.FogExp2(0x121b2e, 0.0021);
 
     this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.3, 12000);
     this.camPos = new THREE.Vector3();
@@ -3934,21 +4471,26 @@ class Game {
     this.shake = 0;
 
     // --- ライティング（夜なので控えめ＋発光で見せる）
-    this.scene.add(new THREE.HemisphereLight(0x3d4f78, 0x14192a, 1.25));
-    const moon = new THREE.DirectionalLight(0xb8cbf0, 1.05);
-    moon.position.set(0.6, 1, -0.5);
+    // 明け方なので、空からの光がわずかに強く・青い
+    this.scene.add(new THREE.HemisphereLight(0x4a628f, 0x171d2c, 1.5));
+    const moon = new THREE.DirectionalLight(0xc2d2f2, 0.85);
+    moon.position.set(-0.7, 0.9, -0.5);
     this.scene.add(moon);
-    // 街の照り返し（夜でも車体の形が読めるようにする最低限の環境光）
-    const bounce = new THREE.DirectionalLight(0xffb277, 0.45);
-    bounce.position.set(-0.5, 0.25, 0.8);
-    this.scene.add(bounce);
-    this.scene.add(new THREE.AmbientLight(0x333f5c, 0.85));
+    // 東の空からの薄明かり。夜明け側からだけ暖色が当たります。
+    const dawn = new THREE.DirectionalLight(0xffa96a, 0.85);
+    dawn.position.set(0.82, 0.18, 0.57);
+    this.scene.add(dawn);
+    this.scene.add(new THREE.AmbientLight(0x3a4868, 0.9));
 
     // --- コース
     this.track = createTrack(opts.seed ?? 20240);
     this.scene.add(buildRoad(this.track));
     this.sky = buildSky(this.scene);
+    // 夜景を焼き込んだ環境マップ。ボディと路面に「映るもの」を与えます
+    this.envMap = buildEnvironment(this.renderer, this.sky.sky);
+    this.scene.environment = this.envMap;
     this.sea = buildSea(this.scene);
+    buildLand(this.track, this.scene);
     buildPiers(this.track, this.scene);
     this.lights = buildStreetLights(this.track, this.scene);
     buildRoadside(this.track, this.scene);
@@ -3957,7 +4499,7 @@ class Game {
     buildSigns(this.track, this.scene);
     buildBridges(this.track, this.scene);
 
-    this.traffic = new Traffic(this.track, this.scene, this.settings.quality === 'low' ? 20 : 34);
+    this.traffic = new Traffic(this.track, this.scene, this.settings.quality === 'low' ? 26 : 44);
 
     // --- エフェクト
     this.sparks = new Particles(this.scene, 240, 0xffc266, 0.42);
@@ -3969,6 +4511,18 @@ class Game {
     this.headSpot.castShadow = false;
     this.scene.add(this.headSpot);
     this.scene.add(this.headSpot.target);
+
+    // 街灯そのものを光源にします。45mおきの灯りの下を通るたびにボディが明るくなる、
+    // 首都高の夜そのものの見え方になります（追従する架空のライトでは出せません）。
+    this.lampLights = [
+      new THREE.PointLight(0xffd9a0, 0, 46, 1.7),
+      new THREE.PointLight(0xffd9a0, 0, 46, 1.7),
+      new THREE.PointLight(0xffd9a0, 0, 46, 1.7),
+    ];
+    for (const l of this.lampLights) this.scene.add(l);
+    // 空からのごく弱い環境的な補助（輪郭が完全に消えないための保険）
+    this.rimLight = new THREE.PointLight(0x88a8dd, 2.4, 22, 2.0);
+    this.scene.add(this.rimLight);
 
     this.setupComposer();
 
@@ -4213,6 +4767,29 @@ class Game {
     }
   }
 
+  /** アフターファイア。高過給でシフトアップした瞬間にマフラーから火が出ます。 */
+  emitBackfire(actor) {
+    const v = actor.vehicle;
+    const cs = Math.cos(v.heading), sn = Math.sin(v.heading);
+    const back = -v.spec.dims.L * 0.5 - 0.1;
+    for (const side of [-1, 1]) {
+      const ox = side * v.spec.dims.W * 0.24;
+      const p = this._v3.set(
+        v.pos.x + sn * back + cs * ox,
+        v.pos.y + v.spec.dims.H * 0.19,
+        v.pos.z + cs * back - sn * ox
+      );
+      for (let i = 0; i < 7; i++) {
+        this.sparks.emit(
+          p,
+          { x: -sn * (7 + Math.random() * 9), y: 0.4 + Math.random(), z: -cs * (7 + Math.random() * 9) },
+          0.10 + Math.random() * 0.13,
+          3.2
+        );
+      }
+    }
+  }
+
   emitSmoke(actor) {
     const v = actor.vehicle;
     const slip = Math.max(v.slipRear, v.wheelSpin * 0.7);
@@ -4276,11 +4853,22 @@ class Game {
       pv.input.handbrake = s.handbrake;
       if (this.settings.at) {
         if (pv.shiftTimer <= 0) {
-          if (pv.rpm > pv.spec.redline * 0.955 && pv.gear < pv.maxGear) pv.shiftUp();
-          else if (pv.rpm < pv.spec.redline * 0.42 && pv.gear > 1) pv.shiftDown();
+          const boostBefore = pv.boost;
+          if (pv.rpm > pv.spec.redline * 0.955 && pv.gear < pv.maxGear) {
+            if (pv.shiftUp() && boostBefore > 0.55) {
+              this.emitBackfire(this.player);
+              audio && audio.blowoff(boostBefore);
+            }
+          } else if (pv.rpm < pv.spec.redline * 0.42 && pv.gear > 1) pv.shiftDown();
         }
       } else {
-        if (s.shiftUp) { if (pv.shiftUp()) audio && audio.beep(220, 0.05, 0.06); }
+        if (s.shiftUp) {
+          const boostBefore = pv.boost;
+          if (pv.shiftUp()) {
+            audio && audio.beep(220, 0.05, 0.06);
+            if (boostBefore > 0.55) { this.emitBackfire(this.player); audio && audio.blowoff(boostBefore); }
+          }
+        }
         if (s.shiftDown) { if (pv.shiftDown()) audio && audio.beep(180, 0.05, 0.06); }
       }
     }
@@ -4361,11 +4949,21 @@ class Game {
       let gap = pv.s - this.rival.vehicle.s;
       if (gap > L / 2) gap -= L;
       if (gap < -L / 2) gap += L;
+      // 前後が入れ替わった瞬間を知らせます（自分がどちら側にいるかが分かりにくかったため）
+      if (st._prevGap !== undefined) {
+        if (st._prevGap <= 0 && gap > 1.5) this.onEvent('overtake', { by: 'player' });
+        else if (st._prevGap >= 0 && gap < -1.5) this.onEvent('overtake', { by: 'rival' });
+      }
+      st._prevGap = gap;
       st.gap = gap;
       const drain = (g) => (0.018 + Math.pow(clamp(g / 220, 0, 1), 1.25) * 0.34) * dt;
       if (gap > 2) st.rivalLife -= drain(gap);
       else if (gap < -2) st.life -= drain(-gap);
       else { st.life = Math.min(1, st.life + dt * 0.012); st.rivalLife = Math.min(1, st.rivalLife + dt * 0.012); }
+
+      // 残りが少なくなったら警告（HUD側で赤く点滅させます）
+      const danger = st.life < 0.28;
+      if (danger !== st._danger) { st._danger = danger; this.onEvent('danger', danger); }
 
       if (st.rivalLife <= 0 || gap > 420) this.finish('win');
       else if (st.life <= 0 || gap < -420) this.finish('lose');
@@ -4376,7 +4974,10 @@ class Game {
     this.updateEffects(dt);
     this.player.syncMesh(this.track);
     if (this.rival) this.rival.syncMesh(this.track);
-    audio && audio.update(pv, dt, { inside: CAM_MODES[this.camMode].id === 'hood' });
+    audio && audio.update(pv, dt, {
+      inside: CAM_MODES[this.camMode].id === 'hood',
+      tunnel: this.track.isTunnel(pv.s),
+    });
   }
 
   finish(result) {
@@ -4432,7 +5033,7 @@ class Game {
 
     // 揺れ
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 1.6);
-    const sh = this.shake * 0.55 + clamp((speed - 55) / 90, 0, 1) * 0.045;
+    const sh = this.shake * 0.55 + Math.pow(clamp((speed - 50) / 90, 0, 1), 1.6) * 0.075;
     this.camera.position.copy(this.camPos);
     if (sh > 0.001) {
       this.camera.position.x += (Math.random() - 0.5) * sh;
@@ -4442,9 +5043,34 @@ class Game {
     this.camera.up.copy(sm.up);
     this.camera.lookAt(this.camLook);
 
-    const targetFov = cm.fov + clamp(speed / 90, 0, 1) * 20 + v.boost * 2;
+    const targetFov = cm.fov + Math.pow(clamp(speed / 92, 0, 1), 1.35) * 26 + v.boost * 2.5;
     this.camera.fov = damp(this.camera.fov, targetFov, 4, dt);
     this.camera.updateProjectionMatrix();
+
+    // 近くの街灯3本を実際の位置に置く（トンネル内は消して天井照明の色に寄せる）
+    const LAMP_STEP = 45;
+    const tunnel = this.track.isTunnel(v.s);
+    const base = Math.round(v.s / LAMP_STEP);
+    for (let k = 0; k < this.lampLights.length; k++) {
+      const idx = base + k - 1;
+      const light = this.lampLights[k];
+      const side = ((idx % 2) + 2) % 2 === 0 ? -1 : 1;
+      const lsm = this.track.sample(idx * LAMP_STEP, this._tmpB);
+      light.position.copy(lsm.pos)
+        .addScaledVector(lsm.lat, side * (ROAD.halfRoad - 0.8))
+        .addScaledVector(lsm.up, 9.0);
+      const d = Math.abs(idx * LAMP_STEP - v.s);
+      light.intensity = tunnel ? 0 : clamp(1 - d / 60, 0, 1) * 190;
+      light.color.setHex(0xffd9a0);
+    }
+    if (tunnel) {
+      // トンネル内は天井灯が連続しているので、真上に1灯だけ置き続けます
+      const l = this.lampLights[0];
+      l.position.copy(v.pos).addScaledVector(sm.up, 5.6);
+      l.color.setHex(0xfff2d8);
+      l.intensity = 120;
+    }
+    this.rimLight.position.copy(v.pos).addScaledVector(carDir, -4.0).addScaledVector(sm.up, 3.2);
 
     // ヘッドライト
     this.headSpot.position.copy(v.pos).addScaledVector(sm.up, 0.62);
@@ -4456,9 +5082,9 @@ class Game {
   updateEffects(dt) {
     const v = this.player.vehicle;
     const tunnel = this.track.isTunnel(v.s);
-    const targetFog = tunnel ? 0.0068 : 0.0019;
+    const targetFog = tunnel ? 0.0068 : 0.0021;
     this.scene.fog.density = damp(this.scene.fog.density, targetFog, 2.2, dt);
-    const targetFogColor = tunnel ? 0x14171d : 0x080c17;
+    const targetFogColor = tunnel ? 0x181c24 : 0x121b2e;
     this.scene.fog.color.lerp(new THREE.Color(targetFogColor), 1 - Math.exp(-2.2 * dt));
 
     // 航空障害灯の点滅
@@ -4521,6 +5147,8 @@ const COLOR_SWATCH = [
   0xe8c520, 0x1b47b0, 0x2b3a4a, 0x2d6b46, 0x6a2a5c, 0xdadde2,
 ];
 
+const VERSION = 'v1.0.0';
+
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -4545,9 +5173,54 @@ function show(id) {
   if (id === 'garage') renderGarage();
   if (id === 'story') renderStory();
   if (id === 'settings') syncSettings();
+  menuIndex = 0;
+  requestAnimationFrame(() => paintMenu(menuButtons()));
 }
 
 function hideAll() { show('none'); }
+
+/**
+ * メニューをキーボードだけで操作できるようにします。
+ * ↑↓ で選択、Enter で決定、Esc で戻る。
+ * ゲームパッドやキーボードだけで一周できることは、この手のゲームでは前提です。
+ */
+let menuIndex = 0;
+function menuButtons() {
+  const scr = $(`#scr-${current}`);
+  if (!scr) return [];
+  return Array.from(scr.querySelectorAll('.menu button, .rival-card:not(.locked), .back'))
+    .filter((el) => !el.disabled && el.offsetParent !== null);
+}
+function paintMenu(items) {
+  items.forEach((el, i) => el.classList.toggle('sel', i === menuIndex));
+  const el = items[menuIndex];
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+}
+function menuKey(code) {
+  const items = menuButtons();
+  if (!items.length) return false;
+  if (code === 'ArrowDown' || code === 'KeyS') { menuIndex = (menuIndex + 1) % items.length; paintMenu(items); return true; }
+  if (code === 'ArrowUp' || code === 'KeyW') { menuIndex = (menuIndex - 1 + items.length) % items.length; paintMenu(items); return true; }
+  if (code === 'Enter' || code === 'Space') { items[Math.min(menuIndex, items.length - 1)].click(); return true; }
+  return false;
+}
+
+/** 初回だけ操作ガイドを出します（2回目以降は出しません） */
+function showFirstHint() {
+  if (data.hintSeen) return;
+  const el = $('#first-hint');
+  el.classList.remove('hidden');
+  const close = () => {
+    el.classList.add('hidden');
+    data.hintSeen = true;
+    save(data);
+    window.removeEventListener('keydown', close);
+    window.removeEventListener('pointerdown', close);
+  };
+  window.addEventListener('keydown', close);
+  window.addEventListener('pointerdown', close);
+  setTimeout(close, 9000);
+}
 
 // ---------------------------------------------------------------- ガレージ
 
@@ -4573,15 +5246,32 @@ function initPreview() {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(34, 2, 0.1, 100);
   scene.add(new THREE.HemisphereLight(0x7f96bc, 0x0a0e16, 1.0));
-  const key = new THREE.DirectionalLight(0xfff0dd, 1.5);
+  // 夜明けの配色に合わせた三点照明（暖色のキー、冷たいリム、東の空からの弱いフィル）
+  const key = new THREE.DirectionalLight(0xffe6c8, 1.25);
   key.position.set(4, 6, 5); scene.add(key);
-  const rim = new THREE.DirectionalLight(0x5ec8ff, 1.9);
+  const rim = new THREE.DirectionalLight(0x7fd4ff, 1.7);
   rim.position.set(-5, 3, -6); scene.add(rim);
-  const fill = new THREE.DirectionalLight(0xff9a4a, 0.7);
-  fill.position.set(2, 1.2, -6); scene.add(fill);
+  const fill = new THREE.DirectionalLight(0xff9a52, 0.85);
+  fill.position.set(3, 1.0, -5); scene.add(fill);
+  // 床は中心から外へ消えるように。単色の円板だと縁が出て「板の上の模型」に見えます。
+  const floorTex = (() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 128;
+    const g2 = cv.getContext('2d');
+    const grd = g2.createRadialGradient(64, 64, 8, 64, 64, 64);
+    grd.addColorStop(0, 'rgba(255,255,255,0.95)');
+    grd.addColorStop(0.55, 'rgba(255,255,255,0.35)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g2.fillStyle = grd;
+    g2.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(cv);
+  })();
   const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(6.4, 48),
-    new THREE.MeshStandardMaterial({ color: 0x0a0e15, roughness: 0.42, metalness: 0.45 })
+    new THREE.CircleGeometry(7.2, 64),
+    new THREE.MeshStandardMaterial({
+      color: 0x0d1220, roughness: 0.35, metalness: 0.55,
+      transparent: true, alphaMap: floorTex, depthWrite: false,
+    })
   );
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
@@ -4787,6 +5477,7 @@ function startBattle(rival) {
   hud.setBattle(true, 'YOU', rival.name);
   hud.message('READY', rival.intro, 2400);
   hideAll();
+  showFirstHint();
   audio.resume();
 }
 
@@ -4796,8 +5487,9 @@ function startFree() {
   game.setRival(null);
   game.start('free', { startS: 0, rollingStart: true });
   hud.setBattle(false);
-  hud.message('FREE RUN', '湾岸線 一周 ' + (game.track.length / 1000).toFixed(1) + ' km', 2200);
+  hud.message('FREE RUN', `東京湾岸 一周 ${(game.track.length / 1000).toFixed(1)} km`, 2200);
   hideAll();
+  showFirstHint();
   audio.resume();
 }
 
@@ -4951,8 +5643,15 @@ $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
 }));
 
 input.onAction = (code) => {
-  if (code === 'Escape') { togglePause(); return; }
-  if (current !== 'none') return;
+  if (code === 'Escape') {
+    if (current !== 'none' && current !== 'pause' && current !== 'title' && current !== 'loading') {
+      const back = $(`#scr-${current} .back`);
+      if (back) { back.click(); return; }
+    }
+    togglePause();
+    return;
+  }
+  if (current !== 'none') { menuKey(code); return; }
   if (code === 'KeyC') {
     hud.message(game.cycleCamera(), '', 900);
     data.settings.cam = game.userCamMode;
@@ -4973,6 +5672,11 @@ function onGameEvent(type, payload) {
     }
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
+  if (type === 'overtake') {
+    hud.message(payload.by === 'player' ? 'OVERTAKE' : 'PASSED', '', 1100);
+    audio.beep(payload.by === 'player' ? 1180 : 420, 0.12, 0.12);
+  }
+  if (type === 'danger') document.getElementById('hud').classList.toggle('danger', payload);
   if (type === 'finish') {
     setTimeout(() => showResult(payload.result, payload.state), 900);
     hud.message(payload.result === 'win' ? 'WIN' : 'LOSE', '', 2000);
@@ -4990,11 +5694,12 @@ function loop(now) {
   if (game) {
     const inGame = (current === 'none') && !paused;
     if (inGame) {
+      if (!game.state.finished && game.kind !== 'battle') $('#hud').classList.remove('danger');
       const s = input.sample(dt);
       game.update(dt, s, data.settings.sound ? audio : null);
       hud.update(dt, game.hudState(data.money));
       const v = game.player.vehicle;
-      $('#speedvignette').style.opacity = String(clamp((v.speedKmh - 160) / 190, 0, 0.85));
+      $('#speedvignette').style.opacity = String(clamp((v.speedKmh - 130) / 150, 0, 1));
     } else if (game.demo && current !== 'loading') {
       game.update(dt, NEUTRAL, null);
     }
@@ -5005,7 +5710,7 @@ function loop(now) {
 
 async function boot() {
   const canvas = $('#scene');
-  $('#load-text').textContent = 'コースを生成しています…';
+  $('#load-text').textContent = '湾岸を生成しています…';
   await new Promise((r) => setTimeout(r, 30));
 
   game = new Game(canvas, {
@@ -5013,6 +5718,7 @@ async function boot() {
     onEvent: onGameEvent,
   });
   $('#load-text').textContent = 'マシンを組み立てています…';
+  const ver = $('#build-ver'); if (ver) ver.textContent = VERSION;
   await new Promise((r) => setTimeout(r, 30));
 
   if (!data.owned.includes(data.carId)) data.carId = data.owned[0] || 's15';

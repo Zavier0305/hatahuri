@@ -10,7 +10,7 @@ const COLORS = [0xd8dade, 0x1b1d22, 0x5a6068, 0x2a3a5a, 0x8f9298, 0x30425c, 0xbf
  * 通り過ぎたら前方へ「使い回し」ます（オブジェクトプール）。
  */
 export class Traffic {
-  constructor(track, scene, count = 34, seed = 4242) {
+  constructor(track, scene, count = 44, seed = 4242) {
     this.track = track;
     this.rand = rng(seed);
     this.cars = [];
@@ -53,8 +53,10 @@ export class Traffic {
     const base = car.kind === 'truck' ? 78 : car.kind === 'van' ? 88 : 95;
     car.cruise = (base + r() * 26 - car.lane * 9) / 3.6;
     car.vx = car.cruise;
-    const dist = 260 + r() * 900;
-    car.s = playerS + (ahead ? dist : -dist * 0.55);
+    // 前方に厚めに、後方にも少し。以前は最大1.1km先まで散らしていたため、
+    // 高速で走ると「誰もいない道」に見えていました。
+    const dist = 120 + Math.pow(r(), 1.4) * 620;
+    car.s = playerS + (ahead ? dist : -(90 + r() * 260));
     car.active = true;
     car.laneChange = 2 + r() * 12;
   }
@@ -94,7 +96,7 @@ export class Traffic {
       let rel = c.s - playerS;
       if (rel > L / 2) rel -= L;
       if (rel < -L / 2) rel += L;
-      if (rel < -420 || rel > 1500) this.respawn(c, playerS, rel < 0);
+      if (rel < -300 || rel > 900) this.respawn(c, playerS, rel < 0);
 
       // 見た目の更新
       const sm = this.track.sample(c.s, this._tmp);

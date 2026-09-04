@@ -79,20 +79,27 @@ export function loft(sections, o) {
 
 // ---------------------------------------------------------------- マテリアル
 
-function bodyMaterial(color, metal = 0.85) {
+/**
+ * 車の塗装。metalness を上げると拡散色が消えて「色つきクロム」になり、
+ * 夜は周囲の暖色を映すだけの物体になってしまいます。
+ * 実車の塗装は金属ではなく、クリア層を持つ誘電体なので、
+ * metalness は低く・roughness はごく低く・環境の映り込みは控えめにします。
+ */
+function bodyMaterial(color, metal = 0.18) {
   return new THREE.MeshStandardMaterial({
     color,
     metalness: metal,
-    roughness: 0.22,
-    envMapIntensity: 1.2,
+    roughness: 0.24,
+    envMapIntensity: 1.15,
   });
 }
 
 const glassMaterial = () =>
   new THREE.MeshStandardMaterial({
-    color: 0x090c11,
-    metalness: 0.35,
-    roughness: 0.06,
+    color: 0x070a0e,
+    metalness: 0.12,
+    roughness: 0.04,
+    envMapIntensity: 1.6,
     transparent: true,
     opacity: 0.88,
   });
@@ -191,7 +198,7 @@ export function buildCar(spec, opts = {}) {
   const color = opts.color ?? spec.color;
   const paint = bodyMaterial(color);
   const dark = new THREE.MeshStandardMaterial({
-    color: spec.accent ?? 0x15181d, metalness: 0.5, roughness: 0.55,
+    color: spec.accent ?? 0x15181d, metalness: 0.05, roughness: 0.72, envMapIntensity: 0.5,
   });
 
   // ボディ本体
@@ -264,7 +271,7 @@ export function buildCar(spec, opts = {}) {
       lamp.position.set(sx * D.W * 0.31, D.H * (spec.lights === 'popup' ? 0.46 : 0.40), D.L * 0.5 - 0.06);
       root.add(lamp);
       headOff.push(lamp);
-      const gl = lampGlow(0xfff0cc, D.W * 0.75, 0.42);
+      const gl = lampGlow(0xfff0cc, D.W * 0.38, 0.34);
       gl.position.set(sx * D.W * 0.31, D.H * (spec.lights === 'popup' ? 0.46 : 0.40), D.L * 0.5 + 0.03);
       root.add(gl);
     }
@@ -274,7 +281,7 @@ export function buildCar(spec, opts = {}) {
       lamp.position.set(sx * D.W * 0.31, D.H * 0.42, D.L * 0.5 - 0.05);
       root.add(lamp);
       headOff.push(lamp);
-      const gl = lampGlow(0xfff0cc, D.W * 0.75, 0.42);
+      const gl = lampGlow(0xfff0cc, D.W * 0.38, 0.34);
       gl.position.set(sx * D.W * 0.31, D.H * 0.42, D.L * 0.5 + 0.03);
       root.add(gl);
     }
@@ -291,7 +298,7 @@ export function buildCar(spec, opts = {}) {
     t.position.set(sx * D.W * 0.31, D.H * 0.46, -D.L * 0.5 + 0.03);
     root.add(t);
     brakeLights.push(t);
-    const gl = lampGlow(0xff2a16, D.W * 0.85, 0.5);
+    const gl = lampGlow(0xff2a16, D.W * 0.40, 0.34);
     gl.position.set(sx * D.W * 0.31, D.H * 0.46, -D.L * 0.5 - 0.02);
     gl.rotation.y = Math.PI;
     root.add(gl);
@@ -333,6 +340,40 @@ export function buildCar(spec, opts = {}) {
     }
   }
 
+  // ホイールアーチ（フェンダーの膨らみ）。のっぺりしたロフト面に立体感を出します。
+  {
+    const archG = new THREE.TorusGeometry(spec.wheelR * 1.10, 0.052, 6, 14, Math.PI);
+    archG.rotateY(Math.PI / 2);
+    const axleZ = [D.WB * 0.5, -D.WB * 0.5];
+    for (let i = 0; i < 4; i++) {
+      const front = i < 2;
+      const sx = i % 2 === 0 ? -1 : 1;
+      const arch = new THREE.Mesh(archG, paint);
+      arch.position.set(sx * (D.W * 0.5 - 0.035), spec.wheelR, axleZ[front ? 0 : 1]);
+      arch.scale.set(1, 1, 1.06);
+      root.add(arch);
+    }
+  }
+
+  // フロントグリル / インテーク
+  {
+    const grille = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.46, 0.16, 0.06), dark);
+    grille.position.set(0, D.H * 0.28, D.L * 0.5 - 0.03);
+    root.add(grille);
+    for (const sx of [-1, 1]) {
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.16, 0.09, 0.05), dark);
+      vent.position.set(sx * D.W * 0.33, D.H * 0.26, D.L * 0.5 - 0.02);
+      root.add(vent);
+    }
+  }
+
+  // ボディサイドのプレスライン（細い暗い帯を腰の高さに入れて面を割ります）
+  for (const sx of [-1, 1]) {
+    const crease = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.035, D.L * 0.52), dark);
+    crease.position.set(sx * (D.W * 0.5 - 0.01), D.H * 0.46, -D.L * 0.02);
+    root.add(crease);
+  }
+
   // ホイール4輪
   const wr = spec.wheelR;
   const ww = D.W * 0.155;
@@ -352,8 +393,25 @@ export function buildCar(spec, opts = {}) {
 
   // 車高を合わせる（タイヤ半径ぶん持ち上げ済みなので、ボディを少しだけ落とす）
   body.position.y = 0;
+  // 路面への映り込み（濡れたアスファルトにテールランプが伸びる表現）
+  const reflections = [];
+  for (const sx of [-1, 1]) {
+    const rf = new THREE.Mesh(
+      new THREE.PlaneGeometry(D.W * 0.42, 2.4),
+      new THREE.MeshBasicMaterial({
+        map: lampGlowTexture(), color: 0xff2010, transparent: true, opacity: 0.075,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    rf.rotation.x = -Math.PI / 2;
+    rf.position.set(sx * D.W * 0.31, 0.012, -D.L * 0.5 - 1.35);
+    rf.renderOrder = 2;
+    root.add(rf);
+    reflections.push(rf);
+  }
+
   root.userData = { spec, brakeLights, headOff, wheels };
-  return { root, wheels, brakeLights, tailGlows, headlights: headOff, paint, spec };
+  return { root, wheels, brakeLights, tailGlows, reflections, headlights: headOff, paint, spec };
 }
 
 /** 一般車（交通量）用の簡易モデル。3種類をランダムに使い分けます。 */

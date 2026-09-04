@@ -6,7 +6,7 @@ import { OutputPass } from 'three/addons/OutputPass.js';
 
 import { clamp, lerp, damp, wrapAngle, formatTime, KMH, rng } from './util.js';
 import { createTrack, buildRoad, ROAD, LANE_U } from './track.js';
-import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildBridges, buildPiers, buildRoadside } from './scenery.js';
+import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
 import { buildCar } from './carModel.js';
 import { Vehicle, slipstreamFactor } from './vehicle.js';
 import { RivalAI } from './ai.js';
@@ -34,11 +34,13 @@ class Actor {
     this.mesh.rotation.order = 'YXZ';
     scene.add(this.mesh);
 
-    // 接地感を出す偽の影
+    // 接地感を出す偽の影。単色の板だと路面に長方形が浮くので、
+    // 中心が濃く縁が消えるテクスチャを使って輪郭をなくします。
     const shadow = new THREE.Mesh(
-      new THREE.PlaneGeometry(spec.dims.W * 1.45, spec.dims.L * 1.12),
+      new THREE.PlaneGeometry(spec.dims.W * 1.9, spec.dims.L * 1.35),
       new THREE.MeshBasicMaterial({
-        color: 0x000000, transparent: true, opacity: 0.42, depthWrite: false,
+        color: 0x000000, transparent: true, opacity: 0.5, depthWrite: false,
+        map: softDot(0.42), fog: true,
       })
     );
     shadow.rotation.x = -Math.PI / 2;
@@ -66,10 +68,18 @@ class Actor {
     this.mesh.quaternion.copy(this.q);
     this.mesh.position.copy(v.pos);
 
-    // ホイールの回転とステア
+    // ホイールの回転・ステア・サスペンションのストローク
+    // 加速で前が浮き、ブレーキで沈む。旋回では外輪が縮む。
+    const dive = clamp(v.lastAx / 26, -0.055, 0.055);
+    const roll = clamp(v.lastAy / 26, -0.05, 0.05);
     for (const w of this.built.wheels) {
       w.spin.rotation.x -= (v.vx / v.spec.wheelR) * (1 / 60);
-      if (w.front) w.pivot.rotation.y = v.steer;
+      if (w.front) {
+        w.pivot.rotation.y = v.steer;
+        w.pivot.rotation.z = -v.steer * 0.10 * w.side;   // 舵角に応じたキャンバー
+      }
+      const travel = (w.front ? dive : -dive * 0.7) + roll * w.side * 0.9;
+      w.pivot.position.y = v.spec.wheelR + clamp(travel, -0.075, 0.075);
     }
     // ブレーキランプ（にじみの板もあわせて強くします）
     const on = v.input.brake > 0.05;
@@ -78,8 +88,14 @@ class Actor {
     }
     if (this.built.tailGlows) {
       for (const g of this.built.tailGlows) {
-        g.material.opacity = on ? 0.95 : 0.5;
-        g.scale.setScalar(on ? 1.35 : 1);
+        g.material.opacity = on ? 0.72 : 0.34;
+        g.scale.setScalar(on ? 1.5 : 1);
+      }
+    }
+    if (this.built.reflections) {
+      for (const g of this.built.reflections) {
+        g.material.opacity = on ? 0.20 : 0.075;
+        g.scale.y = on ? 1.5 : 1;
       }
     }
     this.shadow.position.set(v.pos.x, v.pos.y + 0.04, v.pos.z);
@@ -93,8 +109,11 @@ class Actor {
   }
 }
 
-/** 粒子用の丸いスプライト（四角い点にならないように） */
+/** 粒子用の丸いスプライト（四角い点にならないように）。同じ設定は使い回します。 */
+const _softDots = new Map();
 function softDot(hard = 0.25) {
+  const hit = _softDots.get(hard);
+  if (hit) return hit;
   const cv = document.createElement('canvas');
   cv.width = cv.height = 64;
   const g = cv.getContext('2d');
@@ -106,6 +125,7 @@ function softDot(hard = 0.25) {
   g.fillRect(0, 0, 64, 64);
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
+  _softDots.set(hard, t);
   return t;
 }
 
@@ -172,7 +192,7 @@ export class Game {
     this.renderer.toneMappingExposure = 1.55;
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x080c17, 0.0019);
+    this.scene.fog = new THREE.FogExp2(0x121b2e, 0.0021);
 
     this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.3, 12000);
     this.camPos = new THREE.Vector3();
@@ -182,21 +202,26 @@ export class Game {
     this.shake = 0;
 
     // --- ライティング（夜なので控えめ＋発光で見せる）
-    this.scene.add(new THREE.HemisphereLight(0x3d4f78, 0x14192a, 1.25));
-    const moon = new THREE.DirectionalLight(0xb8cbf0, 1.05);
-    moon.position.set(0.6, 1, -0.5);
+    // 明け方なので、空からの光がわずかに強く・青い
+    this.scene.add(new THREE.HemisphereLight(0x4a628f, 0x171d2c, 1.5));
+    const moon = new THREE.DirectionalLight(0xc2d2f2, 0.85);
+    moon.position.set(-0.7, 0.9, -0.5);
     this.scene.add(moon);
-    // 街の照り返し（夜でも車体の形が読めるようにする最低限の環境光）
-    const bounce = new THREE.DirectionalLight(0xffb277, 0.45);
-    bounce.position.set(-0.5, 0.25, 0.8);
-    this.scene.add(bounce);
-    this.scene.add(new THREE.AmbientLight(0x333f5c, 0.85));
+    // 東の空からの薄明かり。夜明け側からだけ暖色が当たります。
+    const dawn = new THREE.DirectionalLight(0xffa96a, 0.85);
+    dawn.position.set(0.82, 0.18, 0.57);
+    this.scene.add(dawn);
+    this.scene.add(new THREE.AmbientLight(0x3a4868, 0.9));
 
     // --- コース
     this.track = createTrack(opts.seed ?? 20240);
     this.scene.add(buildRoad(this.track));
     this.sky = buildSky(this.scene);
+    // 夜景を焼き込んだ環境マップ。ボディと路面に「映るもの」を与えます
+    this.envMap = buildEnvironment(this.renderer, this.sky.sky);
+    this.scene.environment = this.envMap;
     this.sea = buildSea(this.scene);
+    buildLand(this.track, this.scene);
     buildPiers(this.track, this.scene);
     this.lights = buildStreetLights(this.track, this.scene);
     buildRoadside(this.track, this.scene);
@@ -205,7 +230,7 @@ export class Game {
     buildSigns(this.track, this.scene);
     buildBridges(this.track, this.scene);
 
-    this.traffic = new Traffic(this.track, this.scene, this.settings.quality === 'low' ? 20 : 34);
+    this.traffic = new Traffic(this.track, this.scene, this.settings.quality === 'low' ? 26 : 44);
 
     // --- エフェクト
     this.sparks = new Particles(this.scene, 240, 0xffc266, 0.42);
@@ -217,6 +242,18 @@ export class Game {
     this.headSpot.castShadow = false;
     this.scene.add(this.headSpot);
     this.scene.add(this.headSpot.target);
+
+    // 街灯そのものを光源にします。45mおきの灯りの下を通るたびにボディが明るくなる、
+    // 首都高の夜そのものの見え方になります（追従する架空のライトでは出せません）。
+    this.lampLights = [
+      new THREE.PointLight(0xffd9a0, 0, 46, 1.7),
+      new THREE.PointLight(0xffd9a0, 0, 46, 1.7),
+      new THREE.PointLight(0xffd9a0, 0, 46, 1.7),
+    ];
+    for (const l of this.lampLights) this.scene.add(l);
+    // 空からのごく弱い環境的な補助（輪郭が完全に消えないための保険）
+    this.rimLight = new THREE.PointLight(0x88a8dd, 2.4, 22, 2.0);
+    this.scene.add(this.rimLight);
 
     this.setupComposer();
 
@@ -461,6 +498,29 @@ export class Game {
     }
   }
 
+  /** アフターファイア。高過給でシフトアップした瞬間にマフラーから火が出ます。 */
+  emitBackfire(actor) {
+    const v = actor.vehicle;
+    const cs = Math.cos(v.heading), sn = Math.sin(v.heading);
+    const back = -v.spec.dims.L * 0.5 - 0.1;
+    for (const side of [-1, 1]) {
+      const ox = side * v.spec.dims.W * 0.24;
+      const p = this._v3.set(
+        v.pos.x + sn * back + cs * ox,
+        v.pos.y + v.spec.dims.H * 0.19,
+        v.pos.z + cs * back - sn * ox
+      );
+      for (let i = 0; i < 7; i++) {
+        this.sparks.emit(
+          p,
+          { x: -sn * (7 + Math.random() * 9), y: 0.4 + Math.random(), z: -cs * (7 + Math.random() * 9) },
+          0.10 + Math.random() * 0.13,
+          3.2
+        );
+      }
+    }
+  }
+
   emitSmoke(actor) {
     const v = actor.vehicle;
     const slip = Math.max(v.slipRear, v.wheelSpin * 0.7);
@@ -524,11 +584,22 @@ export class Game {
       pv.input.handbrake = s.handbrake;
       if (this.settings.at) {
         if (pv.shiftTimer <= 0) {
-          if (pv.rpm > pv.spec.redline * 0.955 && pv.gear < pv.maxGear) pv.shiftUp();
-          else if (pv.rpm < pv.spec.redline * 0.42 && pv.gear > 1) pv.shiftDown();
+          const boostBefore = pv.boost;
+          if (pv.rpm > pv.spec.redline * 0.955 && pv.gear < pv.maxGear) {
+            if (pv.shiftUp() && boostBefore > 0.55) {
+              this.emitBackfire(this.player);
+              audio && audio.blowoff(boostBefore);
+            }
+          } else if (pv.rpm < pv.spec.redline * 0.42 && pv.gear > 1) pv.shiftDown();
         }
       } else {
-        if (s.shiftUp) { if (pv.shiftUp()) audio && audio.beep(220, 0.05, 0.06); }
+        if (s.shiftUp) {
+          const boostBefore = pv.boost;
+          if (pv.shiftUp()) {
+            audio && audio.beep(220, 0.05, 0.06);
+            if (boostBefore > 0.55) { this.emitBackfire(this.player); audio && audio.blowoff(boostBefore); }
+          }
+        }
         if (s.shiftDown) { if (pv.shiftDown()) audio && audio.beep(180, 0.05, 0.06); }
       }
     }
@@ -609,11 +680,21 @@ export class Game {
       let gap = pv.s - this.rival.vehicle.s;
       if (gap > L / 2) gap -= L;
       if (gap < -L / 2) gap += L;
+      // 前後が入れ替わった瞬間を知らせます（自分がどちら側にいるかが分かりにくかったため）
+      if (st._prevGap !== undefined) {
+        if (st._prevGap <= 0 && gap > 1.5) this.onEvent('overtake', { by: 'player' });
+        else if (st._prevGap >= 0 && gap < -1.5) this.onEvent('overtake', { by: 'rival' });
+      }
+      st._prevGap = gap;
       st.gap = gap;
       const drain = (g) => (0.018 + Math.pow(clamp(g / 220, 0, 1), 1.25) * 0.34) * dt;
       if (gap > 2) st.rivalLife -= drain(gap);
       else if (gap < -2) st.life -= drain(-gap);
       else { st.life = Math.min(1, st.life + dt * 0.012); st.rivalLife = Math.min(1, st.rivalLife + dt * 0.012); }
+
+      // 残りが少なくなったら警告（HUD側で赤く点滅させます）
+      const danger = st.life < 0.28;
+      if (danger !== st._danger) { st._danger = danger; this.onEvent('danger', danger); }
 
       if (st.rivalLife <= 0 || gap > 420) this.finish('win');
       else if (st.life <= 0 || gap < -420) this.finish('lose');
@@ -624,7 +705,10 @@ export class Game {
     this.updateEffects(dt);
     this.player.syncMesh(this.track);
     if (this.rival) this.rival.syncMesh(this.track);
-    audio && audio.update(pv, dt, { inside: CAM_MODES[this.camMode].id === 'hood' });
+    audio && audio.update(pv, dt, {
+      inside: CAM_MODES[this.camMode].id === 'hood',
+      tunnel: this.track.isTunnel(pv.s),
+    });
   }
 
   finish(result) {
@@ -680,7 +764,7 @@ export class Game {
 
     // 揺れ
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 1.6);
-    const sh = this.shake * 0.55 + clamp((speed - 55) / 90, 0, 1) * 0.045;
+    const sh = this.shake * 0.55 + Math.pow(clamp((speed - 50) / 90, 0, 1), 1.6) * 0.075;
     this.camera.position.copy(this.camPos);
     if (sh > 0.001) {
       this.camera.position.x += (Math.random() - 0.5) * sh;
@@ -690,9 +774,34 @@ export class Game {
     this.camera.up.copy(sm.up);
     this.camera.lookAt(this.camLook);
 
-    const targetFov = cm.fov + clamp(speed / 90, 0, 1) * 20 + v.boost * 2;
+    const targetFov = cm.fov + Math.pow(clamp(speed / 92, 0, 1), 1.35) * 26 + v.boost * 2.5;
     this.camera.fov = damp(this.camera.fov, targetFov, 4, dt);
     this.camera.updateProjectionMatrix();
+
+    // 近くの街灯3本を実際の位置に置く（トンネル内は消して天井照明の色に寄せる）
+    const LAMP_STEP = 45;
+    const tunnel = this.track.isTunnel(v.s);
+    const base = Math.round(v.s / LAMP_STEP);
+    for (let k = 0; k < this.lampLights.length; k++) {
+      const idx = base + k - 1;
+      const light = this.lampLights[k];
+      const side = ((idx % 2) + 2) % 2 === 0 ? -1 : 1;
+      const lsm = this.track.sample(idx * LAMP_STEP, this._tmpB);
+      light.position.copy(lsm.pos)
+        .addScaledVector(lsm.lat, side * (ROAD.halfRoad - 0.8))
+        .addScaledVector(lsm.up, 9.0);
+      const d = Math.abs(idx * LAMP_STEP - v.s);
+      light.intensity = tunnel ? 0 : clamp(1 - d / 60, 0, 1) * 190;
+      light.color.setHex(0xffd9a0);
+    }
+    if (tunnel) {
+      // トンネル内は天井灯が連続しているので、真上に1灯だけ置き続けます
+      const l = this.lampLights[0];
+      l.position.copy(v.pos).addScaledVector(sm.up, 5.6);
+      l.color.setHex(0xfff2d8);
+      l.intensity = 120;
+    }
+    this.rimLight.position.copy(v.pos).addScaledVector(carDir, -4.0).addScaledVector(sm.up, 3.2);
 
     // ヘッドライト
     this.headSpot.position.copy(v.pos).addScaledVector(sm.up, 0.62);
@@ -704,9 +813,9 @@ export class Game {
   updateEffects(dt) {
     const v = this.player.vehicle;
     const tunnel = this.track.isTunnel(v.s);
-    const targetFog = tunnel ? 0.0068 : 0.0019;
+    const targetFog = tunnel ? 0.0068 : 0.0021;
     this.scene.fog.density = damp(this.scene.fog.density, targetFog, 2.2, dt);
-    const targetFogColor = tunnel ? 0x14171d : 0x080c17;
+    const targetFogColor = tunnel ? 0x181c24 : 0x121b2e;
     this.scene.fog.color.lerp(new THREE.Color(targetFogColor), 1 - Math.exp(-2.2 * dt));
 
     // 航空障害灯の点滅

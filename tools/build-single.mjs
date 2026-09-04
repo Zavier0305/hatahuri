@@ -75,9 +75,10 @@ const markup = bodyMatch[1]
 
 // 単体でも文字化けしないよう先頭に charset を置いておきます
 const page = `<meta charset="utf-8">
-<title>湾岸MIDNIGHT</title>
+<meta name="description" content="東京湾アーリーモーニング — 湾岸の夜明けを走る、三人称視点のハイスピードレース。">
+<title>東京湾アーリーモーニング</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Roboto+Condensed:wght@400;600;700&display=swap">
 <style>
 ${css}
 </style>

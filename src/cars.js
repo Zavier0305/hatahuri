@@ -1,5 +1,10 @@
-// 実在車をモチーフにしたマシンデータ。
-// スペックは市販当時の公表値を目安にした「参考値」で、ゲーム用に調整しています。
+// マシンデータ。
+//
+// 【名称について】
+// 車名・メーカー名は実在の商標です。商用配信（Steam等）では許諾が要るため、
+// 既定では「架空のメーカー／モデル名」で表示します。
+// 実車名で遊びたい場合は NAMING を 'reference' に変えてください（挙動は変わりません）。
+// 性能値は1990年代の同クラス車を参考にしたゲーム用の調整値です。
 // 断面(section)は [t, y0, y1, wBottom, wTop] の配列。
 //   t  : 車体前端0 〜 後端1 の位置
 //   y0 : その断面の下端（全高に対する比率）
@@ -219,9 +224,12 @@ export const CARS = [
     name: 'フェアレディZ',
     maker: 'NISSAN',
     chassis: 'S30 / L28改',
+    alt: { maker: 'NISHIMURA', name: 'ゼファー 280', chassis: 'NS30' },
+    altEngine: '直列6気筒 SOHC 2.8L ターボ',
     year: 1971,
     engine: '直列6気筒 SOHC 2.8L ターボ',
     layout: 'FR',
+    cyl: 6, sound: 'i6',   // エンジン音の作り分けに使います
     mass: 1080, power: 480, torque: 520, redline: 8200, idle: 850, turbo: 0.9,
     gears: [3.32, 2.08, 1.46, 1.13, 0.86], topSpeed: 320,
     cd: 0.44, area: 1.78, grip: 1.16, downforce: 0.45, wheelR: 0.315,
@@ -237,9 +245,12 @@ export const CARS = [
     name: '911 ターボ 3.3',
     maker: 'PORSCHE',
     chassis: '930',
+    alt: { maker: 'BRENNER', name: 'ターボ 3.3', chassis: 'B930' },
+    altEngine: '水平対向6気筒 3.3L ターボ',
     year: 1978,
     engine: '水平対向6気筒 3.3L ターボ',
     layout: 'RR',
+    cyl: 6, sound: 'flat6',   // エンジン音の作り分けに使います
     mass: 1300, power: 300, torque: 412, redline: 7000, idle: 900, turbo: 1.0,
     gears: [3.18, 1.83, 1.26, 0.93], topSpeed: 290,
     cd: 0.40, area: 1.77, grip: 1.24, downforce: 0.60, wheelR: 0.33,
@@ -255,9 +266,12 @@ export const CARS = [
     name: 'スカイライン GT-R',
     maker: 'NISSAN',
     chassis: 'BNR34',
+    alt: { maker: 'NISHIMURA', name: 'スカイワード GTX', chassis: 'NR34' },
+    altEngine: '直列6気筒 2.6L ツインターボ',
     year: 1999,
     engine: 'RB26DETT 直列6気筒 2.6L ツインターボ',
     layout: 'AWD',
+    cyl: 6, sound: 'i6',   // エンジン音の作り分けに使います
     mass: 1560, power: 280, torque: 392, redline: 8000, idle: 850, turbo: 0.85,
     gears: [3.83, 2.36, 1.69, 1.31, 1.00, 0.79], topSpeed: 280,
     cd: 0.35, area: 1.90, grip: 1.30, downforce: 0.85, wheelR: 0.33,
@@ -273,9 +287,12 @@ export const CARS = [
     name: 'スカイライン GT-R',
     maker: 'NISSAN',
     chassis: 'BNR32',
+    alt: { maker: 'NISHIMURA', name: 'スカイワード GTX', chassis: 'NR32' },
+    altEngine: '直列6気筒 2.6L ツインターボ',
     year: 1989,
     engine: 'RB26DETT 直列6気筒 2.6L ツインターボ',
     layout: 'AWD',
+    cyl: 6, sound: 'i6',   // エンジン音の作り分けに使います
     mass: 1430, power: 280, torque: 353, redline: 8000, idle: 850, turbo: 0.9,
     gears: [3.21, 1.93, 1.30, 1.00, 0.75], topSpeed: 275,
     cd: 0.40, area: 1.86, grip: 1.24, downforce: 0.70, wheelR: 0.32,
@@ -291,9 +308,12 @@ export const CARS = [
     name: 'RX-7',
     maker: 'MAZDA',
     chassis: 'FD3S',
+    alt: { maker: 'KAMIYA', name: 'ロータ セブン', chassis: 'KD3' },
+    altEngine: '2ローター シーケンシャルツインターボ',
     year: 1991,
     engine: '13B-REW 2ローター シーケンシャルツインターボ',
     layout: 'FR',
+    cyl: 4, sound: 'rotary',   // エンジン音の作り分けに使います
     mass: 1260, power: 280, torque: 314, redline: 8000, idle: 900, turbo: 0.95,
     gears: [3.48, 2.02, 1.39, 1.00, 0.72], topSpeed: 290,
     cd: 0.31, area: 1.76, grip: 1.22, downforce: 0.72, wheelR: 0.32,
@@ -309,9 +329,12 @@ export const CARS = [
     name: 'スープラ',
     maker: 'TOYOTA',
     chassis: 'JZA80',
+    alt: { maker: 'AKATSUKI', name: 'アロー 3000GT', chassis: 'AZ80' },
+    altEngine: '直列6気筒 3.0L ツインターボ',
     year: 1993,
     engine: '2JZ-GTE 直列6気筒 3.0L ツインターボ',
     layout: 'FR',
+    cyl: 6, sound: 'i6',   // エンジン音の作り分けに使います
     mass: 1510, power: 280, torque: 441, redline: 7200, idle: 800, turbo: 0.8,
     gears: [3.25, 1.95, 1.31, 1.00, 0.75, 0.63], topSpeed: 300,
     cd: 0.32, area: 1.90, grip: 1.22, downforce: 0.78, wheelR: 0.33,
@@ -327,9 +350,12 @@ export const CARS = [
     name: 'NSX',
     maker: 'HONDA',
     chassis: 'NA1',
+    alt: { maker: 'MISORA', name: 'エイペックス MR', chassis: 'MA1' },
+    altEngine: 'V型6気筒 3.0L 可変バルブ（自然吸気）',
     year: 1990,
     engine: 'C30A V型6気筒 3.0L VTEC（自然吸気）',
     layout: 'MR',
+    cyl: 6, sound: 'v6',   // エンジン音の作り分けに使います
     mass: 1350, power: 280, torque: 294, redline: 8300, idle: 900, turbo: 0,
     gears: [3.07, 1.96, 1.42, 1.10, 0.87], topSpeed: 270,
     cd: 0.32, area: 1.79, grip: 1.28, downforce: 0.75, wheelR: 0.32,
@@ -345,9 +371,12 @@ export const CARS = [
     name: 'シルビア',
     maker: 'NISSAN',
     chassis: 'S15',
+    alt: { maker: 'NISHIMURA', name: 'セイレン 2000', chassis: 'NS15' },
+    altEngine: '直列4気筒 2.0L ターボ',
     year: 1999,
     engine: 'SR20DET 直列4気筒 2.0L ターボ',
     layout: 'FR',
+    cyl: 4, sound: 'i4',   // エンジン音の作り分けに使います
     mass: 1240, power: 250, torque: 275, redline: 7600, idle: 850, turbo: 1.0,
     gears: [3.63, 2.19, 1.49, 1.19, 1.00, 0.77], topSpeed: 250,
     cd: 0.34, area: 1.82, grip: 1.14, downforce: 0.55, wheelR: 0.31,
@@ -363,9 +392,12 @@ export const CARS = [
     name: 'ランサー エボリューションVI',
     maker: 'MITSUBISHI',
     chassis: 'CP9A',
+    alt: { maker: 'ISUKA', name: 'テンペスト VI', chassis: 'IS9' },
+    altEngine: '直列4気筒 2.0L ターボ',
     year: 1999,
     engine: '4G63 直列4気筒 2.0L ターボ',
     layout: 'AWD',
+    cyl: 4, sound: 'i4',   // エンジン音の作り分けに使います
     mass: 1360, power: 280, torque: 373, redline: 7500, idle: 900, turbo: 0.95,
     gears: [2.93, 1.95, 1.41, 1.03, 0.76], topSpeed: 255,
     cd: 0.36, area: 1.98, grip: 1.32, downforce: 0.88, wheelR: 0.31,
@@ -381,9 +413,12 @@ export const CARS = [
     name: 'インプレッサ WRX STI',
     maker: 'SUBARU',
     chassis: 'GC8',
+    alt: { maker: 'HOSHIKAWA', name: 'ポラリス RS', chassis: 'HG8' },
+    altEngine: '水平対向4気筒 2.0L ターボ',
     year: 1998,
     engine: 'EJ20 水平対向4気筒 2.0L ターボ',
     layout: 'AWD',
+    cyl: 4, sound: 'boxer4',   // エンジン音の作り分けに使います
     mass: 1270, power: 280, torque: 353, redline: 7500, idle: 900, turbo: 0.95,
     gears: [3.08, 2.06, 1.45, 1.09, 0.82], topSpeed: 250,
     cd: 0.36, area: 1.94, grip: 1.30, downforce: 0.82, wheelR: 0.31,
@@ -395,6 +430,23 @@ export const CARS = [
     note: '低重心の水平対向＋四駆。雨のC1でいちばん怖くない。',
   },
 ];
+
+/**
+ * 表示名の切り替え。
+ *   'original'  … 架空のメーカー／モデル名（商用配信でも安全。既定）
+ *   'reference' … 実在の車名（個人で遊ぶ用）
+ */
+export const NAMING = 'original';
+
+// NAMING に応じて表示名を差し替えます（id は変えないのでセーブデータは互換のままです）
+for (const c of CARS) {
+  if (NAMING === 'original' && c.alt) {
+    c.refMaker = c.maker; c.refName = c.name; c.refChassis = c.chassis;
+    c.maker = c.alt.maker; c.name = c.alt.name; c.chassis = c.alt.chassis;
+    // エンジン型式（RB26DETT 等）もメーカーの商標なので、構成だけの表記に置き換えます
+    if (c.altEngine) { c.refEngine = c.engine; c.engine = c.altEngine; }
+  }
+}
 
 export const CAR_BY_ID = Object.fromEntries(CARS.map((c) => [c.id, c]));
 

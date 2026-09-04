@@ -32,6 +32,8 @@ const COLOR_SWATCH = [
   0xe8c520, 0x1b47b0, 0x2b3a4a, 0x2d6b46, 0x6a2a5c, 0xdadde2,
 ];
 
+const VERSION = 'v1.0.0';
+
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -56,9 +58,54 @@ function show(id) {
   if (id === 'garage') renderGarage();
   if (id === 'story') renderStory();
   if (id === 'settings') syncSettings();
+  menuIndex = 0;
+  requestAnimationFrame(() => paintMenu(menuButtons()));
 }
 
 function hideAll() { show('none'); }
+
+/**
+ * メニューをキーボードだけで操作できるようにします。
+ * ↑↓ で選択、Enter で決定、Esc で戻る。
+ * ゲームパッドやキーボードだけで一周できることは、この手のゲームでは前提です。
+ */
+let menuIndex = 0;
+function menuButtons() {
+  const scr = $(`#scr-${current}`);
+  if (!scr) return [];
+  return Array.from(scr.querySelectorAll('.menu button, .rival-card:not(.locked), .back'))
+    .filter((el) => !el.disabled && el.offsetParent !== null);
+}
+function paintMenu(items) {
+  items.forEach((el, i) => el.classList.toggle('sel', i === menuIndex));
+  const el = items[menuIndex];
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+}
+function menuKey(code) {
+  const items = menuButtons();
+  if (!items.length) return false;
+  if (code === 'ArrowDown' || code === 'KeyS') { menuIndex = (menuIndex + 1) % items.length; paintMenu(items); return true; }
+  if (code === 'ArrowUp' || code === 'KeyW') { menuIndex = (menuIndex - 1 + items.length) % items.length; paintMenu(items); return true; }
+  if (code === 'Enter' || code === 'Space') { items[Math.min(menuIndex, items.length - 1)].click(); return true; }
+  return false;
+}
+
+/** 初回だけ操作ガイドを出します（2回目以降は出しません） */
+function showFirstHint() {
+  if (data.hintSeen) return;
+  const el = $('#first-hint');
+  el.classList.remove('hidden');
+  const close = () => {
+    el.classList.add('hidden');
+    data.hintSeen = true;
+    save(data);
+    window.removeEventListener('keydown', close);
+    window.removeEventListener('pointerdown', close);
+  };
+  window.addEventListener('keydown', close);
+  window.addEventListener('pointerdown', close);
+  setTimeout(close, 9000);
+}
 
 // ---------------------------------------------------------------- ガレージ
 
@@ -84,15 +131,32 @@ function initPreview() {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(34, 2, 0.1, 100);
   scene.add(new THREE.HemisphereLight(0x7f96bc, 0x0a0e16, 1.0));
-  const key = new THREE.DirectionalLight(0xfff0dd, 1.5);
+  // 夜明けの配色に合わせた三点照明（暖色のキー、冷たいリム、東の空からの弱いフィル）
+  const key = new THREE.DirectionalLight(0xffe6c8, 1.25);
   key.position.set(4, 6, 5); scene.add(key);
-  const rim = new THREE.DirectionalLight(0x5ec8ff, 1.9);
+  const rim = new THREE.DirectionalLight(0x7fd4ff, 1.7);
   rim.position.set(-5, 3, -6); scene.add(rim);
-  const fill = new THREE.DirectionalLight(0xff9a4a, 0.7);
-  fill.position.set(2, 1.2, -6); scene.add(fill);
+  const fill = new THREE.DirectionalLight(0xff9a52, 0.85);
+  fill.position.set(3, 1.0, -5); scene.add(fill);
+  // 床は中心から外へ消えるように。単色の円板だと縁が出て「板の上の模型」に見えます。
+  const floorTex = (() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 128;
+    const g2 = cv.getContext('2d');
+    const grd = g2.createRadialGradient(64, 64, 8, 64, 64, 64);
+    grd.addColorStop(0, 'rgba(255,255,255,0.95)');
+    grd.addColorStop(0.55, 'rgba(255,255,255,0.35)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g2.fillStyle = grd;
+    g2.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(cv);
+  })();
   const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(6.4, 48),
-    new THREE.MeshStandardMaterial({ color: 0x0a0e15, roughness: 0.42, metalness: 0.45 })
+    new THREE.CircleGeometry(7.2, 64),
+    new THREE.MeshStandardMaterial({
+      color: 0x0d1220, roughness: 0.35, metalness: 0.55,
+      transparent: true, alphaMap: floorTex, depthWrite: false,
+    })
   );
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
@@ -298,6 +362,7 @@ function startBattle(rival) {
   hud.setBattle(true, 'YOU', rival.name);
   hud.message('READY', rival.intro, 2400);
   hideAll();
+  showFirstHint();
   audio.resume();
 }
 
@@ -307,8 +372,9 @@ function startFree() {
   game.setRival(null);
   game.start('free', { startS: 0, rollingStart: true });
   hud.setBattle(false);
-  hud.message('FREE RUN', '湾岸線 一周 ' + (game.track.length / 1000).toFixed(1) + ' km', 2200);
+  hud.message('FREE RUN', `東京湾岸 一周 ${(game.track.length / 1000).toFixed(1)} km`, 2200);
   hideAll();
+  showFirstHint();
   audio.resume();
 }
 
@@ -462,8 +528,15 @@ $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
 }));
 
 input.onAction = (code) => {
-  if (code === 'Escape') { togglePause(); return; }
-  if (current !== 'none') return;
+  if (code === 'Escape') {
+    if (current !== 'none' && current !== 'pause' && current !== 'title' && current !== 'loading') {
+      const back = $(`#scr-${current} .back`);
+      if (back) { back.click(); return; }
+    }
+    togglePause();
+    return;
+  }
+  if (current !== 'none') { menuKey(code); return; }
   if (code === 'KeyC') {
     hud.message(game.cycleCamera(), '', 900);
     data.settings.cam = game.userCamMode;
@@ -484,6 +557,11 @@ function onGameEvent(type, payload) {
     }
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
+  if (type === 'overtake') {
+    hud.message(payload.by === 'player' ? 'OVERTAKE' : 'PASSED', '', 1100);
+    audio.beep(payload.by === 'player' ? 1180 : 420, 0.12, 0.12);
+  }
+  if (type === 'danger') document.getElementById('hud').classList.toggle('danger', payload);
   if (type === 'finish') {
     setTimeout(() => showResult(payload.result, payload.state), 900);
     hud.message(payload.result === 'win' ? 'WIN' : 'LOSE', '', 2000);
@@ -501,11 +579,12 @@ function loop(now) {
   if (game) {
     const inGame = (current === 'none') && !paused;
     if (inGame) {
+      if (!game.state.finished && game.kind !== 'battle') $('#hud').classList.remove('danger');
       const s = input.sample(dt);
       game.update(dt, s, data.settings.sound ? audio : null);
       hud.update(dt, game.hudState(data.money));
       const v = game.player.vehicle;
-      $('#speedvignette').style.opacity = String(clamp((v.speedKmh - 160) / 190, 0, 0.85));
+      $('#speedvignette').style.opacity = String(clamp((v.speedKmh - 130) / 150, 0, 1));
     } else if (game.demo && current !== 'loading') {
       game.update(dt, NEUTRAL, null);
     }
@@ -516,7 +595,7 @@ function loop(now) {
 
 async function boot() {
   const canvas = $('#scene');
-  $('#load-text').textContent = 'コースを生成しています…';
+  $('#load-text').textContent = '湾岸を生成しています…';
   await new Promise((r) => setTimeout(r, 30));
 
   game = new Game(canvas, {
@@ -524,6 +603,7 @@ async function boot() {
     onEvent: onGameEvent,
   });
   $('#load-text').textContent = 'マシンを組み立てています…';
+  const ver = $('#build-ver'); if (ver) ver.textContent = VERSION;
   await new Promise((r) => setTimeout(r, 30));
 
   if (!data.owned.includes(data.carId)) data.carId = data.owned[0] || 's15';

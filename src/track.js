@@ -224,18 +224,18 @@ function makeRoadTexture() {
   }
   g.globalAlpha = 1;
 
-  const solid = (u, w = 0.15, color = '#e8e8e4') => {
+  const solid = (u, w = 0.15, color = '#cfd3ca') => {
     g.fillStyle = color;
     g.fillRect(toPx(u - w / 2), 0, Math.max(2, toPx(u + w / 2) - toPx(u - w / 2)), cv.height);
   };
   const dashed = (u, w = 0.15) => {
-    g.fillStyle = '#eef0ec';
+    g.fillStyle = '#cfd3ca';
     const x = toPx(u - w / 2);
     const ww = Math.max(2, toPx(u + w / 2) - toPx(u - w / 2));
     g.fillRect(x, 0, ww, toPy(8));   // 8m 引いて 12m 空ける
     // 車線境界の反射鋲（キャッツアイ）
-    g.fillStyle = '#fffef2';
-    g.fillRect(x - ww * 0.4, toPy(14), ww * 1.8, Math.max(2, toPy(0.25)));
+    g.fillStyle = '#f2f4e8';
+    g.fillRect(x - ww * 0.35, toPy(14), ww * 1.6, Math.max(2, toPy(0.22)));
   };
 
   // 自車線側（u<0）
@@ -248,6 +248,20 @@ function makeRoadTexture() {
   dashed(ROAD.laneW * 1 + 1.1);
   dashed(ROAD.laneW * 2 + 1.1);
   solid(ROAD.medianHalf + 0.35, 0.18);
+
+  // 白線の摩耗（一部を薄く削る）と、車線中央の油じみ
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 90; i++) {
+    g.globalAlpha = 0.10 + Math.random() * 0.35;
+    g.fillRect(Math.random() * cv.width, Math.random() * cv.height, 3 + Math.random() * 10, 3 + Math.random() * 14);
+  }
+  g.globalCompositeOperation = 'source-over';
+  g.globalAlpha = 0.16;
+  g.fillStyle = '#0b0d11';
+  for (const u of [...LANE_U, ...ONCOMING_U]) {
+    g.fillRect(toPx(u - 0.32), 0, toPx(u + 0.32) - toPx(u - 0.32), cv.height);
+  }
+  g.globalAlpha = 1;
 
   const tex = new THREE.CanvasTexture(cv);
   tex.wrapS = THREE.RepeatWrapping;
@@ -268,13 +282,18 @@ export function buildRoad(track) {
   group.name = 'road';
   const { tex, TILE, W } = makeRoadTexture();
   const roadMat = new THREE.MeshStandardMaterial({
-    map: tex, roughness: 0.80, metalness: 0.05, color: 0xffffff,
+    // 環境マップを弱く反射させると、街灯が路面に薄く伸びて「濡れたアスファルト」に見えます
+    map: tex, roughness: 0.62, metalness: 0.16, color: 0xffffff, envMapIntensity: 0.55,
   });
+  // コンクリートは光を返さない。艶を出すと「白い壁」に見えてしまいます。
   const wallMat = new THREE.MeshStandardMaterial({
-    color: 0x767c86, roughness: 0.75, metalness: 0.15, side: THREE.DoubleSide,
+    color: 0x4e535b, roughness: 0.95, metalness: 0.0,
+    envMapIntensity: 0.35, side: THREE.DoubleSide,
   });
+  // ガードレールだけは亜鉛メッキの金属なので、細く鋭く光らせます
   const railMat = new THREE.MeshStandardMaterial({
-    color: 0xc3cad5, roughness: 0.38, metalness: 0.8, side: THREE.DoubleSide,
+    color: 0x9aa3b0, roughness: 0.30, metalness: 0.85,
+    envMapIntensity: 1.4, side: THREE.DoubleSide,
   });
 
   const H = ROAD.halfRoad;
@@ -365,8 +384,8 @@ export function buildRoad(track) {
   // 外側の壁とガードレール
   ribbon(-H - 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat));
   ribbon(H + 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat));
-  ribbon(-H - 0.5, 0.78, 0.98, railMat);
-  ribbon(H + 0.5, 0.78, 0.98, railMat);
+  ribbon(-H - 0.5, 0.80, 0.94, railMat);
+  ribbon(H + 0.5, 0.80, 0.94, railMat);
 
   function wallM(m) { return m; }
 

@@ -115,6 +115,17 @@ export class HUD {
     g.beginPath();
     g.arc(cx, cy, R - 5, A0, a);
     g.stroke();
+    // レッド手前のシフト警告（外周のリング）
+    const warn = clamp((rpm - redline * 0.90) / (redline * 0.10), 0, 1);
+    if (warn > 0) {
+      const blink = rpm >= redline ? (Math.sin(performance.now() * 0.03) > 0 ? 1 : 0.25) : 1;
+      g.strokeStyle = `rgba(255,${Math.round(90 - warn * 60)},40,${(0.35 + warn * 0.65) * blink})`;
+      g.lineWidth = 3.5;
+      g.beginPath();
+      g.arc(cx, cy, R + 3, A0, A1);
+      g.stroke();
+    }
+
     // 針
     g.strokeStyle = rpm > redline ? '#ff4d40' : '#eaf4ff';
     g.lineWidth = 3;
@@ -132,27 +143,52 @@ export class HUD {
     g.clearRect(0, 0, w, h);
     if (w < 20 || h < 20) return;
     const t = this.track;
-    g.strokeStyle = 'rgba(150,175,205,0.45)';
-    g.lineWidth = 2.2;
-    g.beginPath();
-    for (let i = 0; i <= t.n; i += 6) {
-      const j = i % t.n;
-      const [x, y] = this._mmPt(t.pos[j * 3], t.pos[j * 3 + 2], w, h);
-      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-    }
-    g.closePath();
-    g.stroke();
+    // 下地（太く暗い線）→ 本線（明るい線）の二度描きで、暗い背景でも輪郭が読めます
+    const path = () => {
+      g.beginPath();
+      for (let i = 0; i <= t.n; i += 6) {
+        const j = i % t.n;
+        const [x, y] = this._mmPt(t.pos[j * 3], t.pos[j * 3 + 2], w, h);
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.closePath();
+    };
+    g.strokeStyle = 'rgba(6,10,18,0.9)';
+    g.lineWidth = 6;
+    path(); g.stroke();
+    g.strokeStyle = 'rgba(196,214,238,0.85)';
+    g.lineWidth = 2.4;
+    path(); g.stroke();
 
-    const dot = (s, color, r = 3.4) => {
+    // トンネル区間だけ色を変えて、いま自分がどこを走っているか分かるように
+    g.strokeStyle = 'rgba(255,180,60,0.9)';
+    g.lineWidth = 2.6;
+    for (const z of t.zones) {
+      if (z.kind !== 'tunnel') continue;
+      g.beginPath();
+      for (let s2 = z.from; s2 <= z.to; s2 += 40) {
+        const j = Math.floor((s2 / t.spacing)) % t.n;
+        const [x, y] = this._mmPt(t.pos[j * 3], t.pos[j * 3 + 2], w, h);
+        if (s2 === z.from) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+
+    const dot = (s, color, r = 3.4, ring = false) => {
       const sm = t.sample(s, {});
       const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
+      if (ring) {
+        g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.lineWidth = 3;
+        g.beginPath(); g.arc(x, y, r + 1.5, 0, Math.PI * 2); g.stroke();
+      }
       g.fillStyle = color;
       g.beginPath();
       g.arc(x, y, r, 0, Math.PI * 2);
       g.fill();
     };
-    for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.2);
-    dot(playerS, '#4fe3ff', 4.2);
+    for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.6, true);
+    dot(playerS, '#5ff0ff', 4.6, true);
   }
 
   setBattle(on, meName, youName) {

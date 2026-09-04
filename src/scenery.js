@@ -5,29 +5,37 @@ import { ROAD } from './track.js';
 // ---------------------------------------------------------------- 空と海
 
 export function buildSky(scene) {
-  const geo = new THREE.SphereGeometry(9000, 32, 24);
+  const geo = new THREE.SphereGeometry(9000, 48, 32);
+  // 明け方（薄明）の空。太陽はまだ地平線の下にあり、東の空だけが焼けています。
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
-      top: { value: new THREE.Color(0x05070f) },
-      mid: { value: new THREE.Color(0x121a30) },
-      hor: { value: new THREE.Color(0x3a2a44) },
-      glow: { value: new THREE.Color(0x6b4a3a) },
+      zenith: { value: new THREE.Color(0x070d1e) },   // 天頂：まだ夜
+      upper: { value: new THREE.Color(0x16233f) },
+      lower: { value: new THREE.Color(0x2b4767) },    // 地平線ぎわ：白みはじめた青
+      dawn: { value: new THREE.Color(0xd87a44) },     // 東の空の焼け
+      dawnDir: { value: new THREE.Vector3(0.82, 0, 0.57).normalize() },
     },
     vertexShader: `
       varying vec3 vP;
       void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
     `,
     fragmentShader: `
-      uniform vec3 top, mid, hor, glow;
+      uniform vec3 zenith, upper, lower, dawn;
+      uniform vec3 dawnDir;
       varying vec3 vP;
       void main(){
-        float h = normalize(vP).y;
-        vec3 c = mix(hor, mid, smoothstep(-0.02, 0.30, h));
-        c = mix(c, top, smoothstep(0.25, 0.85, h));
-        // 地平線ぎわの街明かり
-        c += glow * pow(clamp(1.0 - abs(h) * 6.0, 0.0, 1.0), 2.0) * 0.55;
+        vec3 d = normalize(vP);
+        float h = d.y;
+        vec3 c = mix(lower, upper, smoothstep(-0.03, 0.32, h));
+        c = mix(c, zenith, smoothstep(0.22, 0.9, h));
+        // 東の空だけを焼く（方位と高度の両方で絞り込みます）
+        float az = max(0.0, dot(normalize(vec3(d.x, 0.0, d.z)), dawnDir));
+        float band = pow(clamp(1.0 - abs(h) * 4.2, 0.0, 1.0), 2.2);
+        c += dawn * pow(az, 3.0) * band * 0.85;
+        // 反対側にもわずかな街明かりの照り返し
+        c += vec3(0.10, 0.07, 0.05) * band * 0.5;
         gl_FragColor = vec4(c, 1.0);
       }
     `,
@@ -36,39 +44,91 @@ export function buildSky(scene) {
   sky.frustumCulled = false;
   scene.add(sky);
 
-  // 星
-  const N = 1400;
+  // 星（東の空と地平線ぎわでは薄れます）
+  const N = 1100;
   const p = new Float32Array(N * 3);
   const r = rng(7);
+  let k = 0;
   for (let i = 0; i < N; i++) {
     const a = r() * TAU;
-    const y = 0.08 + r() * 0.92;
+    const y = 0.10 + r() * 0.90;
     const rad = Math.sqrt(1 - y * y);
-    p[i * 3] = Math.cos(a) * rad * 7600;
-    p[i * 3 + 1] = y * 7600;
-    p[i * 3 + 2] = Math.sin(a) * rad * 7600;
+    const dx = Math.cos(a) * rad, dz = Math.sin(a) * rad;
+    // 東側（明けている方角）の低い星は間引く
+    const east = dx * 0.82 + dz * 0.57;
+    if (east > 0.2 && y < 0.45 && r() < 0.85) continue;
+    if (y < 0.25 && r() < 0.6) continue;
+    p[k * 3] = dx * 7600; p[k * 3 + 1] = y * 7600; p[k * 3 + 2] = dz * 7600;
+    k++;
   }
   const sg = new THREE.BufferGeometry();
-  sg.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  sg.setAttribute('position', new THREE.Float32BufferAttribute(p.slice(0, k * 3), 3));
   const stars = new THREE.Points(
     sg,
     new THREE.PointsMaterial({
-      color: 0xbfd0ff, size: 16, sizeAttenuation: true,
-      transparent: true, opacity: 0.8, fog: false, depthWrite: false,
+      color: 0xcfdcff, size: 15, sizeAttenuation: true,
+      transparent: true, opacity: 0.62, fog: false, depthWrite: false,
     })
   );
   stars.frustumCulled = false;
   scene.add(stars);
 
-  // 月
+  // 沈みかけの月（明けていく側の反対に置きます）
   const moon = new THREE.Mesh(
-    new THREE.CircleGeometry(150, 32),
-    new THREE.MeshBasicMaterial({ color: 0xf6f3e6, transparent: true, opacity: 0.95, fog: false })
+    new THREE.CircleGeometry(120, 32),
+    new THREE.MeshBasicMaterial({ color: 0xe8eaf2, transparent: true, opacity: 0.75, fog: false })
   );
-  moon.position.set(3200, 2400, -5200);
+  moon.position.set(-4600, 1500, -3200);
   moon.lookAt(0, 0, 0);
   scene.add(moon);
   return { sky, stars, moon };
+}
+
+export function buildEnvironment(renderer, skyMesh) {
+  const envScene = new THREE.Scene();
+  const sky = skyMesh.clone();
+  sky.material = skyMesh.material.clone();
+  sky.scale.setScalar(0.02);
+  envScene.add(sky);
+
+  // 地平線の街明かり（帯）。明け方なので東側だけ少し明るくします。
+  const bandMat = new THREE.MeshBasicMaterial({ color: 0xffb974, side: THREE.DoubleSide });
+  const dawnMat = new THREE.MeshBasicMaterial({ color: 0xffb27a, side: THREE.DoubleSide });
+  for (let i = 0; i < 22; i++) {
+    const a = (i / 22) * TAU;
+    const east = Math.cos(a) * 0.82 + Math.sin(a) * 0.57;
+    const q = new THREE.Mesh(
+      new THREE.PlaneGeometry(22, 3 + Math.random() * 7),
+      east > 0.25 ? dawnMat : bandMat
+    );
+    q.position.set(Math.cos(a) * 90, 2 + Math.random() * 6, Math.sin(a) * 90);
+    q.lookAt(0, 4, 0);
+    envScene.add(q);
+  }
+  // 頭上の街灯列（ボディに縦に流れるハイライトを作ります）
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff0d2 });
+  for (const side of [-1, 1]) {
+    for (let i = -3; i <= 3; i++) {
+      const q = new THREE.Mesh(new THREE.PlaneGeometry(3, 26), lampMat);
+      q.position.set(side * 16, 26, i * 34);
+      q.rotation.x = Math.PI / 2;
+      envScene.add(q);
+    }
+  }
+  // 足元（路面）の暗い面
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(400, 400),
+    new THREE.MeshBasicMaterial({ color: 0x0a0d14 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -6;
+  envScene.add(ground);
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  const rt = pmrem.fromScene(envScene, 0.04);
+  pmrem.dispose();
+  return rt.texture;
 }
 
 export function buildSea(scene) {
@@ -116,9 +176,9 @@ function glowTexture() {
   cv.width = cv.height = 128;
   const g = cv.getContext('2d');
   const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grd.addColorStop(0, 'rgba(255,243,222,0.95)');
-  grd.addColorStop(0.35, 'rgba(255,231,190,0.38)');
-  grd.addColorStop(1, 'rgba(255,222,165,0)');
+  grd.addColorStop(0, 'rgba(255,246,232,0.8)');
+  grd.addColorStop(0.30, 'rgba(255,238,214,0.26)');
+  grd.addColorStop(1, 'rgba(255,232,196,0)');
   g.fillStyle = grd;
   g.fillRect(0, 0, 128, 128);
   const t = new THREE.CanvasTexture(cv);
@@ -167,10 +227,10 @@ export function buildStreetLights(track, scene) {
   const armG = new THREE.BoxGeometry(0.10, 0.10, 2.2);
   const arms = new THREE.InstancedMesh(armG, poleM, count);
 
-  const poolG = new THREE.PlaneGeometry(19, 32);
+  const poolG = new THREE.PlaneGeometry(17, 30);
   const poolM = new THREE.MeshBasicMaterial({
     map: glowTexture(), transparent: true, blending: THREE.AdditiveBlending,
-    depthWrite: false, opacity: 0.28,
+    depthWrite: false, opacity: 0.17,
   });
   const pools = new THREE.InstancedMesh(poolG, poolM, count);
   pools.renderOrder = 2;
@@ -211,10 +271,34 @@ export function buildStreetLights(track, scene) {
     m.compose(pos, qp, sc);
     pools.setMatrixAt(i, m);
   }
+  // 灯りのにじみ。Points は常にカメラを向くので、遠くの灯りが点々と連なって見えます
+  // （インスタンス化した板だと向きが固定され、横から見ると消えてしまいます）
+  const flarePos = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    track.sample(i * step, sm);
+    const side = i % 2 === 0 ? -1 : 1;
+    pos.copy(sm.pos)
+      .addScaledVector(sm.lat, side * (ROAD.halfRoad - 0.8))
+      .addScaledVector(sm.up, 9.05);
+    flarePos[i * 3] = pos.x; flarePos[i * 3 + 1] = pos.y; flarePos[i * 3 + 2] = pos.z;
+  }
+  const flareGeo = new THREE.BufferGeometry();
+  flareGeo.setAttribute('position', new THREE.Float32BufferAttribute(flarePos, 3));
+  const flares = new THREE.Points(flareGeo, new THREE.PointsMaterial({
+    // size はワールド単位。大きくすると発光する球が浮いているように見えるので、
+    // 実際の灯具に近い 3m 程度にとどめ、遠くでも見えることは fog:false とブルームに任せます。
+    map: glowTexture(), color: 0xffe6bb, size: 3.0, sizeAttenuation: true,
+    transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending,
+    depthWrite: false, fog: false,
+  }));
+  flares.frustumCulled = false;
+  flares.renderOrder = 3;
+  group.add(flares);
+
   for (const im of [poles, arms, heads, pools]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; }
   group.add(poles, arms, heads, pools);
   scene.add(group);
-  return { group, pools, heads };
+  return { group, pools, heads, flares };
 }
 
 // ---------------------------------------------------------------- 高架の橋脚
@@ -252,6 +336,51 @@ export function buildPiers(track, scene) {
   grp.add(im, beams);
   scene.add(grp);
   return grp;
+}
+
+/**
+ * 市街地区間の地面。
+ * これがないと、ビルの足元が真っ黒な海のままになり「宙に浮いた箱」に見えます。
+ * コースに沿った幅広の帯として1枚だけ張るので、重なりによるちらつきも起きません。
+ */
+export function buildLand(track, scene) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x14171e, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.25,
+  });
+  const HALF = 460;
+  const Y = -1.4;
+  const sm = {};
+  for (const z of track.zones) {
+    if (z.kind !== 'city') continue;
+    const from = z.from - 120, to = z.to + 120;
+    const rows = Math.max(2, Math.floor((to - from) / 60));
+    const posA = new Float32Array((rows + 1) * 2 * 3);
+    const idx = [];
+    for (let r = 0; r <= rows; r++) {
+      const s2 = lerp(from, to, r / rows);
+      track.sample(s2, sm);
+      for (let q = 0; q < 2; q++) {
+        const u = q === 0 ? -HALF : HALF;
+        const o = (r * 2 + q) * 3;
+        posA[o] = sm.pos.x + sm.lat.x * u;
+        posA[o + 1] = Y;
+        posA[o + 2] = sm.pos.z + sm.lat.z * u;
+      }
+    }
+    for (let r = 0; r < rows; r++) {
+      const a = r * 2, b = a + 1, c = a + 2, d = a + 3;
+      idx.push(a, d, c, a, b, d);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, mat));
+  }
+  scene.add(group);
+  return group;
 }
 
 // ---------------------------------------------------------------- 路側の細かい造作
@@ -608,14 +737,21 @@ export function buildSigns(track, scene) {
 
 export function buildBridges(track, scene) {
   const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: 0x6d7078, roughness: 0.6, metalness: 0.35 });
-  const cableMat = new THREE.LineBasicMaterial({ color: 0x9fa8b6, transparent: true, opacity: 0.42 });
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x4a4e56, roughness: 0.8, metalness: 0.2, envMapIntensity: 0.4,
+  });
+  // ケーブルは細く・暗く。明るい線を長く張ると空を引っ掻いたように見えます。
+  const cableMat = new THREE.LineBasicMaterial({ color: 0x7d8694, transparent: true, opacity: 0.22 });
   const sm = {}, basis = new THREE.Matrix4(), q = new THREE.Quaternion();
   const back = new THREE.Vector3();
   for (const z of track.zones) {
     if (z.kind !== 'bridge') continue;
-    const mid = (z.from + z.to) / 2;
-    for (const s of [z.from + 90, mid, z.to - 90]) {
+    // 主塔は2基まで。3基だとケーブルが重なって収拾がつかなくなります。
+    const span = z.to - z.from;
+    const towers = span > 700
+      ? [z.from + span * 0.30, z.from + span * 0.70]
+      : [z.from + span * 0.5];
+    for (const s of towers) {
       track.sample(s, sm);
       basis.makeBasis(sm.lat, sm.up, back.copy(sm.tan).negate());
       q.setFromRotationMatrix(basis);
@@ -632,16 +768,14 @@ export function buildBridges(track, scene) {
       top.position.set(0, H - 14, 0);
       g.add(top);
       // ケーブル
+      // 主塔から路面へ扇状に。届く距離を抑えて、隣の塔のケーブルと交差させません。
       const pts = [];
       for (const side of [-1, 1]) {
         for (let i = 1; i <= 5; i++) {
-          const dz = i * 34;
-          pts.push(
-            new THREE.Vector3(side * (ROAD.halfRoad + 3.2), H - 16, 0),
-            new THREE.Vector3(side * (ROAD.halfRoad + 1.0), 1.5, dz),
-            new THREE.Vector3(side * (ROAD.halfRoad + 3.2), H - 16, 0),
-            new THREE.Vector3(side * (ROAD.halfRoad + 1.0), 1.5, -dz)
-          );
+          const dz = i * 22;
+          const top = new THREE.Vector3(side * (ROAD.halfRoad + 3.2), H - 18 - i * 1.4, 0);
+          pts.push(top.clone(), new THREE.Vector3(side * (ROAD.halfRoad + 1.0), 1.4, dz));
+          pts.push(top.clone(), new THREE.Vector3(side * (ROAD.halfRoad + 1.0), 1.4, -dz));
         }
       }
       const cg = new THREE.BufferGeometry().setFromPoints(pts);

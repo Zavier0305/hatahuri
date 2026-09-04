@@ -34,6 +34,7 @@ export class AudioEngine {
     engFilter.connect(master);
 
     this.oscs = [];
+    // 基本の倍音構成。setVoice() でエンジン形式ごとに配合を変えます。
     const harmonics = [
       { type: 'sawtooth', mul: 0.5, gain: 0.55 },
       { type: 'square', mul: 1.0, gain: 0.40 },
@@ -77,7 +78,52 @@ export class AudioEngine {
     this.tire = mkNoise('bandpass', 1800, 6, 0);
     this.turbo = mkNoise('bandpass', 3600, 9, 0);
 
+    // トンネル用の反響（ディレイのフィードバック）。区間に入ると混ざります。
+    const rev = ctx.createDelay(0.4);
+    rev.delayTime.value = 0.075;
+    const revFb = ctx.createGain();
+    revFb.gain.value = 0.42;
+    const revMix = ctx.createGain();
+    revMix.gain.value = 0;
+    const revTone = ctx.createBiquadFilter();
+    revTone.type = 'lowpass';
+    revTone.frequency.value = 2200;
+    engFilter.connect(rev);
+    rev.connect(revFb); revFb.connect(rev);
+    rev.connect(revTone); revTone.connect(revMix); revMix.connect(master);
+    this.reverb = revMix;
+
+    this.voice = null;
     this.ready = true;
+  }
+
+  /**
+   * エンジン形式に合わせて音色を切り替えます。
+   * 直6は倍音が整い、直4は粗く、ロータリーは基音が高く滑らか、
+   * 水平対向は独特の不等間隔感を弱いデチューンで表現します。
+   */
+  setVoice(spec) {
+    if (!this.ready) return;
+    const kind = spec.sound || 'i6';
+    if (this.voice === kind) return;
+    this.voice = kind;
+    const P = {
+      i6:     { mul: [0.5, 1, 2, 3.02], gain: [0.50, 0.40, 0.22, 0.12], type: ['sawtooth', 'square', 'sawtooth', 'sawtooth'], detune: 0 },
+      i4:     { mul: [0.5, 1, 1.5, 2.5], gain: [0.62, 0.44, 0.20, 0.14], type: ['square', 'sawtooth', 'square', 'sawtooth'], detune: 8 },
+      v6:     { mul: [0.5, 1, 2, 4.0],  gain: [0.44, 0.42, 0.26, 0.14], type: ['sawtooth', 'sawtooth', 'sawtooth', 'triangle'], detune: 4 },
+      flat6:  { mul: [0.5, 1, 2, 3.5],  gain: [0.48, 0.38, 0.30, 0.16], type: ['sawtooth', 'sawtooth', 'square', 'sawtooth'], detune: 12 },
+      boxer4: { mul: [0.5, 1, 1.5, 3.0], gain: [0.58, 0.40, 0.24, 0.12], type: ['square', 'sawtooth', 'sawtooth', 'square'], detune: 18 },
+      rotary: { mul: [1, 2, 3, 4.5],    gain: [0.40, 0.34, 0.24, 0.14], type: ['sawtooth', 'triangle', 'sawtooth', 'triangle'], detune: 2 },
+    }[kind] || P_i6_fallback();
+    for (let i = 0; i < this.oscs.length; i++) {
+      this.oscs[i].mul = P.mul[i];
+      this.oscs[i].g.gain.value = P.gain[i];
+      this.oscs[i].o.type = P.type[i];
+      this.oscs[i].o.detune.value = (i % 2 ? 1 : -1) * P.detune;
+    }
+    function P_i6_fallback() {
+      return { mul: [0.5, 1, 2, 3.02], gain: [0.5, 0.4, 0.22, 0.12], type: ['sawtooth', 'square', 'sawtooth', 'sawtooth'], detune: 0 };
+    }
   }
 
   resume() {
@@ -96,8 +142,10 @@ export class AudioEngine {
     const ctx = this.ctx;
     const t = ctx.currentTime;
     const spec = v.spec;
-    const cyl = 6;
-    const base = clamp((v.rpm / 60) * (cyl / 2), 22, 420);
+    this.setVoice(spec);
+    // 4ストロークの発火周波数 = 回転数/60 × 気筒数/2（ロータリーは2ローターぶん）
+    const cyl = spec.cyl || 6;
+    const base = clamp((v.rpm / 60) * (cyl / 2), 22, 460);
     for (const h of this.oscs) {
       h.o.frequency.setTargetAtTime(base * h.mul, t, 0.02);
     }
@@ -117,6 +165,11 @@ export class AudioEngine {
 
     this.turbo.g.gain.setTargetAtTime(v.boost * 0.05 * load, t, 0.08);
     this.turbo.f.frequency.setTargetAtTime(2600 + v.boost * 3200, t, 0.1);
+
+    // トンネルの反響
+    if (this.reverb) {
+      this.reverb.gain.setTargetAtTime(opts.tunnel ? 0.34 : 0.0, t, 0.35);
+    }
 
     // ブローオフ（アクセルオフの瞬間）
     if (this._lastThr === undefined) this._lastThr = 0;

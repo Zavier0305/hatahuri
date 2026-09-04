@@ -1,4 +1,4 @@
-const KEY = 'wangan-midnight-save-v1';
+const KEY = 'tokyo-bay-early-morning-v1';
 
 const DEFAULT = {
   money: 3200000,
@@ -10,6 +10,7 @@ const DEFAULT = {
   cleared: [],
   bestLap: {},               // carId -> ms
   bestTop: 0,                // 自己最高速[km/h]
+  hintSeen: false,           // 初回の操作ガイドを見たか
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
 

@@ -3,11 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#05070d">
-<title>WANGAN MIDNIGHT — 湾岸ミッドナイト風レーシング</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23070a12'/%3E%3Ctext y='23' x='16' text-anchor='middle' font-size='18'%3E%F0%9F%8F%81%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#070c17">
+<meta name="description" content="東京湾アーリーモーニング — 湾岸の夜明けを走る、三人称視点のハイスピードレース。">
+<title>東京湾アーリーモーニング</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23070c17'/%3E%3Crect x='0' y='18' width='32' height='3' fill='%23ff9a52'/%3E%3Ccircle cx='16' cy='18' r='6' fill='%23ffb877'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Roboto+Condensed:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="./styles/main.css">
 <script type="importmap">
 {
@@ -68,58 +69,76 @@
 
   <div id="touch" class="hidden">
     <div class="tc left">
-      <button id="tc-left">◀</button>
-      <button id="tc-right">▶</button>
+      <button id="tc-left" aria-label="左">◀</button>
+      <button id="tc-right" aria-label="右">▶</button>
     </div>
     <div class="tc right">
-      <button id="tc-down">▼</button>
-      <button id="tc-up">▲</button>
+      <button id="tc-down" aria-label="シフトダウン">▼</button>
+      <button id="tc-up" aria-label="シフトアップ">▲</button>
       <button id="tc-brk">BRAKE</button>
       <button id="tc-acc">ACCEL</button>
     </div>
   </div>
 
   <div id="speedvignette"></div>
+
+  <div id="first-hint" class="hidden">
+    <div class="fh-box">
+      <b>操作</b>
+      <ul>
+        <li><kbd>↑</kbd> アクセル　<kbd>↓</kbd> ブレーキ</li>
+        <li><kbd>←</kbd><kbd>→</kbd> ハンドル</li>
+        <li><kbd>C</kbd> カメラ切替　<kbd>Esc</kbd> ポーズ</li>
+        <li>前車の40m以内はスリップストリームで伸びる</li>
+      </ul>
+      <span class="fh-close">何かキーを押すと消えます</span>
+    </div>
+  </div>
 </div>
 
-<!-- ============================ 画面群 ============================ -->
+<!-- ============================ 画面 ============================ -->
 <div id="ui">
 
   <!-- ローディング -->
   <section id="scr-loading" class="screen active">
     <div class="loading-box">
-      <div class="logo-min">WANGAN&nbsp;MIDNIGHT</div>
-      <div class="bar-load"><i></i></div>
-      <p id="load-text">コースを生成しています…</p>
+      <div class="horizon"></div>
+      <div class="logo-min">TOKYO BAY EARLY MORNING</div>
+      <p id="load-text">湾岸を生成しています…</p>
     </div>
   </section>
 
   <!-- タイトル -->
   <section id="scr-title" class="screen">
     <div class="title-wrap">
-      <div class="kicker">UNOFFICIAL FAN GAME</div>
-      <h1 class="logo">湾岸<span>MIDNIGHT</span></h1>
-      <p class="tagline">首都高・湾岸線をモチーフにした、三人称視点のハイスピードバトル。</p>
-      <nav class="menu">
-        <button data-go="story"><b>ストーリー</b><span>9人のライバルと1対1のバトル</span></button>
-        <button data-go="free"><b>フリーラン</b><span>交通量のある湾岸を自由に流す</span></button>
-        <button data-go="ta"><b>タイムアタック</b><span>1周のベストラップに挑戦</span></button>
-        <button data-go="garage"><b>ガレージ</b><span>マシン選択・チューン・カラー</span></button>
-        <button data-go="howto"><b>操作方法</b><span>キーボード / パッド / タッチ</span></button>
-        <button data-go="settings"><b>設定</b><span>画質・サウンド・AT/MT</span></button>
+      <header class="brand">
+        <div class="brand-jp">東京湾<span>アーリーモーニング</span></div>
+        <div class="brand-rule"></div>
+        <div class="brand-en">TOKYO BAY EARLY MORNING</div>
+      </header>
+      <p class="tagline">午前2時。夜が明けるまでに、あと9台。</p>
+
+      <nav class="menu" id="title-menu">
+        <button data-go="story"><span class="mi">01</span><b>ストーリー</b><i>9人のライバルと1対1</i></button>
+        <button data-go="free"><span class="mi">02</span><b>フリーラン</b><i>交通量のある湾岸を流す</i></button>
+        <button data-go="ta"><span class="mi">03</span><b>タイムアタック</b><i>1周14.7kmのベストラップ</i></button>
+        <button data-go="garage"><span class="mi">04</span><b>ガレージ</b><i>マシン・チューン・カラー</i></button>
+        <button data-go="howto"><span class="mi">05</span><b>操作方法</b><i>キーボード / パッド / タッチ</i></button>
+        <button data-go="settings"><span class="mi">06</span><b>設定</b><i>画質・操作・サウンド</i></button>
+        <button data-go="credits"><span class="mi">07</span><b>クレジット</b><i>制作について</i></button>
       </nav>
-      <p class="disclaimer">
-        本作は漫画『湾岸MIDNIGHT』へのオマージュとして制作された非公式のファン作品です。
-        登場人物・ストーリーはオリジナルで、権利者とは一切関係ありません。
-        車両は実在の市販車を参考にしていますが、性能値はゲーム用の調整値です。
-      </p>
+      <div class="title-foot">
+        <span id="build-ver">v1.0</span>
+        <span class="dot">·</span>
+        <span>登場する車両・人物・企業はすべて架空のものです</span>
+      </div>
     </div>
   </section>
 
   <!-- ストーリー -->
   <section id="scr-story" class="screen">
     <div class="panel wide">
-      <header><h2>ストーリー</h2><button class="back" data-go="title">戻る</button></header>
+      <header><h2>ストーリー</h2><span class="sub">夜明けまでに、順に潰していく</span><button class="back" data-go="title">戻る</button></header>
       <div id="rival-list" class="rival-list"></div>
     </div>
   </section>
@@ -129,22 +148,23 @@
     <div class="panel">
       <header><h2 id="brief-title">バトル</h2><button class="back" data-go="story">戻る</button></header>
       <div class="brief">
-        <div class="brief-rival">
+        <div class="brief-col">
+          <div class="col-lbl">RIVAL</div>
           <div class="rv-name" id="brief-name"></div>
           <div class="rv-title" id="brief-subtitle"></div>
           <div class="rv-car" id="brief-car"></div>
           <p class="quote" id="brief-quote"></p>
         </div>
-        <div class="brief-you">
-          <div class="lbl">YOUR MACHINE</div>
+        <div class="brief-col">
+          <div class="col-lbl">YOUR MACHINE</div>
           <div class="rv-car" id="brief-mycar"></div>
           <div id="brief-mystats" class="statline"></div>
           <div class="warn" id="brief-warn"></div>
         </div>
       </div>
       <footer>
-        <button class="primary" id="brief-start">バトル開始</button>
         <button data-go="garage">ガレージで整備する</button>
+        <button class="primary" id="brief-start">バトル開始</button>
       </footer>
     </div>
   </section>
@@ -152,7 +172,11 @@
   <!-- ガレージ -->
   <section id="scr-garage" class="screen">
     <div class="panel wide garage">
-      <header><h2>ガレージ</h2><span id="garage-money" class="money"></span><button class="back" data-go="title">戻る</button></header>
+      <header>
+        <h2>ガレージ</h2>
+        <span id="garage-money" class="money"></span>
+        <button class="back" data-go="title">戻る</button>
+      </header>
       <div class="garage-body">
         <div class="car-list" id="car-list"></div>
         <div class="car-detail">
@@ -168,11 +192,13 @@
           <p class="engine" id="d-engine"></p>
           <p class="note" id="d-note"></p>
           <div class="specs" id="d-specs"></div>
+          <div class="tune-head">チューニング</div>
           <div class="tune" id="tune-list"></div>
+          <div class="tune-head">カラー</div>
           <div class="colors" id="color-row"></div>
           <div class="detail-actions">
-            <button class="primary" id="btn-select">この車に乗る</button>
             <button id="btn-buy">購入する</button>
+            <button class="primary" id="btn-select">この車に乗る</button>
           </div>
         </div>
       </div>
@@ -185,20 +211,22 @@
       <header><h2>操作方法</h2><button class="back" data-go="title">戻る</button></header>
       <div class="howto">
         <table>
-          <tr><th>アクセル</th><td><kbd>↑</kbd> / <kbd>W</kbd> / パッドRT</td></tr>
-          <tr><th>ブレーキ</th><td><kbd>↓</kbd> / <kbd>S</kbd> / パッドLT</td></tr>
-          <tr><th>ステア</th><td><kbd>←</kbd><kbd>→</kbd> / <kbd>A</kbd><kbd>D</kbd> / 左スティック</td></tr>
-          <tr><th>シフトアップ</th><td><kbd>E</kbd> / <kbd>Shift</kbd> / パッドRB</td></tr>
-          <tr><th>シフトダウン</th><td><kbd>Q</kbd> / <kbd>Ctrl</kbd> / パッドLB</td></tr>
-          <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> / パッドA</td></tr>
+          <tr><th>アクセル</th><td><kbd>↑</kbd> <kbd>W</kbd> <span class="pad">パッド RT</span></td></tr>
+          <tr><th>ブレーキ</th><td><kbd>↓</kbd> <kbd>S</kbd> <span class="pad">パッド LT</span></td></tr>
+          <tr><th>ステア</th><td><kbd>←</kbd><kbd>→</kbd> <kbd>A</kbd><kbd>D</kbd> <span class="pad">左スティック</span></td></tr>
+          <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
+          <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
+          <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
           <tr><th>カメラ切替</th><td><kbd>C</kbd></td></tr>
           <tr><th>リスタート</th><td><kbd>R</kbd></td></tr>
           <tr><th>ポーズ</th><td><kbd>Esc</kbd></td></tr>
         </table>
-        <p class="hint">
-          コツ：レッドゾーン手前でシフトアップ、コーナーはブレーキで前荷重をかけてから曲げる。
-          前車の真後ろ（40m以内）はスリップストリームが効いて空気抵抗が約4割減ります。
-        </p>
+        <div class="tips">
+          <b>走らせかた</b>
+          <p>レッドゾーン手前でシフトアップ。コーナーはブレーキで前に荷重をかけてから曲げる。
+          前車の40m以内に入るとスリップストリームが効き、空気抵抗が約4割減ります。
+          追越車線には一般車が出てこないので、全開で使えます。</p>
+        </div>
       </div>
     </div>
   </section>
@@ -208,20 +236,51 @@
     <div class="panel">
       <header><h2>設定</h2><button class="back" data-go="title">戻る</button></header>
       <div class="settings">
-        <label><span>ブルーム（光のにじみ）</span><input type="checkbox" id="set-bloom"></label>
-        <label><span>サウンド</span><input type="checkbox" id="set-sound"></label>
-        <label><span>オートマチック変速</span><input type="checkbox" id="set-at"></label>
-        <label><span>ドライビングアシスト<br><small>滑ったぶんだけ自動でカウンターを当てます</small></span><input type="checkbox" id="set-assist"></label>
-        <label><span>画質</span>
-          <select id="set-quality">
-            <option value="high">高</option>
-            <option value="mid">中</option>
-            <option value="low">低（軽量）</option>
-          </select>
-        </label>
-        <label><span>タッチ操作パネル</span><input type="checkbox" id="set-touch"></label>
-        <div class="danger">
-          <button id="btn-reset">セーブデータを消去</button>
+        <div class="set-group">
+          <div class="set-head">画面</div>
+          <label><span>画質</span>
+            <select id="set-quality">
+              <option value="high">高</option>
+              <option value="mid">中</option>
+              <option value="low">低（軽量）</option>
+            </select>
+          </label>
+          <label><span>ブルーム<i>光のにじみ。切ると軽くなります</i></span><input type="checkbox" id="set-bloom"></label>
+        </div>
+        <div class="set-group">
+          <div class="set-head">操作</div>
+          <label><span>オートマチック変速</span><input type="checkbox" id="set-at"></label>
+          <label><span>ドライビングアシスト<i>滑ったぶんだけ自動でカウンターを当てます</i></span><input type="checkbox" id="set-assist"></label>
+          <label><span>タッチ操作パネル</span><input type="checkbox" id="set-touch"></label>
+        </div>
+        <div class="set-group">
+          <div class="set-head">サウンド</div>
+          <label><span>効果音<i>エンジン音はすべてリアルタイム合成です</i></span><input type="checkbox" id="set-sound"></label>
+        </div>
+        <div class="set-group danger">
+          <div class="set-head">データ</div>
+          <label><span>セーブデータ<i>所持金・所有車・チューン・記録</i></span><button id="btn-reset">消去する</button></label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- クレジット -->
+  <section id="scr-credits" class="screen">
+    <div class="panel">
+      <header><h2>クレジット</h2><button class="back" data-go="title">戻る</button></header>
+      <div class="credits">
+        <div class="cr-row"><span>タイトル</span><b>東京湾アーリーモーニング</b></div>
+        <div class="cr-row"><span>ジャンル</span><b>三人称視点 ハイスピードレース</b></div>
+        <div class="cr-row"><span>実装</span><b>WebGL (three.js) / ビルド不要の素のES Modules</b></div>
+        <div class="cr-row"><span>3Dモデル</span><b>すべて実行時に手続き生成（外部アセットなし）</b></div>
+        <div class="cr-row"><span>サウンド</span><b>WebAudio によるリアルタイム合成（音声ファイルなし）</b></div>
+        <div class="cr-row"><span>コース</span><b>1周 14.7km の周回路を手続き生成</b></div>
+        <div class="cr-note">
+          <p>登場する車両・メーカー・人物・企業はすべて架空のものであり、実在のいかなる存在とも関係ありません。
+          車両の性能値は1990年代の同クラス車を参考にした、ゲーム用の調整値です。</p>
+          <p>物理は前後2輪モデル（バイシクルモデル）に摩擦円・荷重移動・空力を組み合わせています。
+          最高速はカタログ値ではなく、出力と空気抵抗の釣り合いで決まります。</p>
         </div>
       </div>
     </div>
@@ -233,9 +292,9 @@
       <header><h2>ポーズ</h2></header>
       <nav class="menu compact">
         <button id="pz-resume"><b>再開</b></button>
+        <button id="pz-camera"><b>カメラ切替</b><i id="pz-camlabel"></i></button>
         <button id="pz-restart"><b>やり直す</b></button>
-        <button id="pz-finish"><b>走行を終える</b><span>ここまでの記録でリザルトへ</span></button>
-        <button id="pz-camera"><b>カメラ切替</b><span id="pz-camlabel"></span></button>
+        <button id="pz-finish"><b>走行を終える</b><i>ここまでの記録でリザルトへ</i></button>
         <button id="pz-quit"><b>タイトルへ戻る</b></button>
       </nav>
     </div>
