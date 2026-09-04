@@ -240,6 +240,32 @@ export class Game {
     this.track = null;
     this.course = null;
     this.traffic = null;
+    this.wet = false;
+
+    // --- 雨。降っているコースでだけ表示します。
+    this.rain = (() => {
+      const N = 700;
+      const pos = new Float32Array(N * 2 * 3);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+        color: 0xc4d6ec, transparent: true, opacity: 0.30,
+        depthWrite: false, fog: false,
+      }));
+      lines.frustumCulled = false;
+      lines.renderOrder = 4;
+      lines.visible = false;
+      this.scene.add(lines);
+      const off = new Float32Array(N * 3);
+      // カメラのすぐ周りにだけ降らせます。遠くまで撒くと、後ろへ寝た筋が
+      // 消失点から放射状に伸びて「ワープ」に見えてしまいます。
+      for (let i = 0; i < N; i++) {
+        off[i * 3] = (Math.random() - 0.5) * 30;
+        off[i * 3 + 1] = Math.random() * 15;
+        off[i * 3 + 2] = Math.random() * 22 - 8;
+      }
+      return { lines, geo, off, N, arr: geo.attributes.position.array };
+    })();
 
     // --- エフェクト
     this.sparks = new Particles(this.scene, 240, 0xffc266, 0.42);
@@ -323,16 +349,29 @@ export class Game {
     this.scene.add(w);
     this.world = w;
 
+    // 天候。濡れた路面はグリップが落ち、映り込みが強くなります。
+    this.wet = !!course.wet;
+    this.rain.lines.visible = this.wet;
+    const roadMat = w.children[0] && w.children[0].userData.roadMat;
+    if (roadMat) {
+      roadMat.roughness = this.wet ? 0.28 : 0.62;
+      roadMat.metalness = this.wet ? 0.55 : 0.16;
+      roadMat.envMapIntensity = this.wet ? 1.5 : 0.55;
+      roadMat.color.setHex(this.wet ? 0x9aa2ae : 0xffffff);
+    }
+    this.scene.fog.density = this.wet ? 0.0042 : 0.0021;
+
     const base = this.settings.quality === 'low' ? 26 : 44;
-    const count = Math.max(12, Math.round(base * (course.traffic ?? 1)));
+    const count = clamp(Math.round(base * (course.traffic ?? 1)), 12, 96);
     this.traffic = new Traffic(this.track, this.scene, count, (course.seed ?? 1) + 4242);
 
     // 走行中の参照をコースに合わせて作り直します
     if (this.player) {
       this.player.vehicle.placeOnTrack(this.track, 0, LANE_U[1]);
       this.autoAI = new RivalAI(this.player.vehicle, this.track, { skill: 0.80, aggression: 0.45 });
+      this.autoAI.gripScale = this.wet ? 0.78 : 1;
     }
-    if (this.rivalAI) this.rivalAI.track = this.track;
+    if (this.rivalAI) { this.rivalAI.track = this.track; this.rivalAI.gripScale = this.wet ? 0.78 : 1; }
     this.onEvent('course', course);
     return this.track;
   }
@@ -387,6 +426,7 @@ export class Game {
     this.rivalAI = new RivalAI(this.rival.vehicle, this.track, {
       skill: rivalDef.skill, aggression: rivalDef.aggression,
     });
+    this.rivalAI.gripScale = this.wet ? 0.78 : 1;
     this.rival.vehicle.name = rivalDef.name;
     return this.rival;
   }
@@ -581,7 +621,12 @@ export class Game {
 
   emitSmoke(actor) {
     const v = actor.vehicle;
-    const slip = Math.max(v.slipRear, v.wheelSpin * 0.7);
+    // 濡れた路面では、滑っていなくてもタイヤが水を巻き上げます
+    // 濡れた路面の水しぶきは、高速のときだけ・まばらに。
+    // 常時出すと、車の後ろに灰色の玉が浮いているように見えます。
+    const spray = this.wet && Math.abs(v.vx) > 38 && Math.random() < 0.45
+      ? clamp((Math.abs(v.vx) - 38) / 60, 0, 0.28) : 0;
+    const slip = Math.max(v.slipRear, v.wheelSpin * 0.7) + spray;
     if (slip < 0.34 || Math.abs(v.vx) < 8) return;
     const back = -v.spec.dims.WB * 0.5;
     const cs = Math.cos(v.heading), sn = Math.sin(v.heading);
@@ -592,7 +637,7 @@ export class Game {
         v.pos.y + 0.18,
         v.pos.z + cs * back - sn * ox
       );
-      this.smoke.emit(p, { x: 0, y: 1.1, z: 0 }, 0.5 + slip * 0.7, 2.2);
+      this.smoke.emit(p, { x: 0, y: this.wet ? 1.6 : 1.1, z: 0 }, (this.wet ? 0.20 : 0.5) + slip * 0.6, this.wet ? 2.6 : 2.2);
     }
   }
 
@@ -683,7 +728,7 @@ export class Game {
     }
 
     // --- 物理
-    pv.update(dt);
+    pv.update(dt, { wet: this.wet });
     const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
     if (wallHit > 1.5) {
       this.emitSparks(pv, 14);
@@ -699,7 +744,7 @@ export class Game {
 
     if (this.rival) {
       const rv = this.rival.vehicle;
-      rv.update(dt);
+      rv.update(dt, { wet: this.wet });
       rv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
       rv.snapToRoad(this.track);
       this.collideTraffic(this.rival);
@@ -760,6 +805,7 @@ export class Game {
 
     // --- 演出
     this.updateCamera(dt);
+    this.updateRain(dt);
     this.updateEffects(dt);
     this.player.syncMesh(this.track);
     if (this.rival) this.rival.syncMesh(this.track);
@@ -868,12 +914,46 @@ export class Game {
       .addScaledVector(sm.up, -0.4);
   }
 
+  /** 雨粒を更新します。落下に速度ぶんの流れを足すので、速いほど後ろへ寝ます。 */
+  updateRain(dt) {
+    if (!this.wet) return;
+    const v = this.player.vehicle;
+    const r = this.rain;
+    const sm = this.track.sample(v.s, this._tmpB);
+    const fwd = this._camDir.set(Math.sin(v.heading), 0, Math.cos(v.heading));
+    const right = this._camMix.set(-Math.cos(v.heading), 0, Math.sin(v.heading));
+    const speed = Math.abs(v.vx);
+    // 1本の長さ：落下ぶん＋走行ぶん
+    // 1本の長さ。走行ぶんに引っぱられて寝ますが、寝すぎないよう頭打ちにします。
+    // 物理的には時速200kmの雨は水平近くまで寝ますが、そのまま描くと
+    // 消失点から放射状に伸びて「ワープ」にしか見えません。
+    // ここは絵づくりを優先して、ほぼ縦の短い筋に留めます。
+    const dy = -1.5 - speed * 0.002;
+    const dz = clamp(-0.2 - speed * 0.010, -0.9, -0.2);
+    const a = r.arr;
+    for (let i = 0; i < r.N; i++) {
+      r.off[i * 3 + 1] -= (26 + speed * 0.4) * dt;
+      r.off[i * 3 + 2] -= speed * dt * 0.55;
+      if (r.off[i * 3 + 1] < -2) { r.off[i * 3 + 1] += 17; r.off[i * 3 + 2] = Math.random() * 22 - 8; }
+      if (r.off[i * 3 + 2] < -9) r.off[i * 3 + 2] += 30;
+      const ox = r.off[i * 3], oy = r.off[i * 3 + 1], oz = r.off[i * 3 + 2];
+      const px = v.pos.x + right.x * ox + sm.up.x * oy + fwd.x * oz;
+      const py = v.pos.y + right.y * ox + sm.up.y * oy + fwd.y * oz;
+      const pz = v.pos.z + right.z * ox + sm.up.z * oy + fwd.z * oz;
+      a[i * 6] = px; a[i * 6 + 1] = py; a[i * 6 + 2] = pz;
+      a[i * 6 + 3] = px + fwd.x * dz;
+      a[i * 6 + 4] = py + dy;
+      a[i * 6 + 5] = pz + fwd.z * dz;
+    }
+    r.geo.attributes.position.needsUpdate = true;
+  }
+
   updateEffects(dt) {
     const v = this.player.vehicle;
     const tunnel = this.track.isTunnel(v.s);
-    const targetFog = tunnel ? 0.0068 : 0.0021;
+    const targetFog = tunnel ? 0.0068 : (this.wet ? 0.0042 : 0.0021);
     this.scene.fog.density = damp(this.scene.fog.density, targetFog, 2.2, dt);
-    const targetFogColor = tunnel ? 0x181c24 : 0x121b2e;
+    const targetFogColor = tunnel ? 0x181c24 : (this.wet ? 0x1c2230 : 0x121b2e);
     this.scene.fog.color.lerp(new THREE.Color(targetFogColor), 1 - Math.exp(-2.2 * dt));
 
     // 航空障害灯の点滅
@@ -904,7 +984,8 @@ export class Game {
         ? formatTime(this.state.lapTime)
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
-      zoneText: `${this.course.name}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
+      wet: this.wet,
+      zoneText: `${this.course.name}${this.wet ? '（雨）' : ''}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
     };
   }
 }

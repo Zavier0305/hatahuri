@@ -457,5 +457,7 @@ export function buildRoad(track) {
 
   function wallM(m) { return m; }
 
+  // 濡れた路面へ切り替えられるよう、材質を外へ渡します
+  group.userData.roadMat = roadMat;
   return group;
 }

@@ -18,6 +18,7 @@ export class RivalAI {
     this.targetU = LANE_U[0];   // 実際に狙う横位置（車線変更は時間をかけて寄せます）
     this.laneTimer = 0;
     this.rubber = cfg.rubber ?? 0.10;   // 競り合いを保つための微調整
+    this.gripScale = 1;                 // 路面の状態（雨なら下げます）
     this._tmp = {};
     this._tmp2 = {};
     this._tmp3 = {};
@@ -38,12 +39,12 @@ export class RivalAI {
       const sm = track.sample(this.v.s + d, this._tmp);
       const c = Math.abs(sm.curv);
       if (c < 1e-5) continue;
-      const grip = S.grip * (1 + S.downforce * 0.30);
+      const grip = S.grip * this.gripScale * (1 + S.downforce * 0.30);
       const vAllowed = Math.sqrt((grip * 9.81) / c) * 0.94;   // 限界ぎりぎりを狙わない
       // 遠い曲がりほど、まだ減速しなくてよい
       const brakeDist = Math.max(0, d - 25);
       // 旋回しながらのブレーキは全グリップを使えないので、控えめな減速度で見積もります
-      const vNow = Math.sqrt(vAllowed * vAllowed + 2 * (S.grip * 6.3) * brakeDist);
+      const vNow = Math.sqrt(vAllowed * vAllowed + 2 * (S.grip * this.gripScale * 6.3) * brakeDist);
       vmin = Math.min(vmin, vNow);
     }
     return vmin;
