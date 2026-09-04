@@ -8,8 +8,10 @@ import path from 'node:path';
 const out = process.argv[2] || 'dist/wangan-single.html';
 const threeBase = process.argv[3] || 'https://cdn.jsdelivr.net/npm/three@0.160.0';
 
+// 依存の順に並べます。新しいモジュールを足したらここにも追加してください
+// （入れ忘れは下の検査で必ず落ちます）。
 const ORDER = [
-  'util', 'cars', 'carModel', 'track', 'scenery', 'vehicle',
+  'util', 'courses', 'cars', 'carModel', 'track', 'scenery', 'vehicle',
   'ai', 'traffic', 'audio', 'input', 'hud', 'story', 'save', 'game', 'main',
 ];
 
@@ -35,7 +37,23 @@ for (const name of ORDER) {
     const im = line.match(/^import\s+.*?from\s+'([^']+)';\s*$/);
     if (im) {
       const spec = im[1];
-      if (spec.startsWith('.')) continue;              // ローカル依存は連結で解決
+      if (spec.startsWith('.')) {
+        // ローカル依存は連結で解決します。ただし ORDER に入っていなければ
+        // 実行時に「〜 is not defined」になるので、ここで止めます。
+        const dep = spec.replace(/^\.\//, '').replace(/\.js$/, '');
+        if (!ORDER.includes(dep)) {
+          throw new Error(
+            `src/${name}.js が src/${dep}.js を読み込んでいますが、ORDER に入っていません。` +
+            'tools/build-single.mjs の ORDER に依存順で追加してください。'
+          );
+        }
+        if (ORDER.indexOf(dep) > ORDER.indexOf(name)) {
+          throw new Error(
+            `依存の順序が逆です: src/${name}.js は src/${dep}.js より後に置く必要があります。`
+          );
+        }
+        continue;
+      }
       let fixed = line;
       if (spec.startsWith('three/addons/')) {
         const file = spec.slice('three/addons/'.length);

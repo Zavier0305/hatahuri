@@ -8,7 +8,8 @@ const DEFAULT = {
   colors: {},                // carId -> 色(16進)
   storyStage: 0,
   cleared: [],
-  bestLap: {},               // carId -> ms
+  bestLap: {},               // `${courseId}:${carId}` -> ms
+  courseId: 'bayshore',      // 最後に選んだステージ
   bestTop: 0,                // 自己最高速[km/h]
   hintSeen: false,           // 初回の操作ガイドを見たか
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },

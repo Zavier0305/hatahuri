@@ -10,7 +10,7 @@ const COLORS = [0xd8dade, 0x1b1d22, 0x5a6068, 0x2a3a5a, 0x8f9298, 0x30425c, 0xbf
  * 通り過ぎたら前方へ「使い回し」ます（オブジェクトプール）。
  */
 export class Traffic {
-  constructor(track, scene, count = 44, seed = 4242) {
+  constructor(track, scene, count = 44, seed = 4242) {   // seed はコースごとに変えます
     this.track = track;
     this.rand = rng(seed);
     this.cars = [];

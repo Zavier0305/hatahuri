@@ -53,6 +53,12 @@ export class HUD {
     return changed;
   }
 
+  /** コースが変わったら、ミニマップの座標系を作り直します。 */
+  setTrack(track) {
+    this.track = track;
+    this._buildMinimapPath();
+  }
+
   _buildMinimapPath() {
     const t = this.track;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;

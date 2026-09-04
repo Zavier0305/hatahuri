@@ -16,30 +16,92 @@ export const LANE_U = [-2.9, -6.5, -10.1];  // 追越車線 → 走行車線（�
 export const ONCOMING_U = [2.9, 6.5, 10.1];
 
 /**
- * 湾岸をイメージした周回コースを生成します。
+ * コース定義から周回路を生成します。
  * 半径を三角関数で揺らした閉ループなので、必ず一周でつながります。
+ *
+ * 手順は「形を作る → 全長を測る → 目標の全長になるよう水平方向だけ拡大縮小する」。
+ * こうすると、同じ形のまま長さだけ変えられ、短いコースは自動的にコーナーがきつくなります。
  */
-export function createTrack(seed = 20240) {
-  const rand = rng(seed);
-  const CP = 60;
-  const pts = [];
-  for (let i = 0; i < CP; i++) {
-    const a = (i / CP) * TAU;
-    const R =
-      2050 +
-      760 * Math.sin(a + 0.35) +
-      430 * Math.sin(2 * a + 1.9) +
-      260 * Math.sin(3 * a + 0.4) +
-      130 * Math.sin(5 * a + 2.6) +
-      70 * Math.sin(8 * a + 1.2);
-    const y =
-      11 +
-      13 * Math.sin(2 * a + 1.05) +
-      7 * Math.sin(3 * a + 0.2) +
-      3.5 * Math.sin(5 * a + 2.2);
-    pts.push(new THREE.Vector3(Math.cos(a) * R, y, Math.sin(a) * R));
+export function createTrack(course) {
+  // 旧シグネチャ（数値のseed）にも一応対応しておきます
+  if (typeof course === 'number' || course == null) {
+    course = { id: 'bayshore', name: '湾岸', length: 14700, seed: course ?? 20240,
+      aspect: [1, 1], cycles: 3.4, cityDensity: 0.9, traffic: 1,
+      radius: { base: 1, harmonics: [[0.37, 1, 0.35], [0.21, 2, 1.9], [0.13, 3, 0.4], [0.06, 5, 2.6], [0.034, 8, 1.2]] },
+      elevation: [[13, 2, 1.05], [7, 3, 0.2], [3.5, 5, 2.2]],
+      zones: [['bay', 3], ['bridge', 1.2], ['city', 2.2], ['tunnel', 1]] };
   }
-  const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
+  const rand = rng(course.seed ?? 1);
+  const CP = Math.max(48, Math.min(160, Math.round(course.length / 260)));
+  const [ax, az] = course.aspect ?? [1, 1];
+
+  const shape = (a) => {
+    let r = course.radius.base;
+    for (const [amp, freq, phase] of course.radius.harmonics) r += amp * Math.sin(freq * a + phase);
+    return Math.max(0.18, r);
+  };
+  const elev = (a) => {
+    let y = 11;
+    for (const [amp, freq, phase] of (course.elevation ?? [])) y += amp * Math.sin(freq * a + phase);
+    return y;
+  };
+
+  // いったん半径1で作り、あとから目標の全長へ合わせます
+  const build = (scale) => {
+    const pts = [];
+    for (let i = 0; i < CP; i++) {
+      const a = (i / CP) * TAU;
+      const r = shape(a) * scale;
+      pts.push(new THREE.Vector3(Math.cos(a) * r * ax, elev(a), Math.sin(a) * r * az));
+    }
+    return new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
+  };
+  let scale = course.length / TAU;          // 円周からの初期見積もり
+  let curve = build(scale);
+  for (let k = 0; k < 3; k++) {             // 2〜3回で十分収束します
+    const L = curve.getLength();
+    scale *= course.length / L;
+    curve = build(scale);
+  }
+
+  // ---- 最小コーナー半径の保証
+  // 揺らぎが強すぎると、片側3車線の道路に収まらないヘアピンができてしまいます。
+  // 周波数の高い成分ほどきつい曲がりを作るので、そこから先に落として作り直します。
+  const MIN_R = course.minRadius ?? 108;
+  const measureMinRadius = (c) => {
+    const M = 480;
+    const p2 = c.getSpacedPoints(M);
+    const step = c.getLength() / M;
+    let maxC = 0;
+    for (let i = 0; i < M; i++) {
+      const a0 = p2[(i - 1 + M) % M], a1 = p2[i], a2 = p2[(i + 1) % M];
+      const h0 = Math.atan2(a1.x - a0.x, a1.z - a0.z);
+      const h1 = Math.atan2(a2.x - a1.x, a2.z - a1.z);
+      maxC = Math.max(maxC, Math.abs(wrapAngle(h1 - h0)) / step);
+    }
+    return maxC > 1e-6 ? 1 / maxC : Infinity;
+  };
+  const originalHarmonics = course.radius.harmonics;
+  let damp = 1;
+  for (let iter = 0; iter < 10; iter++) {
+    const minR = measureMinRadius(curve);
+    if (minR >= MIN_R) break;
+    damp *= 0.86;
+    course = {
+      ...course,
+      radius: {
+        ...course.radius,
+        // 周波数が高い成分ほど強く抑えます（全体の形はできるだけ保ちます）
+        harmonics: originalHarmonics.map(([amp, f, ph]) => [amp * Math.pow(damp, Math.max(1, f) / 2), f, ph]),
+      },
+    };
+    curve = build(scale);
+    for (let k = 0; k < 2; k++) {
+      scale *= course.length / curve.getLength();
+      curve = build(scale);
+    }
+  }
+
   const length = curve.getLength();
   const n = Math.round(length / ROAD.spacing);
   const spacing = length / n;
@@ -97,26 +159,32 @@ export function createTrack(seed = 20240) {
   }
 
   // ---- 区間の性格づけ（トンネル・橋・市街地・海沿い）
+  // コースごとの並びと重みを、1周に指定回数ぶん敷き詰めます。
   const zones = [];
-  const zoneKinds = ['bay', 'bridge', 'city', 'tunnel', 'bay', 'city', 'tunnel', 'bay', 'bridge', 'city'];
-  let cursor = 0;
-  let zi = 0;
-  while (cursor < length - 200) {
-    const kind = zoneKinds[zi % zoneKinds.length];
-    let len;
-    if (kind === 'tunnel') len = 340 + rand() * 420;
-    else if (kind === 'bridge') len = 500 + rand() * 500;
-    else len = 900 + rand() * 900;
-    len = Math.min(len, length - cursor);
-    zones.push({ from: cursor, to: cursor + len, kind });
-    cursor += len;
-    zi++;
+  {
+    const pattern = course.zones ?? [['bay', 3], ['city', 2], ['tunnel', 1], ['bridge', 1]];
+    const cycles = Math.max(1, course.cycles ?? 3);
+    const totalW = pattern.reduce((a, z) => a + z[1], 0) * cycles;
+    let cursor = 0;
+    const reps = Math.round(cycles);
+    for (let c = 0; c < reps && cursor < length - 60; c++) {
+      for (const [kind, w] of pattern) {
+        if (cursor >= length - 60) break;
+        // 重み通りの長さに ±18% のばらつきを与えて、機械的な繰り返しに見えないようにします
+        let len = (length * w) / totalW * (0.82 + rand() * 0.36);
+        len = Math.min(len, length - cursor);
+        if (len < 55) continue;
+        zones.push({ from: cursor, to: cursor + len, kind });
+        cursor += len;
+      }
+    }
+    if (zones.length) zones[zones.length - 1].to = length;
+    else zones.push({ from: 0, to: length, kind: 'bay' });
   }
-  if (zones.length) zones[zones.length - 1].to = length;
 
   const track = {
-    curve, length, n, spacing,
-    pos, tan, lat, up, curvature, bank, heading, zones, seed,
+    curve, length, n, spacing, course,
+    pos, tan, lat, up, curvature, bank, heading, zones, seed: course.seed,
 
     /** 距離 s（m, 0..length）における位置・方向を返します。 */
     sample(s, out = {}) {

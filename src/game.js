@@ -6,6 +6,7 @@ import { OutputPass } from 'three/addons/OutputPass.js';
 
 import { clamp, lerp, damp, wrapAngle, formatTime, KMH, rng } from './util.js';
 import { createTrack, buildRoad, ROAD, LANE_U } from './track.js';
+import { COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
 import { buildCar } from './carModel.js';
 import { Vehicle, slipstreamFactor } from './vehicle.js';
@@ -107,6 +108,20 @@ class Actor {
     scene.remove(this.mesh);
     scene.remove(this.shadow);
   }
+}
+
+/** 使い終わったシーングラフのジオメトリ／マテリアルを解放します。 */
+function disposeTree(root) {
+  root.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      for (const k of ['map', 'emissiveMap', 'alphaMap', 'normalMap']) {
+        if (m[k] && m[k].dispose) m[k].dispose();
+      }
+      m.dispose();
+    }
+  });
 }
 
 /** 粒子用の丸いスプライト（四角い点にならないように）。同じ設定は使い回します。 */
@@ -213,24 +228,18 @@ export class Game {
     this.scene.add(dawn);
     this.scene.add(new THREE.AmbientLight(0x3a4868, 0.9));
 
-    // --- コース
-    this.track = createTrack(opts.seed ?? 20240);
-    this.scene.add(buildRoad(this.track));
+    // --- コースに依存しないもの（空・海・環境マップ）は1度だけ作ります
     this.sky = buildSky(this.scene);
-    // 夜景を焼き込んだ環境マップ。ボディと路面に「映るもの」を与えます
+    // 夜明けを焼き込んだ環境マップ。ボディと路面に「映るもの」を与えます
     this.envMap = buildEnvironment(this.renderer, this.sky.sky);
     this.scene.environment = this.envMap;
     this.sea = buildSea(this.scene);
-    buildLand(this.track, this.scene);
-    buildPiers(this.track, this.scene);
-    this.lights = buildStreetLights(this.track, this.scene);
-    buildRoadside(this.track, this.scene);
-    this.city = buildCity(this.track, this.scene, 99);
-    buildTunnels(this.track, this.scene);
-    buildSigns(this.track, this.scene);
-    buildBridges(this.track, this.scene);
 
-    this.traffic = new Traffic(this.track, this.scene, this.settings.quality === 'low' ? 26 : 44);
+    // --- コースごとに作り直す部分は world にまとめ、切り替え時にまとめて捨てます
+    this.world = null;
+    this.track = null;
+    this.course = null;
+    this.traffic = null;
 
     // --- エフェクト
     this.sparks = new Particles(this.scene, 240, 0xffc266, 0.42);
@@ -275,8 +284,57 @@ export class Game {
     this._camMix = new THREE.Vector3();
     this._camIdeal = new THREE.Vector3();
     this._camTarget = new THREE.Vector3();
+    this.setCourse(opts.courseId || DEFAULT_COURSE);
+
     this.resize();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  /** コースを切り替えます。前のコースの地形・建物・交通は破棄します。 */
+  setCourse(courseId) {
+    const course = COURSE_BY_ID[courseId] || COURSE_BY_ID[DEFAULT_COURSE];
+    if (this.course && this.course.id === course.id) return this.track;
+
+    if (this.world) {
+      this.scene.remove(this.world);
+      disposeTree(this.world);
+      this.world = null;
+    }
+    if (this.traffic) {
+      this.scene.remove(this.traffic.group);
+      disposeTree(this.traffic.group);
+      this.traffic = null;
+    }
+
+    this.course = course;
+    this.track = createTrack(course);
+
+    const w = new THREE.Group();
+    w.name = 'world';
+    w.add(buildRoad(this.track));
+    buildLand(this.track, w);
+    buildPiers(this.track, w);
+    this.lights = buildStreetLights(this.track, w);
+    buildRoadside(this.track, w);
+    this.city = buildCity(this.track, w, (course.seed ?? 1) + 99, course.cityDensity ?? 0.9);
+    buildTunnels(this.track, w);
+    buildSigns(this.track, w);
+    buildBridges(this.track, w);
+    this.scene.add(w);
+    this.world = w;
+
+    const base = this.settings.quality === 'low' ? 26 : 44;
+    const count = Math.max(12, Math.round(base * (course.traffic ?? 1)));
+    this.traffic = new Traffic(this.track, this.scene, count, (course.seed ?? 1) + 4242);
+
+    // 走行中の参照をコースに合わせて作り直します
+    if (this.player) {
+      this.player.vehicle.placeOnTrack(this.track, 0, LANE_U[1]);
+      this.autoAI = new RivalAI(this.player.vehicle, this.track, { skill: 0.80, aggression: 0.45 });
+    }
+    if (this.rivalAI) this.rivalAI.track = this.track;
+    this.onEvent('course', course);
+    return this.track;
   }
 
   setupComposer() {
@@ -626,11 +684,11 @@ export class Game {
 
     // --- 物理
     pv.update(dt);
-    const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 });
-    if (wallHit > 0.6) {
+    const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
+    if (wallHit > 1.5) {
       this.emitSparks(pv, 14);
-      this.shake = Math.max(this.shake, clamp(wallHit / 8, 0.1, 0.9));
-      audio && audio.crash(clamp(wallHit / 10, 0.2, 1));
+      this.shake = Math.max(this.shake, clamp(wallHit / 12, 0.1, 0.9));
+      audio && audio.crash(clamp(wallHit / 14, 0.2, 1));
     }
     pv.snapToRoad(this.track);
     const crash = this.collideTraffic(this.player);
@@ -642,7 +700,7 @@ export class Game {
     if (this.rival) {
       const rv = this.rival.vehicle;
       rv.update(dt);
-      rv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 });
+      rv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
       rv.snapToRoad(this.track);
       this.collideTraffic(this.rival);
       this.collideCars();
@@ -846,7 +904,7 @@ export class Game {
         ? formatTime(this.state.lapTime)
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
-      zoneText: `${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
+      zoneText: `${this.course.name}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
     };
   }
 }

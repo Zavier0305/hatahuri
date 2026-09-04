@@ -296,6 +296,34 @@ button:disabled{opacity:.34;cursor:not-allowed}
   border-top:1px solid var(--line);padding-top:10px;letter-spacing:.06em
 }
 
+/* ============================ ステージ選択 ============================ */
+.course-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:1px;background:var(--line)}
+.course-card{
+  padding:16px 18px;background:rgba(9,14,25,.8);cursor:pointer;transition:.14s;
+  display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:start
+}
+.course-card:hover,.course-card.sel{background:rgba(255,154,82,.13);outline:none}
+.course-card .cc-place{
+  grid-column:1;font:700 9px/1 var(--f-data);letter-spacing:.24em;color:var(--faint)
+}
+.course-card .cc-name{grid-column:1/3;font-size:17px;font-weight:700;letter-spacing:.04em;margin-top:6px}
+.course-card .cc-tag{
+  grid-column:2;grid-row:1;align-self:start;justify-self:end;
+  font:700 9px/1 var(--f-data);letter-spacing:.18em;padding:5px 9px;
+  border:1px solid var(--line-strong);color:var(--dawn)
+}
+.course-card .cc-sum{
+  grid-column:1/3;font-size:11px;line-height:1.8;color:var(--dim);margin-top:9px
+}
+.course-card .cc-meta{
+  grid-column:1/3;display:flex;gap:16px;margin-top:11px;padding-top:10px;
+  border-top:1px solid var(--line);font:700 10px/1 var(--f-data);letter-spacing:.12em
+}
+.course-card .cc-meta b{color:var(--ink);font-weight:700}
+.course-card .cc-meta span{color:var(--faint)}
+.course-card .cc-best{margin-left:auto;color:var(--cold)}
+.course-card canvas{grid-column:1/3;width:100%;height:76px;margin-top:12px;opacity:.85}
+
 /* ============================ ブリーフィング ============================ */
 .brief{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
 @media(max-width:760px){.brief{grid-template-columns:1fr}}
@@ -582,6 +610,18 @@ kbd{
     </div>
   </section>
 
+  <!-- ステージ選択 -->
+  <section id="scr-course" class="screen">
+    <div class="panel wide">
+      <header>
+        <h2 id="course-title">ステージ選択</h2>
+        <span class="sub" id="course-sub"></span>
+        <button class="back" data-go="title">戻る</button>
+      </header>
+      <div id="course-list" class="course-list"></div>
+    </div>
+  </section>
+
   <!-- ストーリー -->
   <section id="scr-story" class="screen">
     <div class="panel wide">
@@ -830,6 +870,160 @@ function formatTime(ms) {
 function formatMoney(v) {
   return Math.floor(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+
+
+// ============================== src/courses.js ==============================
+// ステージ（コース）の定義。
+//
+// コースは「半径を三角関数で揺らした閉ループ」を、目標の全長にスケールして作ります。
+//   radius   … 基準半径に対する揺らぎの強さ。大きいほど曲がりくねります。
+//   aspect   … 楕円のつぶし具合。[1, 0.12] のように潰すと、長い直線＋ヘアピンになります。
+//   length   … 目標の全長[m]。これに合わせて全体を拡大縮小します。
+//   zones    … 区間の並びと重み。1周ぶんを何周ぶん繰り返すかは cycles で決めます。
+//
+// 地名は実在の東京湾岸のものを雰囲気づくりに使っています（施設名・企業名ではありません）。
+
+const COURSES = [
+  {
+    id: 'bayshore',
+    name: '湾岸ベイサイド',
+    place: '東京湾岸線',
+    length: 14700,
+    desc: 'standard',
+    tag: '標準',
+    summary: '海沿いの長い直線と、ゆるい大R。まずはここで車に慣れる。',
+    seed: 20240,
+    aspect: [1, 1],
+    radius: { base: 1.0, harmonics: [[0.37, 1, 0.35], [0.21, 2, 1.9], [0.13, 3, 0.4], [0.06, 5, 2.6], [0.034, 8, 1.2]] },
+    elevation: [[13, 2, 1.05], [7, 3, 0.2], [3.5, 5, 2.2]],
+    zones: [['bay', 3], ['bridge', 1.2], ['city', 2.2], ['tunnel', 1]],
+    cycles: 3.4,
+    cityDensity: 0.9,
+    traffic: 1.0,
+  },
+  {
+    id: 'aqualine',
+    name: 'アクアライン往復',
+    place: '木更津 — 川崎',
+    length: 24800,
+    desc: 'long',
+    tag: '超ロング',
+    summary: '海底トンネルを延々と潜り、橋で一気に抜ける。最高速がすべて。',
+    seed: 7781,
+    aspect: [1, 0.14],
+    radius: { base: 1.0, harmonics: [[0.05, 2, 0.4], [0.025, 3, 1.4]] },
+    elevation: [[22, 1, 0.4], [9, 2, 2.1]],
+    zones: [['tunnel', 4.5], ['bridge', 3], ['bay', 2.2], ['tunnel', 3]],
+    cycles: 1.2,
+    cityDensity: 0.35,
+    traffic: 0.75,
+  },
+  {
+    id: 'umihotaru',
+    name: '海ほたる スパイラル',
+    place: '海ほたる',
+    length: 4200,
+    desc: 'short',
+    tag: 'ショート',
+    summary: '人工島の上の短い周回。立ち上がりの一瞬でしか差がつかない。',
+    seed: 5150,
+    aspect: [1, 0.82],
+    radius: { base: 1.0, harmonics: [[0.28, 2, 0.9], [0.19, 3, 2.4], [0.11, 5, 0.7]] },
+    elevation: [[7, 2, 0.9], [4, 4, 2.4]],
+    zones: [['bay', 3], ['bridge', 1.4], ['city', 1]],
+    cycles: 1.0,
+    cityDensity: 0.55,
+    traffic: 0.6,
+  },
+  {
+    id: 'daikoku',
+    name: '大黒ジャンクション',
+    place: '大黒ふ頭',
+    length: 6900,
+    desc: 'twisty',
+    tag: '曲がりすぎ',
+    summary: 'ループとタイトコーナーの連続。最高速は要らない、曲がれる車が勝つ。',
+    seed: 3030,
+    aspect: [1, 0.9],
+    radius: { base: 1.0, harmonics: [[0.34, 2, 0.2], [0.30, 3, 1.6], [0.22, 5, 2.8], [0.14, 7, 0.9], [0.08, 11, 2.0]] },
+    elevation: [[16, 3, 0.5], [9, 5, 1.8], [5, 8, 2.9]],
+    zones: [['city', 3], ['bridge', 1], ['tunnel', 1.2], ['city', 2]],
+    cycles: 2.2,
+    cityDensity: 1.0,
+    traffic: 1.15,
+  },
+  {
+    id: 'tatsumi',
+    name: '辰巳ライン',
+    place: '辰巳 — 有明',
+    length: 9600,
+    desc: 'mixed',
+    tag: '複合',
+    summary: 'トンネルと橋が交互に来る。目が暗さに慣れる前に次が来る。',
+    seed: 8899,
+    aspect: [1, 0.62],
+    radius: { base: 1.0, harmonics: [[0.26, 1, 1.1], [0.18, 2, 2.2], [0.12, 4, 0.6], [0.07, 6, 1.7]] },
+    elevation: [[15, 2, 0.7], [8, 4, 2.5]],
+    zones: [['tunnel', 1.6], ['city', 2], ['bridge', 1.4], ['bay', 1.6]],
+    cycles: 3.0,
+    cityDensity: 0.95,
+    traffic: 1.05,
+  },
+  {
+    id: 'haneda',
+    name: '空港中央 ナイトラン',
+    place: '羽田 — 浮島',
+    length: 5400,
+    desc: 'short',
+    tag: 'ショート',
+    summary: '滑走路脇の全開区間から、いきなり複合コーナー。ブレーキが試される。',
+    seed: 6161,
+    aspect: [1, 0.36],
+    radius: { base: 1.0, harmonics: [[0.14, 2, 0.3], [0.20, 4, 2.1], [0.10, 7, 1.4]] },
+    elevation: [[6, 2, 1.6], [3, 5, 0.4]],
+    zones: [['bay', 3], ['tunnel', 1], ['bay', 2], ['city', 1.2]],
+    cycles: 1.6,
+    cityDensity: 0.5,
+    traffic: 0.85,
+  },
+  {
+    id: 'minatomirai',
+    name: 'みなとみらい',
+    place: '横浜 — ベイブリッジ',
+    length: 11800,
+    desc: 'mixed',
+    tag: '市街',
+    summary: 'ビルの谷を縫う中速コーナーの連続。壁が近い。',
+    seed: 4242,
+    aspect: [1, 0.74],
+    radius: { base: 1.0, harmonics: [[0.26, 1, 0.6], [0.18, 2, 2.7], [0.11, 4, 1.1], [0.06, 6, 0.3], [0.03, 9, 2.2]] },
+    elevation: [[18, 2, 1.4], [10, 3, 0.6], [5, 6, 2.8]],
+    zones: [['city', 4], ['bridge', 1.2], ['tunnel', 1], ['bay', 1.2]],
+    cycles: 2.6,
+    cityDensity: 1.0,
+    traffic: 1.2,
+  },
+  {
+    id: 'grandtour',
+    name: '東京湾グランドツアー',
+    place: '一周',
+    length: 34000,
+    desc: 'long',
+    tag: '馬鹿長い',
+    summary: '全部入りの34km。1周走りきるだけで一仕事。燃費ならぬ集中力の勝負。',
+    seed: 1111,
+    aspect: [1, 0.86],
+    radius: { base: 1.0, harmonics: [[0.32, 1, 0.2], [0.20, 2, 1.5], [0.14, 3, 2.6], [0.09, 5, 0.8], [0.05, 8, 1.9], [0.03, 13, 0.5]] },
+    elevation: [[24, 1, 0.9], [13, 2, 2.3], [7, 4, 1.1], [4, 7, 0.4]],
+    zones: [['bay', 3], ['tunnel', 1.2], ['city', 2.6], ['bridge', 1.4], ['bay', 2], ['city', 2]],
+    cycles: 3.2,
+    cityDensity: 0.85,
+    traffic: 1.0,
+  },
+];
+
+const COURSE_BY_ID = Object.fromEntries(COURSES.map((c) => [c.id, c]));
+const DEFAULT_COURSE = 'bayshore';
 
 
 // ============================== src/cars.js ==============================
@@ -1835,30 +2029,92 @@ const LANE_U = [-2.9, -6.5, -10.1];  // 追越車線 → 走行車線（日本�
 const ONCOMING_U = [2.9, 6.5, 10.1];
 
 /**
- * 湾岸をイメージした周回コースを生成します。
+ * コース定義から周回路を生成します。
  * 半径を三角関数で揺らした閉ループなので、必ず一周でつながります。
+ *
+ * 手順は「形を作る → 全長を測る → 目標の全長になるよう水平方向だけ拡大縮小する」。
+ * こうすると、同じ形のまま長さだけ変えられ、短いコースは自動的にコーナーがきつくなります。
  */
-function createTrack(seed = 20240) {
-  const rand = rng(seed);
-  const CP = 60;
-  const pts = [];
-  for (let i = 0; i < CP; i++) {
-    const a = (i / CP) * TAU;
-    const R =
-      2050 +
-      760 * Math.sin(a + 0.35) +
-      430 * Math.sin(2 * a + 1.9) +
-      260 * Math.sin(3 * a + 0.4) +
-      130 * Math.sin(5 * a + 2.6) +
-      70 * Math.sin(8 * a + 1.2);
-    const y =
-      11 +
-      13 * Math.sin(2 * a + 1.05) +
-      7 * Math.sin(3 * a + 0.2) +
-      3.5 * Math.sin(5 * a + 2.2);
-    pts.push(new THREE.Vector3(Math.cos(a) * R, y, Math.sin(a) * R));
+function createTrack(course) {
+  // 旧シグネチャ（数値のseed）にも一応対応しておきます
+  if (typeof course === 'number' || course == null) {
+    course = { id: 'bayshore', name: '湾岸', length: 14700, seed: course ?? 20240,
+      aspect: [1, 1], cycles: 3.4, cityDensity: 0.9, traffic: 1,
+      radius: { base: 1, harmonics: [[0.37, 1, 0.35], [0.21, 2, 1.9], [0.13, 3, 0.4], [0.06, 5, 2.6], [0.034, 8, 1.2]] },
+      elevation: [[13, 2, 1.05], [7, 3, 0.2], [3.5, 5, 2.2]],
+      zones: [['bay', 3], ['bridge', 1.2], ['city', 2.2], ['tunnel', 1]] };
   }
-  const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
+  const rand = rng(course.seed ?? 1);
+  const CP = Math.max(48, Math.min(160, Math.round(course.length / 260)));
+  const [ax, az] = course.aspect ?? [1, 1];
+
+  const shape = (a) => {
+    let r = course.radius.base;
+    for (const [amp, freq, phase] of course.radius.harmonics) r += amp * Math.sin(freq * a + phase);
+    return Math.max(0.18, r);
+  };
+  const elev = (a) => {
+    let y = 11;
+    for (const [amp, freq, phase] of (course.elevation ?? [])) y += amp * Math.sin(freq * a + phase);
+    return y;
+  };
+
+  // いったん半径1で作り、あとから目標の全長へ合わせます
+  const build = (scale) => {
+    const pts = [];
+    for (let i = 0; i < CP; i++) {
+      const a = (i / CP) * TAU;
+      const r = shape(a) * scale;
+      pts.push(new THREE.Vector3(Math.cos(a) * r * ax, elev(a), Math.sin(a) * r * az));
+    }
+    return new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
+  };
+  let scale = course.length / TAU;          // 円周からの初期見積もり
+  let curve = build(scale);
+  for (let k = 0; k < 3; k++) {             // 2〜3回で十分収束します
+    const L = curve.getLength();
+    scale *= course.length / L;
+    curve = build(scale);
+  }
+
+  // ---- 最小コーナー半径の保証
+  // 揺らぎが強すぎると、片側3車線の道路に収まらないヘアピンができてしまいます。
+  // 周波数の高い成分ほどきつい曲がりを作るので、そこから先に落として作り直します。
+  const MIN_R = course.minRadius ?? 108;
+  const measureMinRadius = (c) => {
+    const M = 480;
+    const p2 = c.getSpacedPoints(M);
+    const step = c.getLength() / M;
+    let maxC = 0;
+    for (let i = 0; i < M; i++) {
+      const a0 = p2[(i - 1 + M) % M], a1 = p2[i], a2 = p2[(i + 1) % M];
+      const h0 = Math.atan2(a1.x - a0.x, a1.z - a0.z);
+      const h1 = Math.atan2(a2.x - a1.x, a2.z - a1.z);
+      maxC = Math.max(maxC, Math.abs(wrapAngle(h1 - h0)) / step);
+    }
+    return maxC > 1e-6 ? 1 / maxC : Infinity;
+  };
+  const originalHarmonics = course.radius.harmonics;
+  let damp = 1;
+  for (let iter = 0; iter < 10; iter++) {
+    const minR = measureMinRadius(curve);
+    if (minR >= MIN_R) break;
+    damp *= 0.86;
+    course = {
+      ...course,
+      radius: {
+        ...course.radius,
+        // 周波数が高い成分ほど強く抑えます（全体の形はできるだけ保ちます）
+        harmonics: originalHarmonics.map(([amp, f, ph]) => [amp * Math.pow(damp, Math.max(1, f) / 2), f, ph]),
+      },
+    };
+    curve = build(scale);
+    for (let k = 0; k < 2; k++) {
+      scale *= course.length / curve.getLength();
+      curve = build(scale);
+    }
+  }
+
   const length = curve.getLength();
   const n = Math.round(length / ROAD.spacing);
   const spacing = length / n;
@@ -1916,26 +2172,32 @@ function createTrack(seed = 20240) {
   }
 
   // ---- 区間の性格づけ（トンネル・橋・市街地・海沿い）
+  // コースごとの並びと重みを、1周に指定回数ぶん敷き詰めます。
   const zones = [];
-  const zoneKinds = ['bay', 'bridge', 'city', 'tunnel', 'bay', 'city', 'tunnel', 'bay', 'bridge', 'city'];
-  let cursor = 0;
-  let zi = 0;
-  while (cursor < length - 200) {
-    const kind = zoneKinds[zi % zoneKinds.length];
-    let len;
-    if (kind === 'tunnel') len = 340 + rand() * 420;
-    else if (kind === 'bridge') len = 500 + rand() * 500;
-    else len = 900 + rand() * 900;
-    len = Math.min(len, length - cursor);
-    zones.push({ from: cursor, to: cursor + len, kind });
-    cursor += len;
-    zi++;
+  {
+    const pattern = course.zones ?? [['bay', 3], ['city', 2], ['tunnel', 1], ['bridge', 1]];
+    const cycles = Math.max(1, course.cycles ?? 3);
+    const totalW = pattern.reduce((a, z) => a + z[1], 0) * cycles;
+    let cursor = 0;
+    const reps = Math.round(cycles);
+    for (let c = 0; c < reps && cursor < length - 60; c++) {
+      for (const [kind, w] of pattern) {
+        if (cursor >= length - 60) break;
+        // 重み通りの長さに ±18% のばらつきを与えて、機械的な繰り返しに見えないようにします
+        let len = (length * w) / totalW * (0.82 + rand() * 0.36);
+        len = Math.min(len, length - cursor);
+        if (len < 55) continue;
+        zones.push({ from: cursor, to: cursor + len, kind });
+        cursor += len;
+      }
+    }
+    if (zones.length) zones[zones.length - 1].to = length;
+    else zones.push({ from: 0, to: length, kind: 'bay' });
   }
-  if (zones.length) zones[zones.length - 1].to = length;
 
   const track = {
-    curve, length, n, spacing,
-    pos, tan, lat, up, curvature, bank, heading, zones, seed,
+    curve, length, n, spacing, course,
+    pos, tan, lat, up, curvature, bank, heading, zones, seed: course.seed,
 
     /** 距離 s（m, 0..length）における位置・方向を返します。 */
     sample(s, out = {}) {
@@ -2704,7 +2966,7 @@ function trackClearance(track, cell = 100) {
   };
 }
 
-function buildCity(track, scene, seed = 99) {
+function buildCity(track, scene, seed = 99, density = 0.9) {
   const r = rng(seed);
   const isClear = trackClearance(track);
   const group = new THREE.Group();
@@ -2715,9 +2977,10 @@ function buildCity(track, scene, seed = 99) {
   for (let s = 0; s < track.length; s += 26) {
     const kind = track.zoneAt(s);
     track.sample(s, sm);
-    const density = kind === 'city' ? 0.85 : kind === 'bay' ? 0.16 : 0.05;
+    // 湾岸区間は海なので建てません。市街地の密度はコースごとに変わります。
+    const dens = kind === 'city' ? density : 0;
     for (const side of [-1, 1]) {
-      if (r() > density) continue;
+      if (r() > dens) continue;
       const dist = ROAD.halfRoad + 42 + r() * 240;
       const h = 32 + Math.pow(r(), 1.7) * 122;
       const w = 11 + r() * 24;
@@ -3288,8 +3551,18 @@ class Vehicle {
     for (let i = 0; i < n; i++) this.step(h, env);
   }
 
-  /** 壁との接触処理。track 上の u を見て押し戻します。 */
-  resolveWalls(track, limits) {
+  /**
+   * 壁との接触処理。
+   *
+   * 以前は接触中「1フレームあたり最大16%」の減速を掛けていました。
+   * 60fps なら1秒で 0.84^60 ≒ 0.003 倍。つまり壁に触れた瞬間、
+   * フルスロットルでも数km/hまで落ちて二度と離れられなくなります。
+   * ここでは実際の当たり方に沿って、
+   *   ・壁へ向かっていた速度成分だけを打ち消す（衝撃）
+   *   ・擦っているあいだの摩擦は時間あたりで、しかも弱く
+   * という2段に分けます。
+   */
+  resolveWalls(track, limits, dt = 1 / 60) {
     const pr = track.project(this.pos, this.trackIndex);
     this.trackIndex = pr.index;
     this.s = pr.s; this.u = pr.u;
@@ -3297,23 +3570,32 @@ class Vehicle {
     const outer = limits.outer - half;   // 路肩側（負の方向）
     const inner = limits.inner + half;   // 中央分離帯側
     let hit = 0;
-    if (pr.u < -outer) { hit = -1; }
-    else if (pr.u > -inner) { hit = 1; }
-    if (hit !== 0) {
-      const targetU = hit < 0 ? -outer : -inner;
-      const sm = track.sample(pr.s, {});
-      this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
-      // 壁ずり：前進速度を削り、横速度を殺す
-      // （擦り続けても止まってしまわないよう、1フレームあたりの減速は控えめに）
-      const impact = Math.abs(this.vy) + Math.abs(this.yawRate) * 6;
-      this.vy = 0;
-      this.yawRate *= 0.35;
-      this.vx *= 1 - clamp(0.02 + impact * 0.012, 0.012, 0.16);
-      this.onWall = 1;
-      return impact;
+    if (pr.u < -outer) hit = -1;
+    else if (pr.u > -inner) hit = 1;
+
+    if (hit === 0) {
+      this.onWall = Math.max(0, this.onWall - 0.08);
+      return 0;
     }
-    this.onWall = Math.max(0, this.onWall - 0.08);
-    return 0;
+
+    // 壁へ向かっていた速度成分（車体座標では +vy が左）
+    const into = hit < 0 ? Math.max(0, this.vy) : Math.max(0, -this.vy);
+
+    // 押し戻し。わずかに余裕を持たせて、毎フレーム再判定にならないようにします。
+    const targetU = hit < 0 ? -(outer - 0.03) : -(inner - 0.03);
+    const sm = track.sample(pr.s, {});
+    this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
+    this.u = targetU;
+
+    // 衝撃：向かっていたぶんだけ前進速度も失う（真横から当たるほど大きい）
+    this.vx = Math.max(0, this.vx - Math.min(this.vx * 0.30, into * 0.55));
+    // 擦り：時間あたりのゆるい摩擦。押し付けが強いほど効きます。
+    this.vx *= Math.exp(-(0.35 + into * 0.30) * dt);
+    // 反発はごくわずか。壁伝いに滑る挙動になります。
+    this.vy = -into * 0.12 * (hit < 0 ? 1 : -1);
+    this.yawRate *= 0.55;
+    this.onWall = 1;
+    return into;
   }
 
   /** 路面の高さ・傾きに車体を合わせます。 */
@@ -3356,10 +3638,13 @@ class RivalAI {
     this.skill = cfg.skill ?? 0.85;
     this.aggression = cfg.aggression ?? 0.6;
     this.lane = 0;
-    this.targetU = LANE_U[0];
+    this.laneU = LANE_U[0];     // 選んだ車線の中心
+    this.targetU = LANE_U[0];   // 実際に狙う横位置（車線変更は時間をかけて寄せます）
     this.laneTimer = 0;
     this.rubber = cfg.rubber ?? 0.10;   // 競り合いを保つための微調整
     this._tmp = {};
+    this._tmp2 = {};
+    this._tmp3 = {};
     this._p = new THREE.Vector3();
   }
 
@@ -3368,15 +3653,21 @@ class RivalAI {
     const track = this.track;
     const S = this.v.spec;
     let vmin = 200;
-    for (let d = 20; d < 320; d += 20) {
+    // 先読みの距離は速度に比例させます。
+    // 300m固定だと、250km/h から 150km/h まで落とすのに必要な距離（約250m）を
+    // ぎりぎりでしか見ておらず、速いほどコーナーに突っ込むことになっていました。
+    const scan = clamp(Math.abs(this.v.vx) * 5.0, 140, 700);
+    const step = Math.max(15, scan / 22);
+    for (let d = 15; d < scan; d += step) {
       const sm = track.sample(this.v.s + d, this._tmp);
       const c = Math.abs(sm.curv);
       if (c < 1e-5) continue;
       const grip = S.grip * (1 + S.downforce * 0.30);
-      const vAllowed = Math.sqrt((grip * 9.81) / c);
+      const vAllowed = Math.sqrt((grip * 9.81) / c) * 0.94;   // 限界ぎりぎりを狙わない
       // 遠い曲がりほど、まだ減速しなくてよい
       const brakeDist = Math.max(0, d - 25);
-      const vNow = Math.sqrt(vAllowed * vAllowed + 2 * (S.grip * 8.4) * brakeDist);
+      // 旋回しながらのブレーキは全グリップを使えないので、控えめな減速度で見積もります
+      const vNow = Math.sqrt(vAllowed * vAllowed + 2 * (S.grip * 6.3) * brakeDist);
       vmin = Math.min(vmin, vNow);
     }
     return vmin;
@@ -3404,9 +3695,9 @@ class RivalAI {
     });
     let best = 0;
     for (let i = 1; i < scores.length; i++) if (scores[i] > scores[best]) best = i;
-    if (best !== this.lane) this.laneTimer = 1.1;
+    if (best !== this.lane) this.laneTimer = 1.4;
     this.lane = best;
-    this.targetU = LANE_U[best];
+    this.laneU = LANE_U[best];
   }
 
   update(dt, obstacles, playerGap) {
@@ -3414,9 +3705,28 @@ class RivalAI {
     const track = this.track;
     this.chooseLane(dt, obstacles);
 
+    // コーナーでは内側へ寄せます。
+    // 左コーナーで車線中央のままだと、アンダーが出たときに外側＝中央分離帯へ
+    // 押し出されて延々と擦り続けることになります。
+    const curvAhead = track.sample(v.s + clamp(Math.abs(v.vx) * 1.1, 25, 140), this._tmp3).curv;
+    // ただし寄せるのは車線の中だけ（車線幅3.6mの半分まで）。
+    // ここを大きく取ると隣の走行車線へはみ出し、一般車に詰まって
+    // 減速と幅寄せを繰り返す羽目になります。
+    const inside = clamp(curvAhead * 300, -1.25, 1.25);
+    // 中央分離帯側には 3.3m まで。追越車線の中心(-2.9)ちょうどを狙うと、
+    // わずかな振れで毎回コンクリートに触れてしまいます。
+    const laneTarget = clamp(this.laneU - inside, -11.4, -3.3);
+
+    // 目標の横位置は、車線の中心へ毎秒2.2mまでの速さで寄せます。
+    // ここを一気に切り替えると、3.6mぶんの横ズレを一度に埋めようとして
+    // タイヤの限界を超え、行き過ぎて中央分離帯に当たっていました。
+    const step = 2.2 * dt;
+    const d = laneTarget - this.targetU;
+    this.targetU += Math.abs(d) <= step ? d : Math.sign(d) * step;
+
     // --- 目標速度
     const skill = clamp(this.skill + (playerGap ? clamp(playerGap * 0.0009, -this.rubber, this.rubber) : 0), 0.4, 1.05);
-    let vTarget = this.cornerSpeed() * (0.86 + 0.16 * skill);
+    let vTarget = this.cornerSpeed() * (0.80 + 0.15 * skill);
     vTarget = Math.min(vTarget, (v.spec.topSpeed / KMH) * 1.08);
 
     // 前車に詰まったら合わせる
@@ -3432,18 +3742,30 @@ class RivalAI {
     const err = vTarget - v.vx;
     const inp = v.input;
     inp.throttle = clamp(err * 0.32, 0, 1);
-    inp.brake = clamp(-err * 0.19, 0, 1);
+    inp.brake = clamp(-err * 0.30, 0, 1);
     if (inp.brake > 0.05) inp.throttle = 0;
 
-    // --- ステア（先読み点へ向ける）
-    const look = clamp(14 + v.vx * 0.78, 22, 95);
-    const sm = track.sample(v.s + look, this._tmp);
-    this._p.copy(sm.pos).addScaledVector(sm.lat, this.targetU);
-    const dx = this._p.x - v.pos.x;
-    const dz = this._p.z - v.pos.z;
-    const want = Math.atan2(dx, dz);
-    const diff = wrapAngle(want - v.heading);
-    inp.steer = clamp(diff * 2.6 - v.yawRate * 0.42, -1, 1);
+    // --- ステア
+    // 以前は「先の1点へ向ける」方式でしたが、高速では小さな向きの誤差が大きな舵になり、
+    // 中央分離帯すれすれの追越車線で左右に振れて壁を擦っていました。
+    // ここでは (1) 進行方向のズレ (2) 目標ラインからの横ズレ (3) コーナーの曲率
+    // の3つを別々に見て足し合わせます（いわゆる Stanley 制御＋フィードフォワード）。
+    const at = track.sample(v.s, this._tmp2);
+    const headErr = wrapAngle(at.heading - v.heading);          // ＋なら左へ向けたい
+    const cross = v.u - this.targetU;                            // ＋なら目標より右にいる
+    const speed = Math.max(8, Math.abs(v.vx));
+    // 横ズレの補正量には上限を設けます（タイヤが受け止められない舵は打たない）
+    const crossTerm = clamp(Math.atan2(cross * 2.1, speed), -0.16, 0.16);
+
+    // コーナーで必要な舵角を先に入れておく（曲率×ホイールベース）
+    const ahead = track.sample(v.s + clamp(speed * 0.55, 12, 60), this._tmp);
+    const maxSteer = 0.55 / (1 + speed * 0.034);
+    const ff = clamp((v.spec.dims.WB * ahead.curv) / maxSteer, -0.8, 0.8);
+
+    // ヨーの減衰は「そのコーナーで本来出るべきヨー」との差にだけ効かせます。
+    // 生のヨーレートを引くと、定常旋回中に自分の舵を打ち消してしまいます。
+    const expectedYaw = v.vx * ahead.curv;
+    inp.steer = clamp((headErr + crossTerm) * 2.4 + ff - (v.yawRate - expectedYaw) * 0.34, -1, 1);
     inp.handbrake = 0;
 
     // --- 自動変速
@@ -3464,7 +3786,7 @@ const COLORS = [0xd8dade, 0x1b1d22, 0x5a6068, 0x2a3a5a, 0x8f9298, 0x30425c, 0xbf
  * 通り過ぎたら前方へ「使い回し」ます（オブジェクトプール）。
  */
 class Traffic {
-  constructor(track, scene, count = 44, seed = 4242) {
+  constructor(track, scene, count = 44, seed = 4242) {   // seed はコースごとに変えます
     this.track = track;
     this.rand = rng(seed);
     this.cars = [];
@@ -3968,6 +4290,12 @@ class HUD {
     return changed;
   }
 
+  /** コースが変わったら、ミニマップの座標系を作り直します。 */
+  setTrack(track) {
+    this.track = track;
+    this._buildMinimapPath();
+  }
+
   _buildMinimapPath() {
     const t = this.track;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -4163,6 +4491,7 @@ const RIVALS = [
   {
     id: 'r1', name: '新島 悠', title: '深夜の新顔',
     carId: 's15', tune: T(1, 0, 1, 0, 0, 1), color: 0x2f6fd0,
+    courseId: 'umihotaru',
     skill: 0.72, aggression: 0.55, reward: 900000,
     intro: '「湾岸って、まっすぐなだけなんでしょ？」',
     win: '「……なにあれ。真っ直ぐで、置いていかれた」',
@@ -4171,6 +4500,7 @@ const RIVALS = [
   {
     id: 'r2', name: '東雲 涼', title: 'ロータリーの狂犬',
     carId: 'fd3s', tune: T(2, 2, 2, 1, 1, 2), color: 0xd8d8d2,
+    courseId: 'daikoku',
     skill: 0.78, aggression: 0.70, reward: 1400000,
     intro: '「軽いほうが勝つ。ここは直線だけの道じゃない」',
     win: '「重い車に、あんな入り方されるとはな」',
@@ -4179,6 +4509,7 @@ const RIVALS = [
   {
     id: 'r3', name: '桐生 剛', title: '湾岸の古株',
     carId: 'bnr32', tune: T(3, 2, 2, 2, 2, 2), color: 0x2b3a4a,
+    courseId: 'bayshore',
     skill: 0.82, aggression: 0.66, reward: 2000000,
     intro: '「その車、まだ本気じゃないな。……見せてみろよ」',
     win: '「悪くない。次はもう手加減しない」',
@@ -4187,6 +4518,7 @@ const RIVALS = [
   {
     id: 'r4', name: '影山 迅', title: '直6の亡霊',
     carId: 'jza80', tune: T(3, 2, 2, 2, 3, 3), color: 0xc03018,
+    courseId: 'aqualine',
     skill: 0.84, aggression: 0.60, reward: 2600000,
     intro: '「280km/hから先は、車じゃなく人間の勝負だ」',
     win: '「……その速度で、まだ前を見ていられるのか」',
@@ -4195,6 +4527,7 @@ const RIVALS = [
   {
     id: 'r5', name: '白瀬 律', title: '無音の刺客',
     carId: 'na1', tune: T(4, 3, 3, 3, 2, 0), color: 0xe8c520,
+    courseId: 'haneda',
     skill: 0.87, aggression: 0.52, reward: 3200000,
     intro: '「ターボの谷がない車は、嘘をつかない」',
     win: '「速いね。理屈じゃなく、速い」',
@@ -4203,6 +4536,7 @@ const RIVALS = [
   {
     id: 'r6', name: '六車 岳', title: '四駆の暴力',
     carId: 'cp9a', tune: T(4, 3, 4, 4, 2, 4), color: 0xdadde2,
+    courseId: 'daikoku',
     skill: 0.86, aggression: 0.80, reward: 3800000,
     intro: '「最高速なんか要らん。曲がるところで全部持っていく」',
     win: '「直線でここまで離されると、さすがに笑うわ」',
@@ -4211,6 +4545,7 @@ const RIVALS = [
   {
     id: 'r7', name: '三雲 遼', title: '完成された速さ',
     carId: 'bnr34', tune: T(5, 3, 4, 4, 3, 4), color: 0x8a9099,
+    courseId: 'minatomirai',
     skill: 0.90, aggression: 0.64, reward: 4600000,
     intro: '「データ上、あなたより速い。それだけの話です」',
     win: '「……データにない走りだ。悔しいな」',
@@ -4219,6 +4554,7 @@ const RIVALS = [
   {
     id: 'r8', name: '黒鳥 隼', title: '夜鷹（よたか）',
     carId: 'p930', tune: T(5, 4, 5, 5, 4, 5), color: 0x101318,
+    courseId: 'aqualine',
     skill: 0.94, aggression: 0.68, reward: 6000000,
     intro: '「この道で俺より速いのは、あと一台だけだ」',
     win: '「あいつと同じ匂いがする。……行ってこい」',
@@ -4227,6 +4563,7 @@ const RIVALS = [
   {
     id: 'r9', name: '？？？', title: '群青（ぐんじょう）',
     carId: 's30z', tune: T(5, 5, 4, 3, 5, 5), color: 0x1b2733,
+    courseId: 'grandtour',
     skill: 0.97, aggression: 0.72, reward: 12000000,
     intro: '「……」（テールランプだけが、白みはじめた空の下で待っている）',
     win: '「―――」（何も言わず、明けていく湾岸へ消えていった）',
@@ -4250,7 +4587,8 @@ const DEFAULT = {
   colors: {},                // carId -> 色(16進)
   storyStage: 0,
   cleared: [],
-  bestLap: {},               // carId -> ms
+  bestLap: {},               // `${courseId}:${carId}` -> ms
+  courseId: 'bayshore',      // 最後に選んだステージ
   bestTop: 0,                // 自己最高速[km/h]
   hintSeen: false,           // 初回の操作ガイドを見たか
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
@@ -4378,6 +4716,20 @@ class Actor {
   }
 }
 
+/** 使い終わったシーングラフのジオメトリ／マテリアルを解放します。 */
+function disposeTree(root) {
+  root.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      for (const k of ['map', 'emissiveMap', 'alphaMap', 'normalMap']) {
+        if (m[k] && m[k].dispose) m[k].dispose();
+      }
+      m.dispose();
+    }
+  });
+}
+
 /** 粒子用の丸いスプライト（四角い点にならないように）。同じ設定は使い回します。 */
 const _softDots = new Map();
 function softDot(hard = 0.25) {
@@ -4482,24 +4834,18 @@ class Game {
     this.scene.add(dawn);
     this.scene.add(new THREE.AmbientLight(0x3a4868, 0.9));
 
-    // --- コース
-    this.track = createTrack(opts.seed ?? 20240);
-    this.scene.add(buildRoad(this.track));
+    // --- コースに依存しないもの（空・海・環境マップ）は1度だけ作ります
     this.sky = buildSky(this.scene);
-    // 夜景を焼き込んだ環境マップ。ボディと路面に「映るもの」を与えます
+    // 夜明けを焼き込んだ環境マップ。ボディと路面に「映るもの」を与えます
     this.envMap = buildEnvironment(this.renderer, this.sky.sky);
     this.scene.environment = this.envMap;
     this.sea = buildSea(this.scene);
-    buildLand(this.track, this.scene);
-    buildPiers(this.track, this.scene);
-    this.lights = buildStreetLights(this.track, this.scene);
-    buildRoadside(this.track, this.scene);
-    this.city = buildCity(this.track, this.scene, 99);
-    buildTunnels(this.track, this.scene);
-    buildSigns(this.track, this.scene);
-    buildBridges(this.track, this.scene);
 
-    this.traffic = new Traffic(this.track, this.scene, this.settings.quality === 'low' ? 26 : 44);
+    // --- コースごとに作り直す部分は world にまとめ、切り替え時にまとめて捨てます
+    this.world = null;
+    this.track = null;
+    this.course = null;
+    this.traffic = null;
 
     // --- エフェクト
     this.sparks = new Particles(this.scene, 240, 0xffc266, 0.42);
@@ -4544,8 +4890,57 @@ class Game {
     this._camMix = new THREE.Vector3();
     this._camIdeal = new THREE.Vector3();
     this._camTarget = new THREE.Vector3();
+    this.setCourse(opts.courseId || DEFAULT_COURSE);
+
     this.resize();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  /** コースを切り替えます。前のコースの地形・建物・交通は破棄します。 */
+  setCourse(courseId) {
+    const course = COURSE_BY_ID[courseId] || COURSE_BY_ID[DEFAULT_COURSE];
+    if (this.course && this.course.id === course.id) return this.track;
+
+    if (this.world) {
+      this.scene.remove(this.world);
+      disposeTree(this.world);
+      this.world = null;
+    }
+    if (this.traffic) {
+      this.scene.remove(this.traffic.group);
+      disposeTree(this.traffic.group);
+      this.traffic = null;
+    }
+
+    this.course = course;
+    this.track = createTrack(course);
+
+    const w = new THREE.Group();
+    w.name = 'world';
+    w.add(buildRoad(this.track));
+    buildLand(this.track, w);
+    buildPiers(this.track, w);
+    this.lights = buildStreetLights(this.track, w);
+    buildRoadside(this.track, w);
+    this.city = buildCity(this.track, w, (course.seed ?? 1) + 99, course.cityDensity ?? 0.9);
+    buildTunnels(this.track, w);
+    buildSigns(this.track, w);
+    buildBridges(this.track, w);
+    this.scene.add(w);
+    this.world = w;
+
+    const base = this.settings.quality === 'low' ? 26 : 44;
+    const count = Math.max(12, Math.round(base * (course.traffic ?? 1)));
+    this.traffic = new Traffic(this.track, this.scene, count, (course.seed ?? 1) + 4242);
+
+    // 走行中の参照をコースに合わせて作り直します
+    if (this.player) {
+      this.player.vehicle.placeOnTrack(this.track, 0, LANE_U[1]);
+      this.autoAI = new RivalAI(this.player.vehicle, this.track, { skill: 0.80, aggression: 0.45 });
+    }
+    if (this.rivalAI) this.rivalAI.track = this.track;
+    this.onEvent('course', course);
+    return this.track;
   }
 
   setupComposer() {
@@ -4895,11 +5290,11 @@ class Game {
 
     // --- 物理
     pv.update(dt);
-    const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 });
-    if (wallHit > 0.6) {
+    const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
+    if (wallHit > 1.5) {
       this.emitSparks(pv, 14);
-      this.shake = Math.max(this.shake, clamp(wallHit / 8, 0.1, 0.9));
-      audio && audio.crash(clamp(wallHit / 10, 0.2, 1));
+      this.shake = Math.max(this.shake, clamp(wallHit / 12, 0.1, 0.9));
+      audio && audio.crash(clamp(wallHit / 14, 0.2, 1));
     }
     pv.snapToRoad(this.track);
     const crash = this.collideTraffic(this.player);
@@ -4911,7 +5306,7 @@ class Game {
     if (this.rival) {
       const rv = this.rival.vehicle;
       rv.update(dt);
-      rv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 });
+      rv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
       rv.snapToRoad(this.track);
       this.collideTraffic(this.rival);
       this.collideCars();
@@ -5115,7 +5510,7 @@ class Game {
         ? formatTime(this.state.lapTime)
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
-      zoneText: `${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
+      zoneText: `${this.course.name}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
     };
   }
 }
@@ -5170,6 +5565,7 @@ function show(id) {
     else if (inGame) game.setDemo(false);
   }
   input.enabled = true;
+  if (id === 'course') renderCourses();
   if (id === 'garage') renderGarage();
   if (id === 'story') renderStory();
   if (id === 'settings') syncSettings();
@@ -5406,6 +5802,86 @@ $('#btn-buy').addEventListener('click', () => {
   save(data); renderGarage(); audio.beep(1320, 0.16, 0.16);
 });
 
+// ---------------------------------------------------------------- ステージ選択
+
+let coursePurpose = 'free';   // 選んだあとに何を始めるか
+
+/** コース定義から、そのコースの形だけを小さく描きます（走行データは要りません）。 */
+function drawCourseShape(cv, course) {
+  const g = cv.getContext('2d');
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = cv.clientWidth || 240, h = cv.clientHeight || 76;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  const [ax, az] = course.aspect ?? [1, 1];
+  const pts = [];
+  for (let i = 0; i <= 240; i++) {
+    const a = (i / 240) * Math.PI * 2;
+    let r = course.radius.base;
+    for (const [amp, freq, phase] of course.radius.harmonics) r += amp * Math.sin(freq * a + phase);
+    pts.push([Math.cos(a) * r * ax, Math.sin(a) * r * az]);
+  }
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of pts) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  const pad = 8;
+  const sc = Math.min((w - pad * 2) / (maxX - minX), (h - pad * 2) / (maxY - minY));
+  const ox = (w - (maxX - minX) * sc) / 2 - minX * sc;
+  const oy = (h - (maxY - minY) * sc) / 2 - minY * sc;
+
+  g.beginPath();
+  pts.forEach(([x, y], i) => {
+    const px = x * sc + ox, py = y * sc + oy;
+    if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+  });
+  g.closePath();
+  g.strokeStyle = 'rgba(6,10,18,.9)'; g.lineWidth = 5; g.stroke();
+  g.strokeStyle = 'rgba(255,154,82,.85)'; g.lineWidth = 1.8; g.stroke();
+}
+
+function bestKey(courseId, carId) { return `${courseId}:${carId}`; }
+
+function renderCourses() {
+  const forTA = coursePurpose === 'ta';
+  $('#course-title').textContent = forTA ? 'タイムアタック — ステージ選択' : 'フリーラン — ステージ選択';
+  $('#course-sub').textContent = forTA ? '1周のベストラップに挑む' : '交通量のある湾岸を自由に流す';
+  $('#course-list').innerHTML = COURSES.map((c) => {
+    const best = data.bestLap[bestKey(c.id, data.carId)];
+    return `<div class="course-card" tabindex="0" data-course="${c.id}">
+      <div class="cc-place">${c.place}</div>
+      <div class="cc-tag">${c.tag}</div>
+      <div class="cc-name">${c.name}</div>
+      <div class="cc-sum">${c.summary}</div>
+      <canvas></canvas>
+      <div class="cc-meta">
+        <span>全長</span><b>${(c.length / 1000).toFixed(1)} km</b>
+        <span class="cc-best">${best ? 'BEST ' + formatTime(best) : '記録なし'}</span>
+      </div>
+    </div>`;
+  }).join('');
+  $$('#course-list .course-card').forEach((el) => {
+    const c = COURSE_BY_ID[el.dataset.course];
+    requestAnimationFrame(() => drawCourseShape(el.querySelector('canvas'), c));
+    el.addEventListener('click', () => {
+      applyCourse(c.id);
+      if (coursePurpose === 'ta') startTA(); else startFree();
+    });
+  });
+}
+
+/** コースを切り替え、HUD の地図も作り直します。 */
+function applyCourse(id) {
+  if (!game) return;
+  game.setCourse(id);
+  if (hud) hud.setTrack(game.track);
+  data.courseId = id;
+  save(data);
+}
+
 // ---------------------------------------------------------------- ストーリー
 
 function renderStory() {
@@ -5436,7 +5912,8 @@ function openBrief(rivalId) {
   const eff = applyTune(mc, tuneOf(data.carId));
   const rEff = applyTune(rc, r.tune);
 
-  $('#brief-title').textContent = `STAGE ${RIVALS.indexOf(r) + 1}`;
+  const rc2 = COURSE_BY_ID[r.courseId] || COURSE_BY_ID[DEFAULT_COURSE];
+  $('#brief-title').textContent = `STAGE ${RIVALS.indexOf(r) + 1} — ${rc2.name}（${(rc2.length / 1000).toFixed(1)}km）`;
   $('#brief-name').textContent = r.name;
   $('#brief-subtitle').textContent = r.title;
   $('#brief-car').innerHTML =
@@ -5470,6 +5947,7 @@ function preparePlayer() {
 
 function startBattle(rival) {
   mode = 'battle';
+  applyCourse(rival.courseId || DEFAULT_COURSE);
   preparePlayer();
   game.setRival(rival);
   const startS = game.track.length * 0.12;
@@ -5487,7 +5965,7 @@ function startFree() {
   game.setRival(null);
   game.start('free', { startS: 0, rollingStart: true });
   hud.setBattle(false);
-  hud.message('FREE RUN', `東京湾岸 一周 ${(game.track.length / 1000).toFixed(1)} km`, 2200);
+  hud.message(game.course.name, `一周 ${(game.track.length / 1000).toFixed(1)} km`, 2400);
   hideAll();
   showFirstHint();
   audio.resume();
@@ -5499,9 +5977,10 @@ function startTA() {
   game.setRival(null);
   game.start('timeattack', {
     startS: 0, rollingStart: false,
-    bestLap: data.bestLap[data.carId] ?? Infinity,
+    bestLap: data.bestLap[bestKey(game.course.id, data.carId)] ?? Infinity,
   });
   hud.setBattle(false);
+  hud.message(game.course.name, `1周 ${(game.track.length / 1000).toFixed(1)} km`, 2200);
   hideAll();
   audio.resume();
 }
@@ -5542,8 +6021,8 @@ function showResult(result, state) {
   data.money += reward;
   data.bestTop = Math.max(data.bestTop, Math.round(state.topSpeed));
   if (state.bestLap < Infinity) {
-    const prev = data.bestLap[data.carId] ?? Infinity;
-    data.bestLap[data.carId] = Math.min(prev, state.bestLap);
+    const key = bestKey(game.course.id, data.carId);
+    data.bestLap[key] = Math.min(data.bestLap[key] ?? Infinity, state.bestLap);
   }
   save(data);
 
@@ -5637,8 +6116,7 @@ $('#btn-reset').addEventListener('click', () => {
 $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   const go = b.dataset.go;
   audio.resume();
-  if (go === 'free') return startFree();
-  if (go === 'ta') return startTA();
+  if (go === 'free' || go === 'ta') { coursePurpose = go; show('course'); return; }
   show(go);
 }));
 
@@ -5667,7 +6145,8 @@ function onGameEvent(type, payload) {
     const isBest = payload.time <= payload.best;
     hud.message(isBest ? 'BEST LAP' : 'LAP', formatTime(payload.time), 2200);
     if (mode === 'ta') {
-      data.bestLap[data.carId] = Math.min(data.bestLap[data.carId] ?? Infinity, payload.best);
+      const key = bestKey(game.course.id, data.carId);
+      data.bestLap[key] = Math.min(data.bestLap[key] ?? Infinity, payload.best);
       save(data);
     }
   }
@@ -5715,6 +6194,7 @@ async function boot() {
 
   game = new Game(canvas, {
     settings: { ...data.settings },
+    courseId: data.courseId || DEFAULT_COURSE,
     onEvent: onGameEvent,
   });
   $('#load-text').textContent = 'マシンを組み立てています…';

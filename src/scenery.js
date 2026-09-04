@@ -492,7 +492,7 @@ function trackClearance(track, cell = 100) {
   };
 }
 
-export function buildCity(track, scene, seed = 99) {
+export function buildCity(track, scene, seed = 99, density = 0.9) {
   const r = rng(seed);
   const isClear = trackClearance(track);
   const group = new THREE.Group();
@@ -503,9 +503,10 @@ export function buildCity(track, scene, seed = 99) {
   for (let s = 0; s < track.length; s += 26) {
     const kind = track.zoneAt(s);
     track.sample(s, sm);
-    const density = kind === 'city' ? 0.85 : kind === 'bay' ? 0.16 : 0.05;
+    // 湾岸区間は海なので建てません。市街地の密度はコースごとに変わります。
+    const dens = kind === 'city' ? density : 0;
     for (const side of [-1, 1]) {
-      if (r() > density) continue;
+      if (r() > dens) continue;
       const dist = ROAD.halfRoad + 42 + r() * 240;
       const h = 32 + Math.pow(r(), 1.7) * 122;
       const w = 11 + r() * 24;

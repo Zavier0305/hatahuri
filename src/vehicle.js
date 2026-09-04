@@ -287,8 +287,18 @@ export class Vehicle {
     for (let i = 0; i < n; i++) this.step(h, env);
   }
 
-  /** 壁との接触処理。track 上の u を見て押し戻します。 */
-  resolveWalls(track, limits) {
+  /**
+   * 壁との接触処理。
+   *
+   * 以前は接触中「1フレームあたり最大16%」の減速を掛けていました。
+   * 60fps なら1秒で 0.84^60 ≒ 0.003 倍。つまり壁に触れた瞬間、
+   * フルスロットルでも数km/hまで落ちて二度と離れられなくなります。
+   * ここでは実際の当たり方に沿って、
+   *   ・壁へ向かっていた速度成分だけを打ち消す（衝撃）
+   *   ・擦っているあいだの摩擦は時間あたりで、しかも弱く
+   * という2段に分けます。
+   */
+  resolveWalls(track, limits, dt = 1 / 60) {
     const pr = track.project(this.pos, this.trackIndex);
     this.trackIndex = pr.index;
     this.s = pr.s; this.u = pr.u;
@@ -296,23 +306,32 @@ export class Vehicle {
     const outer = limits.outer - half;   // 路肩側（負の方向）
     const inner = limits.inner + half;   // 中央分離帯側
     let hit = 0;
-    if (pr.u < -outer) { hit = -1; }
-    else if (pr.u > -inner) { hit = 1; }
-    if (hit !== 0) {
-      const targetU = hit < 0 ? -outer : -inner;
-      const sm = track.sample(pr.s, {});
-      this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
-      // 壁ずり：前進速度を削り、横速度を殺す
-      // （擦り続けても止まってしまわないよう、1フレームあたりの減速は控えめに）
-      const impact = Math.abs(this.vy) + Math.abs(this.yawRate) * 6;
-      this.vy = 0;
-      this.yawRate *= 0.35;
-      this.vx *= 1 - clamp(0.02 + impact * 0.012, 0.012, 0.16);
-      this.onWall = 1;
-      return impact;
+    if (pr.u < -outer) hit = -1;
+    else if (pr.u > -inner) hit = 1;
+
+    if (hit === 0) {
+      this.onWall = Math.max(0, this.onWall - 0.08);
+      return 0;
     }
-    this.onWall = Math.max(0, this.onWall - 0.08);
-    return 0;
+
+    // 壁へ向かっていた速度成分（車体座標では +vy が左）
+    const into = hit < 0 ? Math.max(0, this.vy) : Math.max(0, -this.vy);
+
+    // 押し戻し。わずかに余裕を持たせて、毎フレーム再判定にならないようにします。
+    const targetU = hit < 0 ? -(outer - 0.03) : -(inner - 0.03);
+    const sm = track.sample(pr.s, {});
+    this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
+    this.u = targetU;
+
+    // 衝撃：向かっていたぶんだけ前進速度も失う（真横から当たるほど大きい）
+    this.vx = Math.max(0, this.vx - Math.min(this.vx * 0.30, into * 0.55));
+    // 擦り：時間あたりのゆるい摩擦。押し付けが強いほど効きます。
+    this.vx *= Math.exp(-(0.35 + into * 0.30) * dt);
+    // 反発はごくわずか。壁伝いに滑る挙動になります。
+    this.vy = -into * 0.12 * (hit < 0 ? 1 : -1);
+    this.yawRate *= 0.55;
+    this.onWall = 1;
+    return into;
   }
 
   /** 路面の高さ・傾きに車体を合わせます。 */

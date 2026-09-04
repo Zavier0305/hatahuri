@@ -5,6 +5,7 @@ import { Input } from './input.js';
 import { AudioEngine } from './audio.js';
 import { CARS, CAR_BY_ID } from './cars.js';
 import { RIVALS } from './story.js';
+import { COURSES, COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { load, save, resetSave, emptyTune } from './save.js';
 import { applyTune } from './vehicle.js';
 import { buildCar } from './carModel.js';
@@ -55,6 +56,7 @@ function show(id) {
     else if (inGame) game.setDemo(false);
   }
   input.enabled = true;
+  if (id === 'course') renderCourses();
   if (id === 'garage') renderGarage();
   if (id === 'story') renderStory();
   if (id === 'settings') syncSettings();
@@ -291,6 +293,86 @@ $('#btn-buy').addEventListener('click', () => {
   save(data); renderGarage(); audio.beep(1320, 0.16, 0.16);
 });
 
+// ---------------------------------------------------------------- ステージ選択
+
+let coursePurpose = 'free';   // 選んだあとに何を始めるか
+
+/** コース定義から、そのコースの形だけを小さく描きます（走行データは要りません）。 */
+function drawCourseShape(cv, course) {
+  const g = cv.getContext('2d');
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = cv.clientWidth || 240, h = cv.clientHeight || 76;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+
+  const [ax, az] = course.aspect ?? [1, 1];
+  const pts = [];
+  for (let i = 0; i <= 240; i++) {
+    const a = (i / 240) * Math.PI * 2;
+    let r = course.radius.base;
+    for (const [amp, freq, phase] of course.radius.harmonics) r += amp * Math.sin(freq * a + phase);
+    pts.push([Math.cos(a) * r * ax, Math.sin(a) * r * az]);
+  }
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of pts) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  const pad = 8;
+  const sc = Math.min((w - pad * 2) / (maxX - minX), (h - pad * 2) / (maxY - minY));
+  const ox = (w - (maxX - minX) * sc) / 2 - minX * sc;
+  const oy = (h - (maxY - minY) * sc) / 2 - minY * sc;
+
+  g.beginPath();
+  pts.forEach(([x, y], i) => {
+    const px = x * sc + ox, py = y * sc + oy;
+    if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+  });
+  g.closePath();
+  g.strokeStyle = 'rgba(6,10,18,.9)'; g.lineWidth = 5; g.stroke();
+  g.strokeStyle = 'rgba(255,154,82,.85)'; g.lineWidth = 1.8; g.stroke();
+}
+
+function bestKey(courseId, carId) { return `${courseId}:${carId}`; }
+
+function renderCourses() {
+  const forTA = coursePurpose === 'ta';
+  $('#course-title').textContent = forTA ? 'タイムアタック — ステージ選択' : 'フリーラン — ステージ選択';
+  $('#course-sub').textContent = forTA ? '1周のベストラップに挑む' : '交通量のある湾岸を自由に流す';
+  $('#course-list').innerHTML = COURSES.map((c) => {
+    const best = data.bestLap[bestKey(c.id, data.carId)];
+    return `<div class="course-card" tabindex="0" data-course="${c.id}">
+      <div class="cc-place">${c.place}</div>
+      <div class="cc-tag">${c.tag}</div>
+      <div class="cc-name">${c.name}</div>
+      <div class="cc-sum">${c.summary}</div>
+      <canvas></canvas>
+      <div class="cc-meta">
+        <span>全長</span><b>${(c.length / 1000).toFixed(1)} km</b>
+        <span class="cc-best">${best ? 'BEST ' + formatTime(best) : '記録なし'}</span>
+      </div>
+    </div>`;
+  }).join('');
+  $$('#course-list .course-card').forEach((el) => {
+    const c = COURSE_BY_ID[el.dataset.course];
+    requestAnimationFrame(() => drawCourseShape(el.querySelector('canvas'), c));
+    el.addEventListener('click', () => {
+      applyCourse(c.id);
+      if (coursePurpose === 'ta') startTA(); else startFree();
+    });
+  });
+}
+
+/** コースを切り替え、HUD の地図も作り直します。 */
+function applyCourse(id) {
+  if (!game) return;
+  game.setCourse(id);
+  if (hud) hud.setTrack(game.track);
+  data.courseId = id;
+  save(data);
+}
+
 // ---------------------------------------------------------------- ストーリー
 
 function renderStory() {
@@ -321,7 +403,8 @@ function openBrief(rivalId) {
   const eff = applyTune(mc, tuneOf(data.carId));
   const rEff = applyTune(rc, r.tune);
 
-  $('#brief-title').textContent = `STAGE ${RIVALS.indexOf(r) + 1}`;
+  const rc2 = COURSE_BY_ID[r.courseId] || COURSE_BY_ID[DEFAULT_COURSE];
+  $('#brief-title').textContent = `STAGE ${RIVALS.indexOf(r) + 1} — ${rc2.name}（${(rc2.length / 1000).toFixed(1)}km）`;
   $('#brief-name').textContent = r.name;
   $('#brief-subtitle').textContent = r.title;
   $('#brief-car').innerHTML =
@@ -355,6 +438,7 @@ function preparePlayer() {
 
 function startBattle(rival) {
   mode = 'battle';
+  applyCourse(rival.courseId || DEFAULT_COURSE);
   preparePlayer();
   game.setRival(rival);
   const startS = game.track.length * 0.12;
@@ -372,7 +456,7 @@ function startFree() {
   game.setRival(null);
   game.start('free', { startS: 0, rollingStart: true });
   hud.setBattle(false);
-  hud.message('FREE RUN', `東京湾岸 一周 ${(game.track.length / 1000).toFixed(1)} km`, 2200);
+  hud.message(game.course.name, `一周 ${(game.track.length / 1000).toFixed(1)} km`, 2400);
   hideAll();
   showFirstHint();
   audio.resume();
@@ -384,9 +468,10 @@ function startTA() {
   game.setRival(null);
   game.start('timeattack', {
     startS: 0, rollingStart: false,
-    bestLap: data.bestLap[data.carId] ?? Infinity,
+    bestLap: data.bestLap[bestKey(game.course.id, data.carId)] ?? Infinity,
   });
   hud.setBattle(false);
+  hud.message(game.course.name, `1周 ${(game.track.length / 1000).toFixed(1)} km`, 2200);
   hideAll();
   audio.resume();
 }
@@ -427,8 +512,8 @@ function showResult(result, state) {
   data.money += reward;
   data.bestTop = Math.max(data.bestTop, Math.round(state.topSpeed));
   if (state.bestLap < Infinity) {
-    const prev = data.bestLap[data.carId] ?? Infinity;
-    data.bestLap[data.carId] = Math.min(prev, state.bestLap);
+    const key = bestKey(game.course.id, data.carId);
+    data.bestLap[key] = Math.min(data.bestLap[key] ?? Infinity, state.bestLap);
   }
   save(data);
 
@@ -522,8 +607,7 @@ $('#btn-reset').addEventListener('click', () => {
 $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   const go = b.dataset.go;
   audio.resume();
-  if (go === 'free') return startFree();
-  if (go === 'ta') return startTA();
+  if (go === 'free' || go === 'ta') { coursePurpose = go; show('course'); return; }
   show(go);
 }));
 
@@ -552,7 +636,8 @@ function onGameEvent(type, payload) {
     const isBest = payload.time <= payload.best;
     hud.message(isBest ? 'BEST LAP' : 'LAP', formatTime(payload.time), 2200);
     if (mode === 'ta') {
-      data.bestLap[data.carId] = Math.min(data.bestLap[data.carId] ?? Infinity, payload.best);
+      const key = bestKey(game.course.id, data.carId);
+      data.bestLap[key] = Math.min(data.bestLap[key] ?? Infinity, payload.best);
       save(data);
     }
   }
@@ -600,6 +685,7 @@ async function boot() {
 
   game = new Game(canvas, {
     settings: { ...data.settings },
+    courseId: data.courseId || DEFAULT_COURSE,
     onEvent: onGameEvent,
   });
   $('#load-text').textContent = 'マシンを組み立てています…';
