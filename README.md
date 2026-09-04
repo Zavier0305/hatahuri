@@ -25,6 +25,16 @@ python3 -m http.server 8080
 # → http://localhost:8080/ をブラウザで開く
 ```
 
+### 1ファイル版をつくる
+配布や共有のために、全モジュールを1枚のHTMLに束ねられます（three.js はCDNから読み込み）。
+
+```bash
+node tools/build-single.mjs dist/wangan-midnight.html https://cdn.jsdelivr.net/npm/three@0.160.0
+```
+
+`dist/wangan-midnight.html`（約160KB）はこのリポジトリにも入れてあります。
+1枚だけ置ける場所（Artifact、社内Wiki、静的ホスティングなど）に貼ればそのまま動きます。
+
 ### GitHub Pages で公開する
 リポジトリの Settings → Pages → Source を `main`（または任意のブランチ）の `/ (root)` に設定するだけです。
 外部CDNに依存していない（three.js は `vendor/` に同梱）ので、そのまま動きます。
@@ -102,6 +112,7 @@ python3 -m http.server 8080
 | `src/input.js` | キーボード / ゲームパッド / タッチ |
 | `src/save.js` | localStorage へのセーブ |
 | `vendor/` | three.js r160 と後処理（ブルーム）を同梱 |
+| `tools/build-single.mjs` | 全モジュールを1枚のHTMLに束ねるビルドスクリプト |
 
 ### 物理まわりのメモ
 - **エンジン**：回転数からトルクを引き、ギア比と最終減速比を掛けて駆動力にしています。

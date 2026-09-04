@@ -205,7 +205,7 @@ export class Game {
     this.smoke.points.material.opacity = 0.11;
 
     // --- ヘッドライト（自車のみスポットライト）
-    this.headSpot = new THREE.SpotLight(0xfff2d8, 90, 230, Math.PI * 0.20, 0.5, 1.1);
+    this.headSpot = new THREE.SpotLight(0xfff8ec, 52, 210, Math.PI * 0.19, 0.55, 1.2);
     this.headSpot.castShadow = false;
     this.scene.add(this.headSpot);
     this.scene.add(this.headSpot.target);

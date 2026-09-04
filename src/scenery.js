@@ -115,9 +115,9 @@ function glowTexture() {
   cv.width = cv.height = 128;
   const g = cv.getContext('2d');
   const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grd.addColorStop(0, 'rgba(255,236,196,0.95)');
-  grd.addColorStop(0.35, 'rgba(255,214,150,0.42)');
-  grd.addColorStop(1, 'rgba(255,200,120,0)');
+  grd.addColorStop(0, 'rgba(255,243,222,0.95)');
+  grd.addColorStop(0.35, 'rgba(255,231,190,0.38)');
+  grd.addColorStop(1, 'rgba(255,222,165,0)');
   g.fillStyle = grd;
   g.fillRect(0, 0, 128, 128);
   const t = new THREE.CanvasTexture(cv);
@@ -166,7 +166,7 @@ export function buildStreetLights(track, scene) {
   const armG = new THREE.BoxGeometry(0.10, 0.10, 2.2);
   const arms = new THREE.InstancedMesh(armG, poleM, count);
 
-  const poolG = new THREE.PlaneGeometry(22, 38);
+  const poolG = new THREE.PlaneGeometry(19, 32);
   const poolM = new THREE.MeshBasicMaterial({
     map: glowTexture(), transparent: true, blending: THREE.AdditiveBlending,
     depthWrite: false, opacity: 0.28,
