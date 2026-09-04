@@ -1,192 +1,259 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <style>
-        @page {
-            size: A5 landscape;
-            margin: 0; 
-        }
-        
-        body {
-            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
-            margin: 0;
-            padding: 10mm;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            width: 190mm;
-        }
-
-        /* 編集エリア */
-        [contenteditable="true"] {
-            outline: 1px dashed #ccc;
-            min-height: 1.2em;
-            display: inline-block;
-            min-width: 20px;
-        }
-
-        h1 { font-size: 18pt; margin: 0 0 3mm 0; }
-        .info { font-size: 12pt; margin-bottom: 3mm; }
-
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            table-layout: fixed;
-        }
-
-        th, td {
-            border: 1.5pt solid #000;
-            padding: 8pt 4pt;
-            font-size: 13pt;
-            text-align: center;
-            word-break: break-all;
-        }
-
-        th { background-color: #eee; }
-
-        .keisho { width: 100%; text-align: right; font-size: 9pt; margin-top: 2mm; }
-        .contact { width: 100%; margin-top: 4mm; font-size: 11pt; border: 1pt solid #000; padding: 3mm; box-sizing: border-box; }
-
-        /* 設定パネル */
-        .controls {
-            margin-bottom: 5mm;
-            padding: 10px;
-            background: #f0f4f8;
-            border: 1px solid #cfd8dc;
-            border-radius: 6px;
-            display: flex;
-            gap: 15px;
-            align-items: center;
-            font-size: 10pt;
-        }
-
-        .print-btn {
-            padding: 2mm 6mm;
-            cursor: pointer;
-            background: #2196F3;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            font-weight: bold;
-        }
-
-        .save-msg {
-            font-size: 8pt;
-            color: #666;
-            margin-left: auto;
-        }
-
-        @media print {
-            .controls { display: none; }
-            [contenteditable="true"] { outline: none; }
-            body { padding: 10mm; }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#05070d">
+<title>WANGAN MIDNIGHT — 湾岸ミッドナイト風レーシング</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23070a12'/%3E%3Ctext y='23' x='16' text-anchor='middle' font-size='18'%3E%F0%9F%8F%81%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="./styles/main.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/addons/"
+  }
+}
+</script>
 </head>
-<body oninput="saveData()">
+<body>
 
-    <div class="controls">
-        <label>日数：<input type="number" id="rowCount" value="5" min="1" max="12" style="width: 40px;"></label>
-        <label>1日の人数：<input type="number" id="colCount" value="2" min="1" max="3" style="width: 40px;"></label>
-        <button onclick="confirmUpdate()" style="cursor: pointer;">表をリセットして更新</button>
-        <button class="print-btn" onclick="window.print()">印刷する</button>
-        <div class="save-msg">自動保存中...</div>
+<canvas id="scene"></canvas>
+
+<!-- ============================ HUD ============================ -->
+<div id="hud" class="hidden">
+  <div id="hud-top">
+    <div id="hud-battle" style="display:none">
+      <div class="bl">
+        <span id="name-me" class="nm">YOU</span>
+        <div class="bar me"><i id="bar-me"></i></div>
+      </div>
+      <div id="hud-gap" class="ahead">0 m</div>
+      <div class="bl right">
+        <span id="name-you" class="nm">RIVAL</span>
+        <div class="bar you"><i id="bar-you"></i></div>
+      </div>
     </div>
+    <div id="hud-info">
+      <span id="hud-zone"></span>
+      <span id="hud-time"></span>
+      <span id="hud-best"></span>
+      <span id="hud-money"></span>
+    </div>
+  </div>
 
-    <div id="main-content">
-        <h1>令和<span contenteditable="true" id="year">8</span>年度 <span contenteditable="true" id="town">〇〇町</span> 旗振り当番表</h1>
-        
-        <div class="info">
-            場所：<span contenteditable="true" id="place">〇〇交差点</span> ／ 時間：<span contenteditable="true" id="time">7:40 ～ 8:05</span>
+  <div id="hud-center">
+    <div id="hud-msg"></div>
+    <div id="hud-sub"></div>
+  </div>
+
+  <canvas id="hud-minimap"></canvas>
+
+  <div id="hud-bottom">
+    <div id="hud-meter">
+      <canvas id="hud-tacho"></canvas>
+      <div id="hud-readout">
+        <div id="hud-speed">0</div>
+        <div id="hud-unit">km/h</div>
+      </div>
+      <div id="hud-gearbox">
+        <div id="hud-gear">1</div>
+        <div class="lbl">GEAR</div>
+      </div>
+    </div>
+    <div id="hud-boost"><i id="hud-boost-fill"></i><span>BOOST</span></div>
+  </div>
+
+  <div id="touch" class="hidden">
+    <div class="tc left">
+      <button id="tc-left">◀</button>
+      <button id="tc-right">▶</button>
+    </div>
+    <div class="tc right">
+      <button id="tc-down">▼</button>
+      <button id="tc-up">▲</button>
+      <button id="tc-brk">BRAKE</button>
+      <button id="tc-acc">ACCEL</button>
+    </div>
+  </div>
+
+  <div id="speedvignette"></div>
+</div>
+
+<!-- ============================ 画面群 ============================ -->
+<div id="ui">
+
+  <!-- ローディング -->
+  <section id="scr-loading" class="screen active">
+    <div class="loading-box">
+      <div class="logo-min">WANGAN&nbsp;MIDNIGHT</div>
+      <div class="bar-load"><i></i></div>
+      <p id="load-text">コースを生成しています…</p>
+    </div>
+  </section>
+
+  <!-- タイトル -->
+  <section id="scr-title" class="screen">
+    <div class="title-wrap">
+      <div class="kicker">UNOFFICIAL FAN GAME</div>
+      <h1 class="logo">湾岸<span>MIDNIGHT</span></h1>
+      <p class="tagline">首都高・湾岸線をモチーフにした、三人称視点のハイスピードバトル。</p>
+      <nav class="menu">
+        <button data-go="story"><b>ストーリー</b><span>9人のライバルと1対1のバトル</span></button>
+        <button data-go="free"><b>フリーラン</b><span>交通量のある湾岸を自由に流す</span></button>
+        <button data-go="ta"><b>タイムアタック</b><span>1周のベストラップに挑戦</span></button>
+        <button data-go="garage"><b>ガレージ</b><span>マシン選択・チューン・カラー</span></button>
+        <button data-go="howto"><b>操作方法</b><span>キーボード / パッド / タッチ</span></button>
+        <button data-go="settings"><b>設定</b><span>画質・サウンド・AT/MT</span></button>
+      </nav>
+      <p class="disclaimer">
+        本作は漫画『湾岸MIDNIGHT』へのオマージュとして制作された非公式のファン作品です。
+        登場人物・ストーリーはオリジナルで、権利者とは一切関係ありません。
+        車両は実在の市販車を参考にしていますが、性能値はゲーム用の調整値です。
+      </p>
+    </div>
+  </section>
+
+  <!-- ストーリー -->
+  <section id="scr-story" class="screen">
+    <div class="panel wide">
+      <header><h2>ストーリー</h2><button class="back" data-go="title">戻る</button></header>
+      <div id="rival-list" class="rival-list"></div>
+    </div>
+  </section>
+
+  <!-- 対戦前 -->
+  <section id="scr-brief" class="screen">
+    <div class="panel">
+      <header><h2 id="brief-title">バトル</h2><button class="back" data-go="story">戻る</button></header>
+      <div class="brief">
+        <div class="brief-rival">
+          <div class="rv-name" id="brief-name"></div>
+          <div class="rv-title" id="brief-subtitle"></div>
+          <div class="rv-car" id="brief-car"></div>
+          <p class="quote" id="brief-quote"></p>
         </div>
+        <div class="brief-you">
+          <div class="lbl">YOUR MACHINE</div>
+          <div class="rv-car" id="brief-mycar"></div>
+          <div id="brief-mystats" class="statline"></div>
+          <div class="warn" id="brief-warn"></div>
+        </div>
+      </div>
+      <footer>
+        <button class="primary" id="brief-start">バトル開始</button>
+        <button data-go="garage">ガレージで整備する</button>
+      </footer>
+    </div>
+  </section>
 
-        <table id="targetTable">
-            <thead>
-                <tr id="tableHeader"></tr>
-            </thead>
-            <tbody id="tableBody"></tbody>
+  <!-- ガレージ -->
+  <section id="scr-garage" class="screen">
+    <div class="panel wide garage">
+      <header><h2>ガレージ</h2><span id="garage-money" class="money"></span><button class="back" data-go="title">戻る</button></header>
+      <div class="garage-body">
+        <div class="car-list" id="car-list"></div>
+        <div class="car-detail">
+          <canvas id="preview"></canvas>
+          <div class="detail-head">
+            <div>
+              <div class="maker" id="d-maker"></div>
+              <div class="cname" id="d-name"></div>
+              <div class="chassis" id="d-chassis"></div>
+            </div>
+            <div class="price" id="d-price"></div>
+          </div>
+          <p class="engine" id="d-engine"></p>
+          <p class="note" id="d-note"></p>
+          <div class="specs" id="d-specs"></div>
+          <div class="tune" id="tune-list"></div>
+          <div class="colors" id="color-row"></div>
+          <div class="detail-actions">
+            <button class="primary" id="btn-select">この車に乗る</button>
+            <button id="btn-buy">購入する</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 操作方法 -->
+  <section id="scr-howto" class="screen">
+    <div class="panel">
+      <header><h2>操作方法</h2><button class="back" data-go="title">戻る</button></header>
+      <div class="howto">
+        <table>
+          <tr><th>アクセル</th><td><kbd>↑</kbd> / <kbd>W</kbd> / パッドRT</td></tr>
+          <tr><th>ブレーキ</th><td><kbd>↓</kbd> / <kbd>S</kbd> / パッドLT</td></tr>
+          <tr><th>ステア</th><td><kbd>←</kbd><kbd>→</kbd> / <kbd>A</kbd><kbd>D</kbd> / 左スティック</td></tr>
+          <tr><th>シフトアップ</th><td><kbd>E</kbd> / <kbd>Shift</kbd> / パッドRB</td></tr>
+          <tr><th>シフトダウン</th><td><kbd>Q</kbd> / <kbd>Ctrl</kbd> / パッドLB</td></tr>
+          <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> / パッドA</td></tr>
+          <tr><th>カメラ切替</th><td><kbd>C</kbd></td></tr>
+          <tr><th>リスタート</th><td><kbd>R</kbd></td></tr>
+          <tr><th>ポーズ</th><td><kbd>Esc</kbd></td></tr>
         </table>
-
-        <div class="keisho">（敬称略）</div>
-
-        <div class="contact" contenteditable="true" id="contact-info">
-            〇〇町 旗振り委員：氏名（TEL 090-0000-0000）
-        </div>
+        <p class="hint">
+          コツ：レッドゾーン手前でシフトアップ、コーナーはブレーキで前荷重をかけてから曲げる。
+          前車の真後ろ（40m以内）はスリップストリームが効いて空気抵抗が約4割減ります。
+        </p>
+      </div>
     </div>
+  </section>
 
-    <script>
-        // 表を更新（データが消えるため確認を入れる）
-        function confirmUpdate() {
-            if (confirm("表をリセットします。入力中の内容は消去されますがよろしいですか？")) {
-                updateTable();
-                saveData();
-            }
-        }
+  <!-- 設定 -->
+  <section id="scr-settings" class="screen">
+    <div class="panel">
+      <header><h2>設定</h2><button class="back" data-go="title">戻る</button></header>
+      <div class="settings">
+        <label><span>ブルーム（光のにじみ）</span><input type="checkbox" id="set-bloom"></label>
+        <label><span>サウンド</span><input type="checkbox" id="set-sound"></label>
+        <label><span>オートマチック変速</span><input type="checkbox" id="set-at"></label>
+        <label><span>画質</span>
+          <select id="set-quality">
+            <option value="high">高</option>
+            <option value="mid">中</option>
+            <option value="low">低（軽量）</option>
+          </select>
+        </label>
+        <label><span>タッチ操作パネル</span><input type="checkbox" id="set-touch"></label>
+        <div class="danger">
+          <button id="btn-reset">セーブデータを消去</button>
+        </div>
+      </div>
+    </div>
+  </section>
 
-        function updateTable() {
-            const rowCount = document.getElementById('rowCount').value;
-            const colCount = document.getElementById('colCount').value;
-            const thead = document.getElementById('tableHeader');
-            const tbody = document.getElementById('tableBody');
+  <!-- ポーズ -->
+  <section id="scr-pause" class="screen overlay">
+    <div class="panel narrow">
+      <header><h2>ポーズ</h2></header>
+      <nav class="menu compact">
+        <button id="pz-resume"><b>再開</b></button>
+        <button id="pz-restart"><b>やり直す</b></button>
+        <button id="pz-finish"><b>走行を終える</b><span>ここまでの記録でリザルトへ</span></button>
+        <button id="pz-camera"><b>カメラ切替</b><span id="pz-camlabel"></span></button>
+        <button id="pz-quit"><b>タイトルへ戻る</b></button>
+      </nav>
+    </div>
+  </section>
 
-            // ヘッダー生成
-            let headerHtml = `<th style="width: 30%;">日付</th>`;
-            for (let j = 0; j < colCount; j++) {
-                headerHtml += `<th>氏名</th>`;
-            }
-            thead.innerHTML = headerHtml;
+  <!-- リザルト -->
+  <section id="scr-result" class="screen overlay">
+    <div class="panel narrow">
+      <div id="res-head" class="res-head">WIN</div>
+      <p class="quote" id="res-quote"></p>
+      <div class="res-stats" id="res-stats"></div>
+      <nav class="menu compact">
+        <button class="primary" id="res-next"><b>次へ</b></button>
+        <button id="res-retry"><b>もう一度</b></button>
+        <button id="res-title"><b>タイトルへ</b></button>
+      </nav>
+    </div>
+  </section>
 
-            // 行生成
-            tbody.innerHTML = '';
-            for (let i = 0; i < rowCount; i++) {
-                const tr = document.createElement('tr');
-                let rowHtml = `<td><span contenteditable="true"> / （ ）</span></td>`;
-                for (let j = 0; j < colCount; j++) {
-                    rowHtml += `<td><span contenteditable="true">氏名</span></td>`;
-                }
-                tr.innerHTML = rowHtml;
-                tbody.appendChild(tr);
-            }
-        }
+</div>
 
-        // データの保存
-        function saveData() {
-            const data = {
-                rowCount: document.getElementById('rowCount').value,
-                colCount: document.getElementById('colCount').value,
-                // テーブルの中身をまるごと保存
-                tableContent: document.getElementById('targetTable').innerHTML,
-                // その他のテキスト項目
-                year: document.getElementById('year').innerText,
-                town: document.getElementById('town').innerText,
-                place: document.getElementById('place').innerText,
-                time: document.getElementById('time').innerText,
-                contact: document.getElementById('contact-info').innerHTML
-            };
-            localStorage.setItem('tobanData', JSON.stringify(data));
-        }
-
-        // データの読み込み
-        function loadData() {
-            const savedData = localStorage.getItem('tobanData');
-            if (savedData) {
-                const data = JSON.parse(savedData);
-                document.getElementById('rowCount').value = data.rowCount;
-                document.getElementById('colCount').value = data.colCount;
-                document.getElementById('targetTable').innerHTML = data.tableContent;
-                document.getElementById('year').innerText = data.year;
-                document.getElementById('town').innerText = data.town;
-                document.getElementById('place').innerText = data.place;
-                document.getElementById('time').innerText = data.time;
-                document.getElementById('contact-info').innerHTML = data.contact;
-            } else {
-                updateTable(); // データがない初回のみ初期表を作成
-            }
-        }
-
-        window.onload = loadData;
-    </script>
-
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>
