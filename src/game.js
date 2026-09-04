@@ -201,8 +201,8 @@ export class Game {
 
     // --- エフェクト
     this.sparks = new Particles(this.scene, 240, 0xffc266, 0.42);
-    this.smoke = new Particles(this.scene, 220, 0xa8b0bd, 0.95, false);
-    this.smoke.points.material.opacity = 0.16;
+    this.smoke = new Particles(this.scene, 220, 0xa8b0bd, 0.7, false);
+    this.smoke.points.material.opacity = 0.11;
 
     // --- ヘッドライト（自車のみスポットライト）
     this.headSpot = new THREE.SpotLight(0xfff2d8, 90, 230, Math.PI * 0.20, 0.5, 1.1);
@@ -221,6 +221,7 @@ export class Game {
     this.state = {};
     this._acc = 0;
     this._tmpA = {};
+    this._tmpB = {};
     this._v3 = new THREE.Vector3();
     this._v3b = new THREE.Vector3();
     // カメラ計算専用（他と共有すると値が壊れるので必ず分けておく）
@@ -237,7 +238,7 @@ export class Game {
     this.renderer.getSize(size);
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(size, 0.62, 0.72, 0.72);
+    this.bloom = new UnrealBloomPass(size, 0.48, 0.66, 0.82);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
   }
@@ -377,7 +378,7 @@ export class Game {
   emitSmoke(actor) {
     const v = actor.vehicle;
     const slip = Math.max(v.slipRear, v.wheelSpin * 0.7);
-    if (slip < 0.30 || Math.abs(v.vx) < 6) return;
+    if (slip < 0.34 || Math.abs(v.vx) < 8) return;
     const back = -v.spec.dims.WB * 0.5;
     const cs = Math.cos(v.heading), sn = Math.sin(v.heading);
     for (const side of [-1, 1]) {
@@ -571,6 +572,18 @@ export class Game {
 
     const follow = cm.id === 'hood' ? 40 : lerp(6.5, 11, clamp(speed / 80, 0, 1));
     this.camPos.lerp(ideal, 1 - Math.exp(-follow * dt));
+
+    // カメラが壁やビルにめり込まないよう、道路の内側・路面より上に押し戻します
+    if (cm.id !== 'hood') {
+      const pr = this.track.project(this.camPos, v.trackIndex);
+      const maxU = ROAD.halfRoad - 1.0;
+      const cu = clamp(pr.u, -maxU, maxU);
+      const ch = clamp(pr.h, 0.75, 22);
+      if (cu !== pr.u || ch !== pr.h) {
+        const sm2 = this.track.sample(pr.s, this._tmpB);
+        this.camPos.copy(sm2.pos).addScaledVector(sm2.lat, cu).addScaledVector(sm2.up, ch);
+      }
+    }
 
     const lookTarget = this._camTarget.copy(v.pos)
       .addScaledVector(carDir, cm.look)

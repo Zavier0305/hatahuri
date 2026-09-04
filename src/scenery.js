@@ -169,7 +169,7 @@ export function buildStreetLights(track, scene) {
   const poolG = new THREE.PlaneGeometry(22, 38);
   const poolM = new THREE.MeshBasicMaterial({
     map: glowTexture(), transparent: true, blending: THREE.AdditiveBlending,
-    depthWrite: false, opacity: 0.42,
+    depthWrite: false, opacity: 0.28,
   });
   const pools = new THREE.InstancedMesh(poolG, poolM, count);
   pools.renderOrder = 2;
