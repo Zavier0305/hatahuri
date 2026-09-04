@@ -9,8 +9,7 @@ import { COURSES, COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { load, save, resetSave, emptyTune } from './save.js';
 import { applyTune } from './vehicle.js';
 import { buildCar } from './carModel.js';
-import { formatMoney, formatTime, clamp, KMH } from './util.js';
-
+import { formatMoney, formatTime, clamp } from './util.js';
 // ---------------------------------------------------------------- 状態
 
 let data = load();

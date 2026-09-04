@@ -1,5 +1,4 @@
-import { clamp, lerp } from './util.js';
-
+import { clamp } from './util.js';
 /**
  * 効果音はすべて WebAudio でその場で合成しています（音声ファイルなし）。
  * エンジン音は「回転数から基本周波数を作り、倍音を重ねる」方式です。

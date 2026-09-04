@@ -70,6 +70,8 @@ export class Vehicle {
     this.crashCooldown = 0;
     this.assist = true;      // カウンターステア補助（設定でOFFにできます）
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
+    this._sm = {};          // track.sample 用の使い回し
+    this._p = new THREE.Vector3();
   }
 
   setTune(tune) {
@@ -81,7 +83,7 @@ export class Vehicle {
   }
 
   placeOnTrack(track, s, u) {
-    const sm = track.sample(s, {});
+    const sm = track.sample(s, this._sm);
     this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, 0.02);
     this.heading = Math.atan2(sm.tan.x, sm.tan.z);
     this.s = s; this.u = u; this.trackIndex = sm.index;
@@ -129,8 +131,13 @@ export class Vehicle {
     const Iz = m * (S.dims.L * S.dims.L + S.dims.W * S.dims.W) / 12 * 1.05;
 
     // --- ステアリング（速度が乗るほど切れ角を絞る）
+    // 高速でも10度以上切れると、わずかな操作で車体が向きを変えてしまい
+    // 「曲がりやすすぎる」感触になります。実車の高速巡航は数度の世界です。
+    //   0 m/s → 30度 / 20 m/s(72km/h) → 13度 / 60 m/s(216km/h) → 6度
+    // AI は角度を計算して当ててくるので、人間向けの「据わり」の制限は不要です。
+    // 同じ制限を掛けると、AI が曲がりきれずに壁を擦るようになります。
     const v = Math.abs(this.vx);
-    const maxSteer = 0.55 / (1 + v * 0.034);
+    const maxSteer = this.isAI ? 0.55 / (1 + v * 0.040) : 0.52 / (1 + v * 0.062);
     let target = inp.steer * maxSteer;
 
     // カウンターステア補助：リアが流れた向きへ自動で少しだけ舵を当てます。
@@ -141,7 +148,8 @@ export class Vehicle {
       const counter = clamp(beta * 0.85, -0.30, 0.30);
       target = clamp(target + counter * (inp.handbrake > 0.5 ? 0.25 : 0.6), -0.62, 0.62);
     }
-    const rate = this.isAI ? 9.0 : 12.0;
+    // 速いほど舵の入りをゆっくりに（据わりを出すため）
+    const rate = this.isAI ? 9.0 : 12.0 - clamp(v / 13, 0, 5.0);
     this.steer = damp(this.steer, target, rate, dt);
     const st = this.steer;
 
@@ -319,7 +327,7 @@ export class Vehicle {
 
     // 押し戻し。わずかに余裕を持たせて、毎フレーム再判定にならないようにします。
     const targetU = hit < 0 ? -(outer - 0.03) : -(inner - 0.03);
-    const sm = track.sample(pr.s, {});
+    const sm = track.sample(pr.s, this._sm);
     this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
     this.u = targetU;
 
@@ -336,8 +344,8 @@ export class Vehicle {
 
   /** 路面の高さ・傾きに車体を合わせます。 */
   snapToRoad(track) {
-    const sm = track.sample(this.s, {});
-    const p = sm.pos.clone().addScaledVector(sm.lat, this.u);
+    const sm = track.sample(this.s, this._sm);
+    const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u);
     this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);
     return sm;
   }

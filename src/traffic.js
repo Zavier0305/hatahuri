@@ -36,6 +36,10 @@ export class Traffic {
     this._tmp = {};
     this._q = new THREE.Quaternion();
     this._m = new THREE.Matrix4();
+    this._fwd = new THREE.Vector3();
+    this._lft = new THREE.Vector3();
+    this._near = [];
+    this._nearPool = [];
   }
 
   /** プレイヤーの周囲に配置しなおします。 */
@@ -103,8 +107,8 @@ export class Traffic {
       const root = c.model.root;
       root.position.copy(sm.pos).addScaledVector(sm.lat, c.u).addScaledVector(sm.up, 0.01);
       // 右手系（X×Y=Z）になるよう、+X は「進行方向の左」を取ります
-      const fwd = c.oncoming ? sm.tan.clone().negate() : sm.tan;
-      const lft = c.oncoming ? sm.lat.clone() : sm.lat.clone().negate();
+      const fwd = c.oncoming ? this._fwd.copy(sm.tan).negate() : this._fwd.copy(sm.tan);
+      const lft = c.oncoming ? this._lft.copy(sm.lat) : this._lft.copy(sm.lat).negate();
       this._m.makeBasis(lft, sm.up, fwd);
       this._q.setFromRotationMatrix(this._m);
       root.quaternion.copy(this._q);
@@ -117,13 +121,20 @@ export class Traffic {
   /** 当たり判定用に、指定範囲の車を返します。 */
   near(s, range = 90) {
     const L = this.track.length;
-    const out = [];
+    const out = this._near;
+    out.length = 0;
+    let k = 0;
     for (const c of this.cars) {
       if (!c.active) continue;
       let rel = c.s - s;
       if (rel > L / 2) rel -= L;
       if (rel < -L / 2) rel += L;
-      if (Math.abs(rel) < range) out.push({ car: c, rel });
+      if (Math.abs(rel) >= range) continue;
+      let e = this._nearPool[k];
+      if (!e) e = this._nearPool[k] = { car: null, rel: 0 };
+      e.car = c; e.rel = rel;
+      out.push(e);
+      k++;
     }
     return out;
   }

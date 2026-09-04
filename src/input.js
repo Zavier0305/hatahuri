@@ -89,6 +89,9 @@ export class Input {
     }
 
     str = clamp(str, -1, 1);
+    // エキスポ。中央付近の操作を鈍くして、微調整を効きやすくします。
+    // 直線でわずかに触れただけで car が向きを変えるのを防ぎます。
+    str = Math.sign(str) * Math.pow(Math.abs(str), 1.55);
     // キーの ON/OFF をなめらかに（ハンドルを一気に切らない）
     s.throttle = damp(s.throttle, thr, 16, dt);
     s.brake = damp(s.brake, brk, 20, dt);

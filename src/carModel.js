@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { clamp, lerp } from './util.js';
-
+import { lerp } from './util.js';
 /**
  * 断面（ロフト）でボディを作ります。
  * 「前から後ろへ輪切りにした形」を並べて面を張る方式なので、
@@ -125,6 +124,7 @@ function lampGlowTexture() {
   g.fillRect(0, 0, 64, 64);
   _lampGlowTex = new THREE.CanvasTexture(cv);
   _lampGlowTex.colorSpace = THREE.SRGBColorSpace;
+  _lampGlowTex.userData.shared = true;   // 使い回すので破棄しない
   return _lampGlowTex;
 }
 

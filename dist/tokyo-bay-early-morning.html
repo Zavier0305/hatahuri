@@ -1556,7 +1556,6 @@ function tuned(baseId, over) {
 
 
 // ============================== src/carModel.js ==============================
-
 /**
  * 断面（ロフト）でボディを作ります。
  * 「前から後ろへ輪切りにした形」を並べて面を張る方式なので、
@@ -1681,6 +1680,7 @@ function lampGlowTexture() {
   g.fillRect(0, 0, 64, 64);
   _lampGlowTex = new THREE.CanvasTexture(cv);
   _lampGlowTex.colorSpace = THREE.SRGBColorSpace;
+  _lampGlowTex.userData.shared = true;   // 使い回すので破棄しない
   return _lampGlowTex;
 }
 
@@ -2078,6 +2078,559 @@ function buildTrafficCar(kind, color, rand) {
   return { root, wheels, length: L, width: W };
 }
 
+
+
+
+// ============================== src/vehicle.js ==============================
+
+const G = 9.81;
+const RHO = 1.225;      // 空気密度[kg/m^3]
+const DRIVE_EFF = 0.90; // 駆動系の伝達効率
+
+/** レイアウトごとの前後重量配分（前輪側の比率） */
+const WEIGHT_BIAS = { FR: 0.54, RR: 0.39, MR: 0.42, AWD: 0.56 };
+/** 駆動トルクの前輪への配分 */
+const DRIVE_SPLIT = { FR: 0, RR: 0, MR: 0, AWD: 0.38 };
+
+/** チューニング段階（0〜5）から実効スペックを計算します。 */
+function applyTune(spec, tune) {
+  const t = tune || { power: 0, weight: 0, tire: 0, aero: 0, gear: 0, turbo: 0 };
+  const power = spec.power * (1 + 0.13 * t.power);
+  const torque = spec.torque * (1 + 0.12 * t.power + 0.04 * t.turbo);
+  const mass = spec.mass * (1 - 0.035 * t.weight);
+  const grip = spec.grip * (1 + 0.045 * t.tire);
+  const downforce = spec.downforce * (1 + 0.16 * t.aero);
+  const topSpeed = spec.topSpeed * (1 + 0.055 * t.gear);
+  const turbo = spec.turbo > 0 ? Math.min(1.25, spec.turbo * (1 + 0.10 * t.turbo)) : 0;
+  const lag = spec.turbo > 0 ? Math.max(0.16, 0.62 - 0.07 * t.turbo) : 0.01;
+  return { ...spec, power, torque, mass, grip, downforce, topSpeed, turbo, lag };
+}
+
+/** 最終減速比を「目標最高速で最終ギアがレッドに当たる」ように逆算します。 */
+function finalDrive(spec) {
+  const topMs = spec.topSpeed / KMH;
+  const topGear = spec.gears[spec.gears.length - 1];
+  return (spec.redline / RADS_TO_RPM) * spec.wheelR / (topMs * topGear);
+}
+
+/** 回転数に対するトルクの出方（1.0がピーク） */
+function torqueShape(x) {
+  const f = 0.654 + 1.116 * x - 0.9 * x * x;
+  const low = clamp((x - 0.055) / 0.17, 0, 1);
+  const cut = x > 1.0 ? clamp(1 - (x - 1.0) * 6, 0, 1) : 1;
+  return Math.max(0, f) * (0.35 + 0.65 * low) * cut;
+}
+
+class Vehicle {
+  constructor(spec, tune, opts = {}) {
+    this.baseSpec = spec;
+    this.setTune(tune);
+    this.isAI = !!opts.isAI;
+    this.name = opts.name || spec.name;
+
+    this.pos = new THREE.Vector3();
+    this.heading = 0;      // ワールドのY軸まわり（+Zが0）
+    this.vx = 0;           // 車体前後方向の速度[m/s]
+    this.vy = 0;           // 車体左右方向の速度[m/s]（右が＋）
+    this.yawRate = 0;
+    this.gear = 1;         // 1..N（0はニュートラル、-1はR）
+    this.rpm = spec.idle;
+    this.boost = 0;
+    this.shiftTimer = 0;
+    this.steer = 0;
+    this.slipRear = 0;
+    this.slipFront = 0;
+    this.wheelSpin = 0;
+    this.onWall = 0;
+    this.roll = 0;
+    this.pitch = 0;
+    this.wheelAngle = 0;
+    this.distance = 0;
+    this.s = 0; this.u = 0; this.trackIndex = 0;
+    this.lastAx = 0; this.lastAy = 0;
+    this.slipstream = 0;
+    this.crashCooldown = 0;
+    this.assist = true;      // カウンターステア補助（設定でOFFにできます）
+    this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
+    this._sm = {};          // track.sample 用の使い回し
+    this._p = new THREE.Vector3();
+  }
+
+  setTune(tune) {
+    this.tune = tune || { power: 0, weight: 0, tire: 0, aero: 0, gear: 0, turbo: 0 };
+    this.spec = applyTune(this.baseSpec, this.tune);
+    this.final = finalDrive(this.spec);
+    // 出力[PS]から算出したトルク上限（ピークトルクとの整合をとる）
+    this.maxGear = this.spec.gears.length;
+  }
+
+  placeOnTrack(track, s, u) {
+    const sm = track.sample(s, this._sm);
+    this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, 0.02);
+    this.heading = Math.atan2(sm.tan.x, sm.tan.z);
+    this.s = s; this.u = u; this.trackIndex = sm.index;
+    this.vx = 0; this.vy = 0; this.yawRate = 0;
+    this.gear = 1; this.rpm = this.spec.idle; this.boost = 0;
+  }
+
+  get speedKmh() { return Math.abs(this.vx) * KMH; }
+
+  gearRatio() {
+    if (this.gear <= 0) return 0;
+    return this.spec.gears[this.gear - 1];
+  }
+
+  /** 現ギアでの理論回転数 */
+  rpmFor(v, gear) {
+    const gr = gear <= 0 ? 0 : this.spec.gears[gear - 1];
+    if (!gr) return this.spec.idle;
+    return Math.abs(v) / this.spec.wheelR * gr * this.final * RADS_TO_RPM;
+  }
+
+  shiftUp() {
+    if (this.gear < this.maxGear && this.shiftTimer <= 0) {
+      this.gear++; this.shiftTimer = 0.16; return true;
+    }
+    return false;
+  }
+  shiftDown() {
+    if (this.gear > 1 && this.shiftTimer <= 0) {
+      const nr = this.rpmFor(this.vx, this.gear - 1);
+      if (nr < this.spec.redline * 1.06) { this.gear--; this.shiftTimer = 0.16; return true; }
+    }
+    return false;
+  }
+
+  /** dt はサブステップ済みの短い時間刻み */
+  step(dt, env) {
+    const S = this.spec;
+    const inp = this.input;
+    const m = S.mass;
+    const L = S.dims.WB;
+    const lf = L * (1 - WEIGHT_BIAS[S.layout]);
+    const lr = L * WEIGHT_BIAS[S.layout];
+    const cgH = 0.42;
+    const Iz = m * (S.dims.L * S.dims.L + S.dims.W * S.dims.W) / 12 * 1.05;
+
+    // --- ステアリング（速度が乗るほど切れ角を絞る）
+    // 高速でも10度以上切れると、わずかな操作で車体が向きを変えてしまい
+    // 「曲がりやすすぎる」感触になります。実車の高速巡航は数度の世界です。
+    //   0 m/s → 30度 / 20 m/s(72km/h) → 13度 / 60 m/s(216km/h) → 6度
+    // AI は角度を計算して当ててくるので、人間向けの「据わり」の制限は不要です。
+    // 同じ制限を掛けると、AI が曲がりきれずに壁を擦るようになります。
+    const v = Math.abs(this.vx);
+    const maxSteer = this.isAI ? 0.55 / (1 + v * 0.040) : 0.52 / (1 + v * 0.062);
+    let target = inp.steer * maxSteer;
+
+    // カウンターステア補助：リアが流れた向きへ自動で少しだけ舵を当てます。
+    // 「勝手に曲がる」のではなく「滑ったぶんを戻す」だけなので、
+    // 自分で操作している感覚は残したまま、立て直しが効くようになります。
+    if (this.assist && !this.isAI && v > 6) {
+      const beta = Math.atan2(this.vy, v);          // 車体のスリップ角（＋が左）
+      const counter = clamp(beta * 0.85, -0.30, 0.30);
+      target = clamp(target + counter * (inp.handbrake > 0.5 ? 0.25 : 0.6), -0.62, 0.62);
+    }
+    // 速いほど舵の入りをゆっくりに（据わりを出すため）
+    const rate = this.isAI ? 9.0 : 12.0 - clamp(v / 13, 0, 5.0);
+    this.steer = damp(this.steer, target, rate, dt);
+    const st = this.steer;
+
+    // --- 変速
+    if (this.shiftTimer > 0) this.shiftTimer -= dt;
+    const cut = this.shiftTimer > 0 ? 0 : 1;
+
+    // --- エンジン
+    const theoretical = this.rpmFor(this.vx, this.gear);
+    const targetRpm = clamp(theoretical, S.idle, S.redline * 1.07);
+    this.rpm = damp(this.rpm, this.shiftTimer > 0 ? Math.max(S.idle, targetRpm * 0.86) : targetRpm, 18, dt);
+
+    const x = this.rpm / S.redline;
+    // ターボの過給（アクセル量と回転数で立ち上がる）
+    const boostTarget = inp.throttle * clamp((this.rpm - S.redline * 0.22) / (S.redline * 0.36), 0, 1);
+    const lag = boostTarget > this.boost ? S.lag : S.lag * 0.35;
+    this.boost = damp(this.boost, boostTarget, 1 / Math.max(0.05, lag), dt);
+    const boostMul = S.turbo > 0
+      ? (1 - 0.42 * S.turbo) + 0.42 * S.turbo * this.boost
+      : 1;
+
+    let engineTq = S.torque * torqueShape(x) * boostMul * inp.throttle * cut;
+    if (inp.throttle < 0.02) engineTq = -S.torque * 0.055 * clamp(x, 0, 1.1); // エンジンブレーキ
+    // 出力の頭打ち（PS換算）
+    const wRad = Math.max(1, this.rpm / RADS_TO_RPM);
+    const maxTq = (S.power * 735.49875) / wRad;
+    if (engineTq > maxTq) engineTq = maxTq;
+
+    const gr = this.gearRatio();
+    let Fdrive = gr > 0 ? (engineTq * gr * this.final * DRIVE_EFF) / S.wheelR : 0;
+
+    // --- 空力
+    const dragK = 0.5 * RHO * S.cd * S.area * (1 - this.slipstream * 0.42);
+    const Fdrag = dragK * v * v * Math.sign(this.vx || 1);
+    const Froll = 0.0135 * m * G * Math.sign(this.vx || 1) * clamp(v / 2, 0, 1);
+    const downforce = 0.5 * RHO * S.downforce * 1.6 * S.area * v * v; // [N]
+
+    // --- ブレーキ
+    const brakeMax = S.grip * m * G * 1.02;
+    let Fbrake = inp.brake * brakeMax;
+
+    // --- 荷重
+    const ax = this.lastAx;
+    const Wtot = m * G + downforce;
+    let Nf = Wtot * (lr / L) - (m * ax * cgH) / L;
+    let Nr = Wtot * (lf / L) + (m * ax * cgH) / L;
+    Nf = Math.max(Wtot * 0.12, Nf);
+    Nr = Math.max(Wtot * 0.12, Nr);
+
+    const mu = S.grip * (env && env.wet ? 0.78 : 1);
+    const muF = mu, muR = mu * (inp.handbrake > 0.5 ? 0.42 : 1);
+
+    // --- タイヤのスリップ角と横力
+    const vxs = Math.max(2.0, v);
+    const af = Math.atan2(this.vy + this.yawRate * lf, vxs) - st * Math.sign(this.vx || 1);
+    const ar = Math.atan2(this.vy - this.yawRate * lr, vxs);
+    const Cf = 15.5 * Nf, Cr = 16.0 * Nr;
+    let Fyf = -Cf * af;
+    let Fyr = -Cr * ar;
+    const maxFyf = muF * Nf, maxFyr = muR * Nr;
+
+    // --- 前後力の配分と摩擦円
+    const splitF = DRIVE_SPLIT[S.layout];
+    let FxF = Fdrive * splitF - Fbrake * 0.64 * Math.sign(this.vx || 1);
+    let FxR = Fdrive * (1 - splitF) - Fbrake * 0.36 * Math.sign(this.vx || 1);
+    if (inp.handbrake > 0.5) FxR -= brakeMax * 0.30 * Math.sign(this.vx || 1);
+
+    const circle = (Fx, Fy, maxF) => {
+      const mag = Math.hypot(Fx, Fy);
+      if (mag <= maxF || mag < 1e-3) return [Fx, Fy, 0];
+      const k = maxF / mag;
+      return [Fx * k, Fy * k, 1 - k];
+    };
+    let sf, sr;
+    [FxF, Fyf, sf] = circle(FxF, clamp(Fyf, -maxFyf, maxFyf), muF * Nf);
+    [FxR, Fyr, sr] = circle(FxR, clamp(Fyr, -maxFyr, maxFyr), muR * Nr);
+    this.slipFront = damp(this.slipFront, sf, 12, dt);
+    this.slipRear = damp(this.slipRear, sr, 12, dt);
+    this.wheelSpin = damp(
+      this.wheelSpin,
+      clamp((Math.abs(Fdrive) - (muR * Nr + (splitF > 0 ? muF * Nf : 0))) / (m * G), 0, 1.4),
+      10, dt
+    );
+
+    // --- 運動方程式
+    const Fx = FxF * Math.cos(st) - Fyf * Math.sin(st) + FxR - Fdrag - Froll;
+    const Fy = FxF * Math.sin(st) + Fyf * Math.cos(st) + Fyr;
+    const axn = Fx / m + this.yawRate * this.vy;
+    const ayn = Fy / m - this.yawRate * this.vx;
+    const yawAcc = (lf * (Fyf * Math.cos(st) + FxF * Math.sin(st)) - lr * Fyr) / Iz;
+
+    this.vx += axn * dt;
+    this.vy += ayn * dt;
+    this.yawRate += yawAcc * dt;
+    // 低速の暴れ止め
+    if (Math.abs(this.vx) < 0.6 && inp.throttle < 0.05) {
+      this.vx *= 0.90; this.vy *= 0.75; this.yawRate *= 0.80;
+    }
+    this.yawRate *= Math.exp(-dt * 0.55);
+
+    // --- スピン抑制（アーケード寄りの安定化）
+    // タイヤが支えられる旋回の速さには上限があります。
+    // それを大きく超えたぶんだけ強く減衰させることで、
+    // 「一度回り出したら戻らない」状態を防ぎつつ、サイドブレーキでのドリフトは残します。
+    const gripLat = mu * G * (1 + (downforce / Math.max(1, m * G)) * 0.9);
+    const maxYaw = v > 3 ? gripLat / v : 4;
+    const assist = inp.handbrake > 0.5 ? 2.1 : 1.40;
+    if (Math.abs(this.yawRate) > maxYaw * assist) {
+      const over = Math.abs(this.yawRate) / (maxYaw * assist);
+      this.yawRate *= Math.exp(-dt * clamp((over - 1) * 9, 0, 26));
+    }
+    const slipAngle = Math.abs(Math.atan2(this.vy, Math.max(1, Math.abs(this.vx))));
+    if (slipAngle > 0.5 && inp.handbrake < 0.5) {
+      const k = clamp((slipAngle - 0.5) / 0.5, 0, 1);
+      this.yawRate *= Math.exp(-dt * (1.4 + 8.0 * k));
+      this.vy *= Math.exp(-dt * (1.0 + 5.0 * k));
+    }
+    this.yawRate = clamp(this.yawRate, -4.0, 4.0);
+    this.vy = clamp(this.vy, -38, 38);
+    this.vx = clamp(this.vx, -14, 130);
+
+    this.lastAx = axn;
+    this.lastAy = ayn;
+
+    this.heading += this.yawRate * dt;
+    const cs = Math.cos(this.heading), sn = Math.sin(this.heading);
+    // 車体前方は +Z、右は +X
+    this.pos.x += (this.vx * sn + this.vy * cs) * dt;
+    this.pos.z += (this.vx * cs - this.vy * sn) * dt;
+    this.distance += Math.abs(this.vx) * dt;
+
+    // 見た目用のロール／ピッチ
+    this.roll = damp(this.roll, clamp(-this.lastAy / (G * 2.4), -0.09, 0.09), 7, dt);
+    this.pitch = damp(this.pitch, clamp(-this.lastAx / (G * 3.4), -0.055, 0.055), 7, dt);
+    this.wheelAngle += (this.vx / S.wheelR) * dt;
+    if (this.crashCooldown > 0) this.crashCooldown -= dt;
+  }
+
+  /** 1フレーム分を細かく刻んで進めます（高速域でも破綻しないように） */
+  update(dt, env) {
+    const n = clamp(Math.ceil(dt / (1 / 120)), 1, 8);
+    const h = dt / n;
+    for (let i = 0; i < n; i++) this.step(h, env);
+  }
+
+  /**
+   * 壁との接触処理。
+   *
+   * 以前は接触中「1フレームあたり最大16%」の減速を掛けていました。
+   * 60fps なら1秒で 0.84^60 ≒ 0.003 倍。つまり壁に触れた瞬間、
+   * フルスロットルでも数km/hまで落ちて二度と離れられなくなります。
+   * ここでは実際の当たり方に沿って、
+   *   ・壁へ向かっていた速度成分だけを打ち消す（衝撃）
+   *   ・擦っているあいだの摩擦は時間あたりで、しかも弱く
+   * という2段に分けます。
+   */
+  resolveWalls(track, limits, dt = 1 / 60) {
+    const pr = track.project(this.pos, this.trackIndex);
+    this.trackIndex = pr.index;
+    this.s = pr.s; this.u = pr.u;
+    const half = S_halfWidth(this.spec);
+    const outer = limits.outer - half;   // 路肩側（負の方向）
+    const inner = limits.inner + half;   // 中央分離帯側
+    let hit = 0;
+    if (pr.u < -outer) hit = -1;
+    else if (pr.u > -inner) hit = 1;
+
+    if (hit === 0) {
+      this.onWall = Math.max(0, this.onWall - 0.08);
+      return 0;
+    }
+
+    // 壁へ向かっていた速度成分（車体座標では +vy が左）
+    const into = hit < 0 ? Math.max(0, this.vy) : Math.max(0, -this.vy);
+
+    // 押し戻し。わずかに余裕を持たせて、毎フレーム再判定にならないようにします。
+    const targetU = hit < 0 ? -(outer - 0.03) : -(inner - 0.03);
+    const sm = track.sample(pr.s, this._sm);
+    this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
+    this.u = targetU;
+
+    // 衝撃：向かっていたぶんだけ前進速度も失う（真横から当たるほど大きい）
+    this.vx = Math.max(0, this.vx - Math.min(this.vx * 0.30, into * 0.55));
+    // 擦り：時間あたりのゆるい摩擦。押し付けが強いほど効きます。
+    this.vx *= Math.exp(-(0.35 + into * 0.30) * dt);
+    // 反発はごくわずか。壁伝いに滑る挙動になります。
+    this.vy = -into * 0.12 * (hit < 0 ? 1 : -1);
+    this.yawRate *= 0.55;
+    this.onWall = 1;
+    return into;
+  }
+
+  /** 路面の高さ・傾きに車体を合わせます。 */
+  snapToRoad(track) {
+    const sm = track.sample(this.s, this._sm);
+    const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u);
+    this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);
+    return sm;
+  }
+}
+
+function S_halfWidth(spec) { return spec.dims.W * 0.5 + 0.06; }
+
+/** 前を走る車のスリップストリームに入っているか判定します。 */
+function slipstreamFactor(me, other) {
+  if (!other) return 0;
+  const dz = other.s - me.s;
+  const wrap = 0;
+  const gap = dz;
+  if (gap < 3 || gap > 55) return 0;
+  const du = Math.abs(other.u - me.u);
+  if (du > 3.6) return 0;
+  const g = 1 - (gap - 3) / 52;
+  const l = 1 - du / 3.6;
+  return clamp(g * l, 0, 1);
+}
+
+
+// ============================== src/actors.js ==============================
+
+// 走行中の見た目まわり（車体・粒子）と、シーングラフの後始末をまとめたモジュール。
+// game.js が肥大していたので、描画オブジェクトの生成と破棄だけを切り出しています。
+
+const Y = new THREE.Vector3(0, 1, 0);
+const X = new THREE.Vector3(1, 0, 0);
+const Z = new THREE.Vector3(0, 0, 1);
+
+
+/** 走行中の1台ぶん（物理＋見た目＋エフェクト）をまとめた入れ物 */
+class Actor {
+  constructor(spec, tune, scene, opts = {}) {
+    this.vehicle = new Vehicle(spec, tune, opts);
+    const built = buildCar(spec, { color: opts.color });
+    this.mesh = built.root;
+    this.built = built;
+    this.mesh.rotation.order = 'YXZ';
+    scene.add(this.mesh);
+
+    // 接地感を出す偽の影。単色の板だと路面に長方形が浮くので、
+    // 中心が濃く縁が消えるテクスチャを使って輪郭をなくします。
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(spec.dims.W * 1.9, spec.dims.L * 1.35),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000, transparent: true, opacity: 0.5, depthWrite: false,
+        map: softDot(0.42), fog: true,
+      })
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.renderOrder = 1;
+    scene.add(shadow);
+    this.shadow = shadow;
+
+    this.tmp = {};
+    this.q = new THREE.Quaternion();
+    this.qa = new THREE.Quaternion();
+    this.basis = new THREE.Matrix4();
+    this.left = new THREE.Vector3();
+  }
+
+  syncMesh(track) {
+    const v = this.vehicle;
+    const sm = track.sample(v.s, this.tmp);
+    // 回転行列は右手系（X×Y=Z）である必要があります。
+    // 進行方向を +Z、上を +Y に取ると、残る +X は「進行方向の左」になります。
+    this.basis.makeBasis(this.left.copy(sm.lat).negate(), sm.up, sm.tan);
+    this.q.setFromRotationMatrix(this.basis);
+    this.q.multiply(this.qa.setFromAxisAngle(Y, wrapAngle(v.heading - sm.heading)));
+    this.q.multiply(this.qa.setFromAxisAngle(X, v.pitch));
+    this.q.multiply(this.qa.setFromAxisAngle(Z, v.roll));
+    this.mesh.quaternion.copy(this.q);
+    this.mesh.position.copy(v.pos);
+
+    // ホイールの回転・ステア・サスペンションのストローク
+    // 加速で前が浮き、ブレーキで沈む。旋回では外輪が縮む。
+    const dive = clamp(v.lastAx / 26, -0.055, 0.055);
+    const roll = clamp(v.lastAy / 26, -0.05, 0.05);
+    for (const w of this.built.wheels) {
+      w.spin.rotation.x -= (v.vx / v.spec.wheelR) * (1 / 60);
+      if (w.front) {
+        w.pivot.rotation.y = v.steer;
+        w.pivot.rotation.z = -v.steer * 0.10 * w.side;   // 舵角に応じたキャンバー
+      }
+      const travel = (w.front ? dive : -dive * 0.7) + roll * w.side * 0.9;
+      w.pivot.position.y = v.spec.wheelR + clamp(travel, -0.075, 0.075);
+    }
+    // ブレーキランプ（にじみの板もあわせて強くします）
+    const on = v.input.brake > 0.05;
+    for (const b of this.built.brakeLights) {
+      b.material.emissiveIntensity = on ? 5.0 : 1.5;
+    }
+    if (this.built.tailGlows) {
+      for (const g of this.built.tailGlows) {
+        g.material.opacity = on ? 0.72 : 0.34;
+        g.scale.setScalar(on ? 1.5 : 1);
+      }
+    }
+    if (this.built.reflections) {
+      for (const g of this.built.reflections) {
+        g.material.opacity = on ? 0.20 : 0.075;
+        g.scale.y = on ? 1.5 : 1;
+      }
+    }
+    this.shadow.position.set(v.pos.x, v.pos.y + 0.04, v.pos.z);
+    this.shadow.quaternion.copy(this.q);
+    this.shadow.rotateX(-Math.PI / 2);
+  }
+
+  dispose(scene) {
+    scene.remove(this.mesh);
+    scene.remove(this.shadow);
+    // 取り外すだけだと GPU 側の資源が残り、車を替えるたびに積み上がります
+    disposeTree(this.mesh);
+    disposeTree(this.shadow);
+  }
+}
+
+/** 使い終わったシーングラフのジオメトリ／マテリアルを解放します。 */
+function disposeTree(root) {
+  root.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      for (const k of ['map', 'emissiveMap', 'alphaMap', 'normalMap']) {
+        // 使い回しているテクスチャ（ランプのにじみ等）は他のオブジェクトも使うので残します
+        if (m[k] && m[k].dispose && !m[k].userData?.shared) m[k].dispose();
+      }
+      m.dispose();
+    }
+  });
+}
+
+/** 粒子用の丸いスプライト（四角い点にならないように）。同じ設定は使い回します。 */
+const _softDots = new Map();
+function softDot(hard = 0.25) {
+  const hit = _softDots.get(hard);
+  if (hit) return hit;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const g = cv.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(hard, 'rgba(255,255,255,0.85)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.userData.shared = true;   // 使い回すので破棄しない
+  _softDots.set(hard, t);
+  return t;
+}
+
+/** 火花・タイヤスモークなどの粒子 */
+class Particles {
+  constructor(scene, count, color, size, additive = true) {
+    const pos = new Float32Array(count * 3);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    const m = new THREE.PointsMaterial({
+      color, size, transparent: true, opacity: 0.9, depthWrite: false,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      sizeAttenuation: true, map: softDot(additive ? 0.15 : 0.05), fog: !additive,
+    });
+    this.points = new THREE.Points(g, m);
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+    this.count = count;
+    this.life = new Float32Array(count);
+    this.vel = new Float32Array(count * 3);
+    this.arr = g.attributes.position.array;
+    this.cursor = 0;
+    this.geo = g;
+    for (let i = 0; i < count; i++) this.arr[i * 3 + 1] = -9999;
+  }
+  emit(p, v, life, spread) {
+    const i = this.cursor++ % this.count;
+    this.arr[i * 3] = p.x; this.arr[i * 3 + 1] = p.y; this.arr[i * 3 + 2] = p.z;
+    this.vel[i * 3] = v.x + (Math.random() - 0.5) * spread;
+    this.vel[i * 3 + 1] = v.y + Math.random() * spread * 0.6;
+    this.vel[i * 3 + 2] = v.z + (Math.random() - 0.5) * spread;
+    this.life[i] = life;
+  }
+  update(dt) {
+    let alive = false;
+    for (let i = 0; i < this.count; i++) {
+      if (this.life[i] <= 0) continue;
+      alive = true;
+      this.life[i] -= dt;
+      if (this.life[i] <= 0) { this.arr[i * 3 + 1] = -9999; continue; }
+      this.arr[i * 3] += this.vel[i * 3] * dt;
+      this.arr[i * 3 + 1] += this.vel[i * 3 + 1] * dt;
+      this.arr[i * 3 + 2] += this.vel[i * 3 + 2] * dt;
+      this.vel[i * 3 + 1] -= 9.0 * dt;
+      this.vel[i * 3] *= 0.98;
+      this.vel[i * 3 + 2] *= 0.98;
+    }
+    if (alive) this.geo.attributes.position.needsUpdate = true;
+  }
+}
 
 
 
@@ -3334,367 +3887,6 @@ function buildBridges(track, scene) {
 }
 
 
-// ============================== src/vehicle.js ==============================
-
-const G = 9.81;
-const RHO = 1.225;      // 空気密度[kg/m^3]
-const DRIVE_EFF = 0.90; // 駆動系の伝達効率
-
-/** レイアウトごとの前後重量配分（前輪側の比率） */
-const WEIGHT_BIAS = { FR: 0.54, RR: 0.39, MR: 0.42, AWD: 0.56 };
-/** 駆動トルクの前輪への配分 */
-const DRIVE_SPLIT = { FR: 0, RR: 0, MR: 0, AWD: 0.38 };
-
-/** チューニング段階（0〜5）から実効スペックを計算します。 */
-function applyTune(spec, tune) {
-  const t = tune || { power: 0, weight: 0, tire: 0, aero: 0, gear: 0, turbo: 0 };
-  const power = spec.power * (1 + 0.13 * t.power);
-  const torque = spec.torque * (1 + 0.12 * t.power + 0.04 * t.turbo);
-  const mass = spec.mass * (1 - 0.035 * t.weight);
-  const grip = spec.grip * (1 + 0.045 * t.tire);
-  const downforce = spec.downforce * (1 + 0.16 * t.aero);
-  const topSpeed = spec.topSpeed * (1 + 0.055 * t.gear);
-  const turbo = spec.turbo > 0 ? Math.min(1.25, spec.turbo * (1 + 0.10 * t.turbo)) : 0;
-  const lag = spec.turbo > 0 ? Math.max(0.16, 0.62 - 0.07 * t.turbo) : 0.01;
-  return { ...spec, power, torque, mass, grip, downforce, topSpeed, turbo, lag };
-}
-
-/** 最終減速比を「目標最高速で最終ギアがレッドに当たる」ように逆算します。 */
-function finalDrive(spec) {
-  const topMs = spec.topSpeed / KMH;
-  const topGear = spec.gears[spec.gears.length - 1];
-  return (spec.redline / RADS_TO_RPM) * spec.wheelR / (topMs * topGear);
-}
-
-/** 回転数に対するトルクの出方（1.0がピーク） */
-function torqueShape(x) {
-  const f = 0.654 + 1.116 * x - 0.9 * x * x;
-  const low = clamp((x - 0.055) / 0.17, 0, 1);
-  const cut = x > 1.0 ? clamp(1 - (x - 1.0) * 6, 0, 1) : 1;
-  return Math.max(0, f) * (0.35 + 0.65 * low) * cut;
-}
-
-class Vehicle {
-  constructor(spec, tune, opts = {}) {
-    this.baseSpec = spec;
-    this.setTune(tune);
-    this.isAI = !!opts.isAI;
-    this.name = opts.name || spec.name;
-
-    this.pos = new THREE.Vector3();
-    this.heading = 0;      // ワールドのY軸まわり（+Zが0）
-    this.vx = 0;           // 車体前後方向の速度[m/s]
-    this.vy = 0;           // 車体左右方向の速度[m/s]（右が＋）
-    this.yawRate = 0;
-    this.gear = 1;         // 1..N（0はニュートラル、-1はR）
-    this.rpm = spec.idle;
-    this.boost = 0;
-    this.shiftTimer = 0;
-    this.steer = 0;
-    this.slipRear = 0;
-    this.slipFront = 0;
-    this.wheelSpin = 0;
-    this.onWall = 0;
-    this.roll = 0;
-    this.pitch = 0;
-    this.wheelAngle = 0;
-    this.distance = 0;
-    this.s = 0; this.u = 0; this.trackIndex = 0;
-    this.lastAx = 0; this.lastAy = 0;
-    this.slipstream = 0;
-    this.crashCooldown = 0;
-    this.assist = true;      // カウンターステア補助（設定でOFFにできます）
-    this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
-  }
-
-  setTune(tune) {
-    this.tune = tune || { power: 0, weight: 0, tire: 0, aero: 0, gear: 0, turbo: 0 };
-    this.spec = applyTune(this.baseSpec, this.tune);
-    this.final = finalDrive(this.spec);
-    // 出力[PS]から算出したトルク上限（ピークトルクとの整合をとる）
-    this.maxGear = this.spec.gears.length;
-  }
-
-  placeOnTrack(track, s, u) {
-    const sm = track.sample(s, {});
-    this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, 0.02);
-    this.heading = Math.atan2(sm.tan.x, sm.tan.z);
-    this.s = s; this.u = u; this.trackIndex = sm.index;
-    this.vx = 0; this.vy = 0; this.yawRate = 0;
-    this.gear = 1; this.rpm = this.spec.idle; this.boost = 0;
-  }
-
-  get speedKmh() { return Math.abs(this.vx) * KMH; }
-
-  gearRatio() {
-    if (this.gear <= 0) return 0;
-    return this.spec.gears[this.gear - 1];
-  }
-
-  /** 現ギアでの理論回転数 */
-  rpmFor(v, gear) {
-    const gr = gear <= 0 ? 0 : this.spec.gears[gear - 1];
-    if (!gr) return this.spec.idle;
-    return Math.abs(v) / this.spec.wheelR * gr * this.final * RADS_TO_RPM;
-  }
-
-  shiftUp() {
-    if (this.gear < this.maxGear && this.shiftTimer <= 0) {
-      this.gear++; this.shiftTimer = 0.16; return true;
-    }
-    return false;
-  }
-  shiftDown() {
-    if (this.gear > 1 && this.shiftTimer <= 0) {
-      const nr = this.rpmFor(this.vx, this.gear - 1);
-      if (nr < this.spec.redline * 1.06) { this.gear--; this.shiftTimer = 0.16; return true; }
-    }
-    return false;
-  }
-
-  /** dt はサブステップ済みの短い時間刻み */
-  step(dt, env) {
-    const S = this.spec;
-    const inp = this.input;
-    const m = S.mass;
-    const L = S.dims.WB;
-    const lf = L * (1 - WEIGHT_BIAS[S.layout]);
-    const lr = L * WEIGHT_BIAS[S.layout];
-    const cgH = 0.42;
-    const Iz = m * (S.dims.L * S.dims.L + S.dims.W * S.dims.W) / 12 * 1.05;
-
-    // --- ステアリング（速度が乗るほど切れ角を絞る）
-    const v = Math.abs(this.vx);
-    const maxSteer = 0.55 / (1 + v * 0.034);
-    let target = inp.steer * maxSteer;
-
-    // カウンターステア補助：リアが流れた向きへ自動で少しだけ舵を当てます。
-    // 「勝手に曲がる」のではなく「滑ったぶんを戻す」だけなので、
-    // 自分で操作している感覚は残したまま、立て直しが効くようになります。
-    if (this.assist && !this.isAI && v > 6) {
-      const beta = Math.atan2(this.vy, v);          // 車体のスリップ角（＋が左）
-      const counter = clamp(beta * 0.85, -0.30, 0.30);
-      target = clamp(target + counter * (inp.handbrake > 0.5 ? 0.25 : 0.6), -0.62, 0.62);
-    }
-    const rate = this.isAI ? 9.0 : 12.0;
-    this.steer = damp(this.steer, target, rate, dt);
-    const st = this.steer;
-
-    // --- 変速
-    if (this.shiftTimer > 0) this.shiftTimer -= dt;
-    const cut = this.shiftTimer > 0 ? 0 : 1;
-
-    // --- エンジン
-    const theoretical = this.rpmFor(this.vx, this.gear);
-    const targetRpm = clamp(theoretical, S.idle, S.redline * 1.07);
-    this.rpm = damp(this.rpm, this.shiftTimer > 0 ? Math.max(S.idle, targetRpm * 0.86) : targetRpm, 18, dt);
-
-    const x = this.rpm / S.redline;
-    // ターボの過給（アクセル量と回転数で立ち上がる）
-    const boostTarget = inp.throttle * clamp((this.rpm - S.redline * 0.22) / (S.redline * 0.36), 0, 1);
-    const lag = boostTarget > this.boost ? S.lag : S.lag * 0.35;
-    this.boost = damp(this.boost, boostTarget, 1 / Math.max(0.05, lag), dt);
-    const boostMul = S.turbo > 0
-      ? (1 - 0.42 * S.turbo) + 0.42 * S.turbo * this.boost
-      : 1;
-
-    let engineTq = S.torque * torqueShape(x) * boostMul * inp.throttle * cut;
-    if (inp.throttle < 0.02) engineTq = -S.torque * 0.055 * clamp(x, 0, 1.1); // エンジンブレーキ
-    // 出力の頭打ち（PS換算）
-    const wRad = Math.max(1, this.rpm / RADS_TO_RPM);
-    const maxTq = (S.power * 735.49875) / wRad;
-    if (engineTq > maxTq) engineTq = maxTq;
-
-    const gr = this.gearRatio();
-    let Fdrive = gr > 0 ? (engineTq * gr * this.final * DRIVE_EFF) / S.wheelR : 0;
-
-    // --- 空力
-    const dragK = 0.5 * RHO * S.cd * S.area * (1 - this.slipstream * 0.42);
-    const Fdrag = dragK * v * v * Math.sign(this.vx || 1);
-    const Froll = 0.0135 * m * G * Math.sign(this.vx || 1) * clamp(v / 2, 0, 1);
-    const downforce = 0.5 * RHO * S.downforce * 1.6 * S.area * v * v; // [N]
-
-    // --- ブレーキ
-    const brakeMax = S.grip * m * G * 1.02;
-    let Fbrake = inp.brake * brakeMax;
-
-    // --- 荷重
-    const ax = this.lastAx;
-    const Wtot = m * G + downforce;
-    let Nf = Wtot * (lr / L) - (m * ax * cgH) / L;
-    let Nr = Wtot * (lf / L) + (m * ax * cgH) / L;
-    Nf = Math.max(Wtot * 0.12, Nf);
-    Nr = Math.max(Wtot * 0.12, Nr);
-
-    const mu = S.grip * (env && env.wet ? 0.78 : 1);
-    const muF = mu, muR = mu * (inp.handbrake > 0.5 ? 0.42 : 1);
-
-    // --- タイヤのスリップ角と横力
-    const vxs = Math.max(2.0, v);
-    const af = Math.atan2(this.vy + this.yawRate * lf, vxs) - st * Math.sign(this.vx || 1);
-    const ar = Math.atan2(this.vy - this.yawRate * lr, vxs);
-    const Cf = 15.5 * Nf, Cr = 16.0 * Nr;
-    let Fyf = -Cf * af;
-    let Fyr = -Cr * ar;
-    const maxFyf = muF * Nf, maxFyr = muR * Nr;
-
-    // --- 前後力の配分と摩擦円
-    const splitF = DRIVE_SPLIT[S.layout];
-    let FxF = Fdrive * splitF - Fbrake * 0.64 * Math.sign(this.vx || 1);
-    let FxR = Fdrive * (1 - splitF) - Fbrake * 0.36 * Math.sign(this.vx || 1);
-    if (inp.handbrake > 0.5) FxR -= brakeMax * 0.30 * Math.sign(this.vx || 1);
-
-    const circle = (Fx, Fy, maxF) => {
-      const mag = Math.hypot(Fx, Fy);
-      if (mag <= maxF || mag < 1e-3) return [Fx, Fy, 0];
-      const k = maxF / mag;
-      return [Fx * k, Fy * k, 1 - k];
-    };
-    let sf, sr;
-    [FxF, Fyf, sf] = circle(FxF, clamp(Fyf, -maxFyf, maxFyf), muF * Nf);
-    [FxR, Fyr, sr] = circle(FxR, clamp(Fyr, -maxFyr, maxFyr), muR * Nr);
-    this.slipFront = damp(this.slipFront, sf, 12, dt);
-    this.slipRear = damp(this.slipRear, sr, 12, dt);
-    this.wheelSpin = damp(
-      this.wheelSpin,
-      clamp((Math.abs(Fdrive) - (muR * Nr + (splitF > 0 ? muF * Nf : 0))) / (m * G), 0, 1.4),
-      10, dt
-    );
-
-    // --- 運動方程式
-    const Fx = FxF * Math.cos(st) - Fyf * Math.sin(st) + FxR - Fdrag - Froll;
-    const Fy = FxF * Math.sin(st) + Fyf * Math.cos(st) + Fyr;
-    const axn = Fx / m + this.yawRate * this.vy;
-    const ayn = Fy / m - this.yawRate * this.vx;
-    const yawAcc = (lf * (Fyf * Math.cos(st) + FxF * Math.sin(st)) - lr * Fyr) / Iz;
-
-    this.vx += axn * dt;
-    this.vy += ayn * dt;
-    this.yawRate += yawAcc * dt;
-    // 低速の暴れ止め
-    if (Math.abs(this.vx) < 0.6 && inp.throttle < 0.05) {
-      this.vx *= 0.90; this.vy *= 0.75; this.yawRate *= 0.80;
-    }
-    this.yawRate *= Math.exp(-dt * 0.55);
-
-    // --- スピン抑制（アーケード寄りの安定化）
-    // タイヤが支えられる旋回の速さには上限があります。
-    // それを大きく超えたぶんだけ強く減衰させることで、
-    // 「一度回り出したら戻らない」状態を防ぎつつ、サイドブレーキでのドリフトは残します。
-    const gripLat = mu * G * (1 + (downforce / Math.max(1, m * G)) * 0.9);
-    const maxYaw = v > 3 ? gripLat / v : 4;
-    const assist = inp.handbrake > 0.5 ? 2.1 : 1.40;
-    if (Math.abs(this.yawRate) > maxYaw * assist) {
-      const over = Math.abs(this.yawRate) / (maxYaw * assist);
-      this.yawRate *= Math.exp(-dt * clamp((over - 1) * 9, 0, 26));
-    }
-    const slipAngle = Math.abs(Math.atan2(this.vy, Math.max(1, Math.abs(this.vx))));
-    if (slipAngle > 0.5 && inp.handbrake < 0.5) {
-      const k = clamp((slipAngle - 0.5) / 0.5, 0, 1);
-      this.yawRate *= Math.exp(-dt * (1.4 + 8.0 * k));
-      this.vy *= Math.exp(-dt * (1.0 + 5.0 * k));
-    }
-    this.yawRate = clamp(this.yawRate, -4.0, 4.0);
-    this.vy = clamp(this.vy, -38, 38);
-    this.vx = clamp(this.vx, -14, 130);
-
-    this.lastAx = axn;
-    this.lastAy = ayn;
-
-    this.heading += this.yawRate * dt;
-    const cs = Math.cos(this.heading), sn = Math.sin(this.heading);
-    // 車体前方は +Z、右は +X
-    this.pos.x += (this.vx * sn + this.vy * cs) * dt;
-    this.pos.z += (this.vx * cs - this.vy * sn) * dt;
-    this.distance += Math.abs(this.vx) * dt;
-
-    // 見た目用のロール／ピッチ
-    this.roll = damp(this.roll, clamp(-this.lastAy / (G * 2.4), -0.09, 0.09), 7, dt);
-    this.pitch = damp(this.pitch, clamp(-this.lastAx / (G * 3.4), -0.055, 0.055), 7, dt);
-    this.wheelAngle += (this.vx / S.wheelR) * dt;
-    if (this.crashCooldown > 0) this.crashCooldown -= dt;
-  }
-
-  /** 1フレーム分を細かく刻んで進めます（高速域でも破綻しないように） */
-  update(dt, env) {
-    const n = clamp(Math.ceil(dt / (1 / 120)), 1, 8);
-    const h = dt / n;
-    for (let i = 0; i < n; i++) this.step(h, env);
-  }
-
-  /**
-   * 壁との接触処理。
-   *
-   * 以前は接触中「1フレームあたり最大16%」の減速を掛けていました。
-   * 60fps なら1秒で 0.84^60 ≒ 0.003 倍。つまり壁に触れた瞬間、
-   * フルスロットルでも数km/hまで落ちて二度と離れられなくなります。
-   * ここでは実際の当たり方に沿って、
-   *   ・壁へ向かっていた速度成分だけを打ち消す（衝撃）
-   *   ・擦っているあいだの摩擦は時間あたりで、しかも弱く
-   * という2段に分けます。
-   */
-  resolveWalls(track, limits, dt = 1 / 60) {
-    const pr = track.project(this.pos, this.trackIndex);
-    this.trackIndex = pr.index;
-    this.s = pr.s; this.u = pr.u;
-    const half = S_halfWidth(this.spec);
-    const outer = limits.outer - half;   // 路肩側（負の方向）
-    const inner = limits.inner + half;   // 中央分離帯側
-    let hit = 0;
-    if (pr.u < -outer) hit = -1;
-    else if (pr.u > -inner) hit = 1;
-
-    if (hit === 0) {
-      this.onWall = Math.max(0, this.onWall - 0.08);
-      return 0;
-    }
-
-    // 壁へ向かっていた速度成分（車体座標では +vy が左）
-    const into = hit < 0 ? Math.max(0, this.vy) : Math.max(0, -this.vy);
-
-    // 押し戻し。わずかに余裕を持たせて、毎フレーム再判定にならないようにします。
-    const targetU = hit < 0 ? -(outer - 0.03) : -(inner - 0.03);
-    const sm = track.sample(pr.s, {});
-    this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
-    this.u = targetU;
-
-    // 衝撃：向かっていたぶんだけ前進速度も失う（真横から当たるほど大きい）
-    this.vx = Math.max(0, this.vx - Math.min(this.vx * 0.30, into * 0.55));
-    // 擦り：時間あたりのゆるい摩擦。押し付けが強いほど効きます。
-    this.vx *= Math.exp(-(0.35 + into * 0.30) * dt);
-    // 反発はごくわずか。壁伝いに滑る挙動になります。
-    this.vy = -into * 0.12 * (hit < 0 ? 1 : -1);
-    this.yawRate *= 0.55;
-    this.onWall = 1;
-    return into;
-  }
-
-  /** 路面の高さ・傾きに車体を合わせます。 */
-  snapToRoad(track) {
-    const sm = track.sample(this.s, {});
-    const p = sm.pos.clone().addScaledVector(sm.lat, this.u);
-    this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);
-    return sm;
-  }
-}
-
-function S_halfWidth(spec) { return spec.dims.W * 0.5 + 0.06; }
-
-/** 前を走る車のスリップストリームに入っているか判定します。 */
-function slipstreamFactor(me, other) {
-  if (!other) return 0;
-  const dz = other.s - me.s;
-  const wrap = 0;
-  const gap = dz;
-  if (gap < 3 || gap > 55) return 0;
-  const du = Math.abs(other.u - me.u);
-  if (du > 3.6) return 0;
-  const g = 1 - (gap - 3) / 52;
-  const l = 1 - du / 3.6;
-  return clamp(g * l, 0, 1);
-}
-
-
 // ============================== src/ai.js ==============================
 
 /**
@@ -3831,7 +4023,7 @@ class RivalAI {
 
     // コーナーで必要な舵角を先に入れておく（曲率×ホイールベース）
     const ahead = track.sample(v.s + clamp(speed * 0.55, 12, 60), this._tmp);
-    const maxSteer = 0.55 / (1 + speed * 0.034);
+    const maxSteer = 0.55 / (1 + speed * 0.040);   // vehicle.js の AI 用と揃えます
     const ff = clamp((v.spec.dims.WB * ahead.curv) / maxSteer, -0.8, 0.8);
 
     // ヨーの減衰は「そのコーナーで本来出るべきヨー」との差にだけ効かせます。
@@ -3884,6 +4076,10 @@ class Traffic {
     this._tmp = {};
     this._q = new THREE.Quaternion();
     this._m = new THREE.Matrix4();
+    this._fwd = new THREE.Vector3();
+    this._lft = new THREE.Vector3();
+    this._near = [];
+    this._nearPool = [];
   }
 
   /** プレイヤーの周囲に配置しなおします。 */
@@ -3951,8 +4147,8 @@ class Traffic {
       const root = c.model.root;
       root.position.copy(sm.pos).addScaledVector(sm.lat, c.u).addScaledVector(sm.up, 0.01);
       // 右手系（X×Y=Z）になるよう、+X は「進行方向の左」を取ります
-      const fwd = c.oncoming ? sm.tan.clone().negate() : sm.tan;
-      const lft = c.oncoming ? sm.lat.clone() : sm.lat.clone().negate();
+      const fwd = c.oncoming ? this._fwd.copy(sm.tan).negate() : this._fwd.copy(sm.tan);
+      const lft = c.oncoming ? this._lft.copy(sm.lat) : this._lft.copy(sm.lat).negate();
       this._m.makeBasis(lft, sm.up, fwd);
       this._q.setFromRotationMatrix(this._m);
       root.quaternion.copy(this._q);
@@ -3965,13 +4161,20 @@ class Traffic {
   /** 当たり判定用に、指定範囲の車を返します。 */
   near(s, range = 90) {
     const L = this.track.length;
-    const out = [];
+    const out = this._near;
+    out.length = 0;
+    let k = 0;
     for (const c of this.cars) {
       if (!c.active) continue;
       let rel = c.s - s;
       if (rel > L / 2) rel -= L;
       if (rel < -L / 2) rel += L;
-      if (Math.abs(rel) < range) out.push({ car: c, rel });
+      if (Math.abs(rel) >= range) continue;
+      let e = this._nearPool[k];
+      if (!e) e = this._nearPool[k] = { car: null, rel: 0 };
+      e.car = c; e.rel = rel;
+      out.push(e);
+      k++;
     }
     return out;
   }
@@ -3979,7 +4182,6 @@ class Traffic {
 
 
 // ============================== src/audio.js ==============================
-
 /**
  * 効果音はすべて WebAudio でその場で合成しています（音声ファイルなし）。
  * エンジン音は「回転数から基本周波数を作り、倍音を重ねる」方式です。
@@ -4292,6 +4494,9 @@ class Input {
     }
 
     str = clamp(str, -1, 1);
+    // エキスポ。中央付近の操作を鈍くして、微調整を効きやすくします。
+    // 直線でわずかに触れただけで car が向きを変えるのを防ぎます。
+    str = Math.sign(str) * Math.pow(Math.abs(str), 1.55);
     // キーの ON/OFF をなめらかに（ハンドルを一気に切らない）
     s.throttle = damp(s.throttle, thr, 16, dt);
     s.brake = damp(s.brake, brk, 20, dt);
@@ -4308,7 +4513,6 @@ class Input {
 
 
 // ============================== src/hud.js ==============================
-
 /** 画面表示（スピードメーター・タコメーター・バトルゲージ・ミニマップ）をまとめて更新します。 */
 class HUD {
   constructor(root, track) {
@@ -4346,7 +4550,10 @@ class HUD {
    */
   _resizeCanvases() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const fallback = new Map([[this.el.tacho, [210, 118]], [this.el.minimap, [150, 150]]]);
+    if (!this._fallback) {
+      this._fallback = new Map([[this.el.tacho, [210, 118]], [this.el.minimap, [150, 150]]]);
+    }
+    const fallback = this._fallback;
     let changed = false;
     for (const cv of [this.el.tacho, this.el.minimap]) {
       const [fw, fh] = fallback.get(cv);
@@ -4490,7 +4697,7 @@ class HUD {
     }
 
     const dot = (s, color, r = 3.4, ring = false) => {
-      const sm = t.sample(s, {});
+      const sm = t.sample(s, this._dotTmp || (this._dotTmp = {}));
       const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
       if (ring) {
         g.strokeStyle = 'rgba(0,0,0,0.85)';
@@ -4690,185 +4897,12 @@ function resetSave() {
 
 
 // ============================== src/game.js ==============================
-
-
-const Y = new THREE.Vector3(0, 1, 0);
-const X = new THREE.Vector3(1, 0, 0);
-const Z = new THREE.Vector3(0, 0, 1);
-
 const CAM_MODES = [
   { id: 'chase', label: '追走', dist: 6.6, height: 2.15, fov: 62, look: 9 },
   { id: 'far', label: 'ロング', dist: 10.5, height: 3.4, fov: 58, look: 12 },
   { id: 'hood', label: 'ボンネット', dist: -0.35, height: 1.16, fov: 68, look: 22 },
   { id: 'cine', label: 'シネマ', dist: 8.2, height: 1.05, fov: 46, look: 14 },
 ];
-
-/** 走行中の1台ぶん（物理＋見た目＋エフェクト）をまとめた入れ物 */
-class Actor {
-  constructor(spec, tune, scene, opts = {}) {
-    this.vehicle = new Vehicle(spec, tune, opts);
-    const built = buildCar(spec, { color: opts.color });
-    this.mesh = built.root;
-    this.built = built;
-    this.mesh.rotation.order = 'YXZ';
-    scene.add(this.mesh);
-
-    // 接地感を出す偽の影。単色の板だと路面に長方形が浮くので、
-    // 中心が濃く縁が消えるテクスチャを使って輪郭をなくします。
-    const shadow = new THREE.Mesh(
-      new THREE.PlaneGeometry(spec.dims.W * 1.9, spec.dims.L * 1.35),
-      new THREE.MeshBasicMaterial({
-        color: 0x000000, transparent: true, opacity: 0.5, depthWrite: false,
-        map: softDot(0.42), fog: true,
-      })
-    );
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.renderOrder = 1;
-    scene.add(shadow);
-    this.shadow = shadow;
-
-    this.tmp = {};
-    this.q = new THREE.Quaternion();
-    this.qa = new THREE.Quaternion();
-    this.basis = new THREE.Matrix4();
-    this.left = new THREE.Vector3();
-  }
-
-  syncMesh(track) {
-    const v = this.vehicle;
-    const sm = track.sample(v.s, this.tmp);
-    // 回転行列は右手系（X×Y=Z）である必要があります。
-    // 進行方向を +Z、上を +Y に取ると、残る +X は「進行方向の左」になります。
-    this.basis.makeBasis(this.left.copy(sm.lat).negate(), sm.up, sm.tan);
-    this.q.setFromRotationMatrix(this.basis);
-    this.q.multiply(this.qa.setFromAxisAngle(Y, wrapAngle(v.heading - sm.heading)));
-    this.q.multiply(this.qa.setFromAxisAngle(X, v.pitch));
-    this.q.multiply(this.qa.setFromAxisAngle(Z, v.roll));
-    this.mesh.quaternion.copy(this.q);
-    this.mesh.position.copy(v.pos);
-
-    // ホイールの回転・ステア・サスペンションのストローク
-    // 加速で前が浮き、ブレーキで沈む。旋回では外輪が縮む。
-    const dive = clamp(v.lastAx / 26, -0.055, 0.055);
-    const roll = clamp(v.lastAy / 26, -0.05, 0.05);
-    for (const w of this.built.wheels) {
-      w.spin.rotation.x -= (v.vx / v.spec.wheelR) * (1 / 60);
-      if (w.front) {
-        w.pivot.rotation.y = v.steer;
-        w.pivot.rotation.z = -v.steer * 0.10 * w.side;   // 舵角に応じたキャンバー
-      }
-      const travel = (w.front ? dive : -dive * 0.7) + roll * w.side * 0.9;
-      w.pivot.position.y = v.spec.wheelR + clamp(travel, -0.075, 0.075);
-    }
-    // ブレーキランプ（にじみの板もあわせて強くします）
-    const on = v.input.brake > 0.05;
-    for (const b of this.built.brakeLights) {
-      b.material.emissiveIntensity = on ? 5.0 : 1.5;
-    }
-    if (this.built.tailGlows) {
-      for (const g of this.built.tailGlows) {
-        g.material.opacity = on ? 0.72 : 0.34;
-        g.scale.setScalar(on ? 1.5 : 1);
-      }
-    }
-    if (this.built.reflections) {
-      for (const g of this.built.reflections) {
-        g.material.opacity = on ? 0.20 : 0.075;
-        g.scale.y = on ? 1.5 : 1;
-      }
-    }
-    this.shadow.position.set(v.pos.x, v.pos.y + 0.04, v.pos.z);
-    this.shadow.quaternion.copy(this.q);
-    this.shadow.rotateX(-Math.PI / 2);
-  }
-
-  dispose(scene) {
-    scene.remove(this.mesh);
-    scene.remove(this.shadow);
-  }
-}
-
-/** 使い終わったシーングラフのジオメトリ／マテリアルを解放します。 */
-function disposeTree(root) {
-  root.traverse((o) => {
-    if (o.geometry) o.geometry.dispose();
-    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
-    for (const m of mats) {
-      for (const k of ['map', 'emissiveMap', 'alphaMap', 'normalMap']) {
-        if (m[k] && m[k].dispose) m[k].dispose();
-      }
-      m.dispose();
-    }
-  });
-}
-
-/** 粒子用の丸いスプライト（四角い点にならないように）。同じ設定は使い回します。 */
-const _softDots = new Map();
-function softDot(hard = 0.25) {
-  const hit = _softDots.get(hard);
-  if (hit) return hit;
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 64;
-  const g = cv.getContext('2d');
-  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grd.addColorStop(0, 'rgba(255,255,255,1)');
-  grd.addColorStop(hard, 'rgba(255,255,255,0.85)');
-  grd.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 64, 64);
-  const t = new THREE.CanvasTexture(cv);
-  t.colorSpace = THREE.SRGBColorSpace;
-  _softDots.set(hard, t);
-  return t;
-}
-
-/** 火花・タイヤスモークなどの粒子 */
-class Particles {
-  constructor(scene, count, color, size, additive = true) {
-    const pos = new Float32Array(count * 3);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    const m = new THREE.PointsMaterial({
-      color, size, transparent: true, opacity: 0.9, depthWrite: false,
-      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-      sizeAttenuation: true, map: softDot(additive ? 0.15 : 0.05), fog: !additive,
-    });
-    this.points = new THREE.Points(g, m);
-    this.points.frustumCulled = false;
-    scene.add(this.points);
-    this.count = count;
-    this.life = new Float32Array(count);
-    this.vel = new Float32Array(count * 3);
-    this.arr = g.attributes.position.array;
-    this.cursor = 0;
-    this.geo = g;
-    for (let i = 0; i < count; i++) this.arr[i * 3 + 1] = -9999;
-  }
-  emit(p, v, life, spread) {
-    const i = this.cursor++ % this.count;
-    this.arr[i * 3] = p.x; this.arr[i * 3 + 1] = p.y; this.arr[i * 3 + 2] = p.z;
-    this.vel[i * 3] = v.x + (Math.random() - 0.5) * spread;
-    this.vel[i * 3 + 1] = v.y + Math.random() * spread * 0.6;
-    this.vel[i * 3 + 2] = v.z + (Math.random() - 0.5) * spread;
-    this.life[i] = life;
-  }
-  update(dt) {
-    let alive = false;
-    for (let i = 0; i < this.count; i++) {
-      if (this.life[i] <= 0) continue;
-      alive = true;
-      this.life[i] -= dt;
-      if (this.life[i] <= 0) { this.arr[i * 3 + 1] = -9999; continue; }
-      this.arr[i * 3] += this.vel[i * 3] * dt;
-      this.arr[i * 3 + 1] += this.vel[i * 3 + 1] * dt;
-      this.arr[i * 3 + 2] += this.vel[i * 3 + 2] * dt;
-      this.vel[i * 3 + 1] -= 9.0 * dt;
-      this.vel[i * 3] *= 0.98;
-      this.vel[i * 3 + 2] *= 0.98;
-    }
-    if (alive) this.geo.attributes.position.needsUpdate = true;
-  }
-}
 
 class Game {
   constructor(canvas, opts = {}) {
@@ -4981,6 +5015,7 @@ class Game {
     this._tmpA = {};
     this._tmpB = {};
     this._tmpC = {};
+    this._fogColor = new THREE.Color();
     this._v3 = new THREE.Vector3();
     this._v3b = new THREE.Vector3();
     // カメラ計算専用（他と共有すると値が壊れるので必ず分けておく）
@@ -4988,6 +5023,9 @@ class Game {
     this._camMix = new THREE.Vector3();
     this._camIdeal = new THREE.Vector3();
     this._camTarget = new THREE.Vector3();
+    // 障害物リストは毎フレーム作り直さず、同じ配列とオブジェクトを詰め替えます
+    this._obstacles = [];
+    this._obstaclePool = [];
     this.setCourse(opts.courseId || DEFAULT_COURSE);
 
     this.resize();
@@ -5151,6 +5189,32 @@ class Game {
    * コース座標 (s, u) の上で車体を動かします。
    * 衝突でめり込んだぶんを押し戻すのに使います。
    */
+  /**
+   * AI に渡す障害物リストを、使い回しの配列へ詰め直します。
+   * 毎フレーム filter/map で新しい配列とオブジェクトを作ると、
+   * 交通量ぶんのゴミが毎秒数千個生まれてカクつきの原因になります。
+   */
+  buildObstacles(extra) {
+    const out = this._obstacles;
+    out.length = 0;
+    let k = 0;
+    for (const c of this.traffic.cars) {
+      if (!c.active || c.oncoming) continue;
+      let o = this._obstaclePool[k];
+      if (!o) o = this._obstaclePool[k] = { s: 0, u: 0, vx: 0 };
+      o.s = c.s; o.u = c.u; o.vx = c.vx;
+      out.push(o);
+      k++;
+    }
+    if (extra) {
+      let o = this._obstaclePool[k];
+      if (!o) o = this._obstaclePool[k] = { s: 0, u: 0, vx: 0 };
+      o.s = extra.s; o.u = extra.u; o.vx = extra.vx;
+      out.push(o);
+    }
+    return out;
+  }
+
   moveOnTrack(v, ds, du) {
     v.s += ds;
     v.u += du;
@@ -5348,10 +5412,7 @@ class Game {
 
     // --- 入力
     if (this.demo && this.mode === 'racing' && this.autoAI) {
-      const obstacles = this.traffic.cars
-        .filter((c) => c.active && !c.oncoming)
-        .map((c) => ({ s: c.s, u: c.u, vx: c.vx }));
-      this.autoAI.update(dt, obstacles, 0);
+      this.autoAI.update(dt, this.buildObstacles(null), 0);
       if (pv.shiftTimer <= 0) {
         if (pv.rpm > pv.spec.redline * 0.95 && pv.gear < pv.maxGear) pv.shiftUp();
         else if (pv.rpm < pv.spec.redline * 0.44 && pv.gear > 1) pv.shiftDown();
@@ -5387,11 +5448,7 @@ class Game {
 
     // --- ライバルAI
     if (this.rivalAI && this.mode === 'racing') {
-      const obstacles = this.traffic.cars
-        .filter((c) => c.active && !c.oncoming)
-        .map((c) => ({ s: c.s, u: c.u, vx: c.vx }));
-      obstacles.push({ s: pv.s, u: pv.u, vx: pv.vx });
-      this.rivalAI.update(dt, obstacles, st.gap);
+      this.rivalAI.update(dt, this.buildObstacles(pv), st.gap);
     } else if (this.rival) {
       const rv = this.rival.vehicle;
       rv.input.throttle = 0; rv.input.brake = 0; rv.input.steer = 0;
@@ -5632,12 +5689,13 @@ class Game {
     const targetFog = tunnel ? 0.0068 : (this.wet ? 0.0042 : 0.0021);
     this.scene.fog.density = damp(this.scene.fog.density, targetFog, 2.2, dt);
     const targetFogColor = tunnel ? 0x181c24 : (this.wet ? 0x1c2230 : 0x121b2e);
-    this.scene.fog.color.lerp(new THREE.Color(targetFogColor), 1 - Math.exp(-2.2 * dt));
+    this.scene.fog.color.lerp(this._fogColor.setHex(targetFogColor), 1 - Math.exp(-2.2 * dt));
 
     // 航空障害灯の点滅
     if (this.city && this.city.reds) {
       const t = performance.now() * 0.001;
-      this.city.reds.material.color.setRGB(1, 0.18, 0.12).multiplyScalar(0.35 + 0.65 * (Math.sin(t * 2.2) > 0 ? 1 : 0.25));
+      this.city.reds.material.color.setRGB(1, 0.18, 0.12)
+        .multiplyScalar(0.35 + 0.65 * (Math.sin(t * 2.2) > 0 ? 1 : 0.25));
     }
   }
 
@@ -5672,7 +5730,6 @@ class Game {
 
 
 // ============================== src/main.js ==============================
-
 // ---------------------------------------------------------------- 状態
 
 let data = load();

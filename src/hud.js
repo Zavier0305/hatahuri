@@ -1,5 +1,4 @@
-import { clamp, lerp, formatTime, formatMoney, KMH } from './util.js';
-
+import { clamp, lerp, formatMoney } from './util.js';
 /** 画面表示（スピードメーター・タコメーター・バトルゲージ・ミニマップ）をまとめて更新します。 */
 export class HUD {
   constructor(root, track) {
@@ -37,7 +36,10 @@ export class HUD {
    */
   _resizeCanvases() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const fallback = new Map([[this.el.tacho, [210, 118]], [this.el.minimap, [150, 150]]]);
+    if (!this._fallback) {
+      this._fallback = new Map([[this.el.tacho, [210, 118]], [this.el.minimap, [150, 150]]]);
+    }
+    const fallback = this._fallback;
     let changed = false;
     for (const cv of [this.el.tacho, this.el.minimap]) {
       const [fw, fh] = fallback.get(cv);
@@ -181,7 +183,7 @@ export class HUD {
     }
 
     const dot = (s, color, r = 3.4, ring = false) => {
-      const sm = t.sample(s, {});
+      const sm = t.sample(s, this._dotTmp || (this._dotTmp = {}));
       const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
       if (ring) {
         g.strokeStyle = 'rgba(0,0,0,0.85)';
