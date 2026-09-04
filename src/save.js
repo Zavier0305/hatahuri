@@ -10,7 +10,7 @@ const DEFAULT = {
   cleared: [],
   bestLap: {},               // carId -> ms
   bestTop: 0,                // 自己最高速[km/h]
-  settings: { bloom: true, sound: true, at: false, quality: 'high' },
+  settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
 
 export const emptyTune = () => ({ power: 0, weight: 0, tire: 0, aero: 0, gear: 0, turbo: 0 });

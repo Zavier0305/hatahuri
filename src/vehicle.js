@@ -68,6 +68,7 @@ export class Vehicle {
     this.lastAx = 0; this.lastAy = 0;
     this.slipstream = 0;
     this.crashCooldown = 0;
+    this.assist = true;      // カウンターステア補助（設定でOFFにできます）
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
   }
 
@@ -129,9 +130,18 @@ export class Vehicle {
 
     // --- ステアリング（速度が乗るほど切れ角を絞る）
     const v = Math.abs(this.vx);
-    const maxSteer = 0.55 / (1 + v * 0.042);
-    const target = inp.steer * maxSteer;
-    const rate = this.isAI ? 9.0 : 6.5;
+    const maxSteer = 0.55 / (1 + v * 0.034);
+    let target = inp.steer * maxSteer;
+
+    // カウンターステア補助：リアが流れた向きへ自動で少しだけ舵を当てます。
+    // 「勝手に曲がる」のではなく「滑ったぶんを戻す」だけなので、
+    // 自分で操作している感覚は残したまま、立て直しが効くようになります。
+    if (this.assist && !this.isAI && v > 6) {
+      const beta = Math.atan2(this.vy, v);          // 車体のスリップ角（＋が左）
+      const counter = clamp(beta * 0.85, -0.30, 0.30);
+      target = clamp(target + counter * (inp.handbrake > 0.5 ? 0.25 : 0.6), -0.62, 0.62);
+    }
+    const rate = this.isAI ? 9.0 : 12.0;
     this.steer = damp(this.steer, target, rate, dt);
     const st = this.steer;
 
@@ -188,7 +198,7 @@ export class Vehicle {
     const vxs = Math.max(2.0, v);
     const af = Math.atan2(this.vy + this.yawRate * lf, vxs) - st * Math.sign(this.vx || 1);
     const ar = Math.atan2(this.vy - this.yawRate * lr, vxs);
-    const Cf = 13.5 * Nf, Cr = 15.5 * Nr;
+    const Cf = 15.5 * Nf, Cr = 16.0 * Nr;
     let Fyf = -Cf * af;
     let Fyr = -Cr * ar;
     const maxFyf = muF * Nf, maxFyr = muR * Nr;
@@ -238,7 +248,7 @@ export class Vehicle {
     // 「一度回り出したら戻らない」状態を防ぎつつ、サイドブレーキでのドリフトは残します。
     const gripLat = mu * G * (1 + (downforce / Math.max(1, m * G)) * 0.9);
     const maxYaw = v > 3 ? gripLat / v : 4;
-    const assist = inp.handbrake > 0.5 ? 1.9 : 1.15;
+    const assist = inp.handbrake > 0.5 ? 2.1 : 1.40;
     if (Math.abs(this.yawRate) > maxYaw * assist) {
       const over = Math.abs(this.yawRate) / (maxYaw * assist);
       this.yawRate *= Math.exp(-dt * clamp((over - 1) * 9, 0, 26));
@@ -293,10 +303,11 @@ export class Vehicle {
       const sm = track.sample(pr.s, {});
       this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
       // 壁ずり：前進速度を削り、横速度を殺す
+      // （擦り続けても止まってしまわないよう、1フレームあたりの減速は控えめに）
       const impact = Math.abs(this.vy) + Math.abs(this.yawRate) * 6;
       this.vy = 0;
-      this.yawRate *= 0.25;
-      this.vx *= 1 - clamp(0.05 + impact * 0.02, 0.03, 0.30);
+      this.yawRate *= 0.35;
+      this.vx *= 1 - clamp(0.02 + impact * 0.012, 0.012, 0.16);
       this.onWall = 1;
       return impact;
     }

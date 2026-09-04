@@ -90,9 +90,10 @@ export class Input {
 
     str = clamp(str, -1, 1);
     // キーの ON/OFF をなめらかに（ハンドルを一気に切らない）
-    s.throttle = damp(s.throttle, thr, 12, dt);
-    s.brake = damp(s.brake, brk, 16, dt);
-    s.steer = damp(s.steer, str, str === 0 ? 12 : 8.5, dt);
+    s.throttle = damp(s.throttle, thr, 16, dt);
+    s.brake = damp(s.brake, brk, 20, dt);
+    // 押した瞬間に効き、離すと素早くセンターへ戻る
+    s.steer = damp(s.steer, str, str === 0 ? 20 : 16, dt);
     s.handbrake = hb;
     s.shiftUp = up && !this._prevUp;
     s.shiftDown = dn && !this._prevDown;

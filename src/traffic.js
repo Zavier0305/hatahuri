@@ -66,7 +66,10 @@ export class Traffic {
       if (c.laneChange <= 0 && c.kind !== 'truck') {
         const lanes = c.oncoming ? ONCOMING_U : LANE_U;
         if (this.rand() < 0.35) {
-          const nl = clamp(c.lane + (this.rand() < 0.5 ? -1 : 1), 0, lanes.length - 1);
+          // 追越車線（lane 0）には一般車を出さない。
+          // プレイヤーが全開で走る車線を塞がないための、意図的なルールです。
+          const lo = c.oncoming ? 0 : 1;
+          const nl = clamp(c.lane + (this.rand() < 0.5 ? -1 : 1), lo, lanes.length - 1);
           c.lane = nl;
           c.targetU = lanes[nl];
         }

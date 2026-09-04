@@ -402,6 +402,8 @@ $('#pz-resume').addEventListener('click', () => togglePause(false));
 $('#pz-restart').addEventListener('click', () => { paused = false; restart(); });
 $('#pz-camera').addEventListener('click', () => {
   $('#pz-camlabel').textContent = game.cycleCamera();
+  data.settings.cam = game.userCamMode;
+  save(data);
 });
 $('#pz-finish').addEventListener('click', () => {
   paused = false;
@@ -416,6 +418,7 @@ function syncSettings() {
   $('#set-bloom').checked = data.settings.bloom;
   $('#set-sound').checked = data.settings.sound;
   $('#set-at').checked = data.settings.at;
+  $('#set-assist').checked = data.settings.assist !== false;
   $('#set-quality').value = data.settings.quality;
   $('#set-touch').checked = !$('#touch').classList.contains('hidden');
 }
@@ -427,6 +430,11 @@ $('#set-sound').addEventListener('change', (e) => {
 });
 $('#set-at').addEventListener('change', (e) => {
   data.settings.at = e.target.checked; game.settings.at = e.target.checked; save(data);
+});
+$('#set-assist').addEventListener('change', (e) => {
+  data.settings.assist = e.target.checked;
+  game.settings.assist = e.target.checked;
+  save(data);
 });
 $('#set-quality').addEventListener('change', (e) => {
   data.settings.quality = e.target.value;
@@ -456,7 +464,11 @@ $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
 input.onAction = (code) => {
   if (code === 'Escape') { togglePause(); return; }
   if (current !== 'none') return;
-  if (code === 'KeyC') hud.message(game.cycleCamera(), '', 900);
+  if (code === 'KeyC') {
+    hud.message(game.cycleCamera(), '', 900);
+    data.settings.cam = game.userCamMode;
+    save(data);
+  }
   if (code === 'KeyR') restart();
 };
 
@@ -515,6 +527,7 @@ async function boot() {
   await new Promise((r) => setTimeout(r, 30));
 
   if (!data.owned.includes(data.carId)) data.carId = data.owned[0] || 's15';
+  game.userCamMode = data.settings.cam ?? 0;
   preparePlayer();
   game.start('free', { startS: game.track.length * 0.62, rollingStart: true });
 

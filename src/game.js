@@ -171,7 +171,8 @@ export class Game {
     this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.3, 12000);
     this.camPos = new THREE.Vector3();
     this.camLook = new THREE.Vector3();
-    this.camMode = 0;
+    this.camMode = 0;          // いま実際に使っている視点
+    this.userCamMode = 0;      // プレイヤーが選んだ視点（デモで上書きしない）
     this.shake = 0;
 
     // --- ライティング（夜なので控えめ＋発光で見せる）
@@ -267,9 +268,11 @@ export class Game {
   setDemo(on) {
     this.demo = on;
     if (on) {
-      this.camMode = CAM_MODES.findIndex((c) => c.id === 'cine');
-      if (this.camMode < 0) this.camMode = 0;
+      const cine = CAM_MODES.findIndex((c) => c.id === 'cine');
+      this.camMode = cine < 0 ? 0 : cine;
       if (this.mode === 'idle' || this.mode === 'result') this.mode = 'racing';
+    } else {
+      this.camMode = this.userCamMode;   // 走行時は必ずプレイヤーの視点に戻す
     }
   }
 
@@ -311,11 +314,13 @@ export class Game {
     }
     this.traffic.density = opts.traffic ?? 1;
     this.mode = this.state.countdown > 0 ? 'countdown' : 'racing';
-    this.camMode = opts.camMode ?? this.camMode;
+    if (opts.camMode !== undefined) this.userCamMode = opts.camMode;
+    this.camMode = this.userCamMode;
   }
 
   cycleCamera() {
-    this.camMode = (this.camMode + 1) % CAM_MODES.length;
+    this.userCamMode = (this.userCamMode + 1) % CAM_MODES.length;
+    this.camMode = this.userCamMode;
     return CAM_MODES[this.camMode].label;
   }
 
@@ -434,6 +439,7 @@ export class Game {
       pv.input.throttle = s.throttle;
       pv.input.brake = s.brake;
       pv.input.steer = -s.steer;   // 入力は右が＋、車両モデルは左が＋
+      pv.assist = this.settings.assist !== false;
       pv.input.handbrake = s.handbrake;
       if (this.settings.at) {
         if (pv.shiftTimer <= 0) {
@@ -556,7 +562,7 @@ export class Game {
 
     // 車の向きではなく、少し進行方向へ寄せた向きを使うと落ち着いて見えます
     const carDir = this._camDir.set(Math.sin(v.heading), 0, Math.cos(v.heading)).normalize();
-    const mixDir = this._camMix.copy(carDir).lerp(sm.tan, 0.35).normalize();
+    const mixDir = this._camMix.copy(carDir).lerp(sm.tan, 0.18).normalize();
 
     const ideal = this._camIdeal.copy(v.pos)
       .addScaledVector(mixDir, -cm.dist)
@@ -570,7 +576,8 @@ export class Game {
         .addScaledVector(sm.up, cm.height);
     }
 
-    const follow = cm.id === 'hood' ? 40 : lerp(6.5, 11, clamp(speed / 80, 0, 1));
+    // 高速でカメラが離れすぎると車の位置がつかめないので、速いほど強く追従させます
+    const follow = cm.id === 'hood' ? 40 : lerp(9, 22, clamp(speed / 85, 0, 1));
     this.camPos.lerp(ideal, 1 - Math.exp(-follow * dt));
 
     // カメラが壁やビルにめり込まないよう、道路の内側・路面より上に押し戻します
