@@ -6,7 +6,7 @@ import { OutputPass } from 'three/addons/OutputPass.js';
 
 import { clamp, lerp, damp, wrapAngle, formatTime, KMH, rng } from './util.js';
 import { createTrack, buildRoad, ROAD, LANE_U } from './track.js';
-import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildBridges, buildPiers } from './scenery.js';
+import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildBridges, buildPiers, buildRoadside } from './scenery.js';
 import { buildCar } from './carModel.js';
 import { Vehicle, slipstreamFactor } from './vehicle.js';
 import { RivalAI } from './ai.js';
@@ -71,10 +71,16 @@ class Actor {
       w.spin.rotation.x -= (v.vx / v.spec.wheelR) * (1 / 60);
       if (w.front) w.pivot.rotation.y = v.steer;
     }
-    // ブレーキランプ
+    // ブレーキランプ（にじみの板もあわせて強くします）
     const on = v.input.brake > 0.05;
     for (const b of this.built.brakeLights) {
       b.material.emissiveIntensity = on ? 5.0 : 1.5;
+    }
+    if (this.built.tailGlows) {
+      for (const g of this.built.tailGlows) {
+        g.material.opacity = on ? 0.95 : 0.5;
+        g.scale.setScalar(on ? 1.35 : 1);
+      }
     }
     this.shadow.position.set(v.pos.x, v.pos.y + 0.04, v.pos.z);
     this.shadow.quaternion.copy(this.q);
@@ -193,6 +199,7 @@ export class Game {
     this.sea = buildSea(this.scene);
     buildPiers(this.track, this.scene);
     this.lights = buildStreetLights(this.track, this.scene);
+    buildRoadside(this.track, this.scene);
     this.city = buildCity(this.track, this.scene, 99);
     buildTunnels(this.track, this.scene);
     buildSigns(this.track, this.scene);
@@ -223,6 +230,7 @@ export class Game {
     this._acc = 0;
     this._tmpA = {};
     this._tmpB = {};
+    this._tmpC = {};
     this._v3 = new THREE.Vector3();
     this._v3b = new THREE.Vector3();
     // カメラ計算専用（他と共有すると値が壊れるので必ず分けておく）
@@ -326,44 +334,117 @@ export class Game {
 
   // ---------------------------------------------------------------- 当たり判定
 
-  collideTraffic(actor, isPlayer) {
+  /**
+   * コース座標 (s, u) の上で車体を動かします。
+   * 衝突でめり込んだぶんを押し戻すのに使います。
+   */
+  moveOnTrack(v, ds, du) {
+    v.s += ds;
+    v.u += du;
+    const sm = this.track.sample(v.s, this._tmpC);
+    v.pos.copy(sm.pos).addScaledVector(sm.lat, v.u).addScaledVector(sm.up, 0.02);
+    v.trackIndex = sm.index;
+  }
+
+  /**
+   * 一般車との衝突。
+   * 「重なりを検出したら、浅いほうの軸へ押し出して、運動量保存で速度を交換する」
+   * という順序にしています。以前は当たった瞬間に一定割合だけ減速して 0.7 秒無敵に
+   * していたため、車体が相手にめり込んだまますり抜けて見えていました。
+   */
+  collideTraffic(actor) {
     const v = actor.vehicle;
-    if (v.crashCooldown > 0) return 0;
-    const half = v.spec.dims;
-    const list = this.traffic.near(v.s, 40);
-    for (const { car, rel } of list) {
-      const dl = Math.abs(rel);
-      if (dl > half.L * 0.5 + car.halfL) continue;
-      const du = Math.abs(car.u - v.u);
-      if (du > half.W * 0.5 + car.halfW) continue;
-      // 接触
-      const closing = Math.abs(v.vx - (car.oncoming ? -car.vx : car.vx));
-      const severity = clamp(closing / 45, 0.18, 1);
-      v.vx *= 1 - severity * 0.55;
-      v.vy += (v.u > car.u ? 1 : -1) * (2 + severity * 7);
-      v.yawRate = clamp(v.yawRate + (Math.random() - 0.5) * severity * 1.8, -3.2, 3.2);
-      v.crashCooldown = 0.7;
-      this.emitSparks(v, 26 * severity);
-      this.shake = Math.max(this.shake, severity);
-      return severity;
+    const myHalfL = v.spec.dims.L * 0.5;
+    const myHalfW = v.spec.dims.W * 0.5;
+    const m1 = v.spec.mass;
+    let worst = 0;
+
+    for (const { car, rel } of this.traffic.near(v.s, 26)) {
+      const penL = myHalfL + car.halfL - Math.abs(rel);
+      if (penL <= 0) continue;
+      const du = v.u - car.u;
+      const penW = myHalfW + car.halfW - Math.abs(du);
+      if (penW <= 0) continue;
+
+      const m2 = car.mass;
+      const otherVx = car.oncoming ? -car.vx : car.vx;
+
+      if (penW < penL * 0.55) {
+        // ---- 側面をこすった（車線変更でぶつけた場合など）
+        const dir = du >= 0 ? 1 : -1;
+        this.moveOnTrack(v, 0, dir * penW);
+        const sev = clamp((Math.abs(v.vy) + 1.5) / 10, 0.08, 0.5);
+        v.vy = dir * Math.abs(v.vy) * 0.25;
+        v.yawRate = clamp(v.yawRate + dir * sev * 0.5, -3.2, 3.2);
+        v.vx *= 1 - sev * 0.10;
+        car.nudge = 0.5;
+        car.targetU = clamp(car.targetU - dir * 0.7, -11, 11);
+        worst = Math.max(worst, sev * 0.6);
+      } else {
+        // ---- 追突（または正面衝突）：1次元の非弾性衝突として解きます
+        const dir = rel > 0 ? -1 : 1;          // 相手が前なら自分を後ろへ
+        this.moveOnTrack(v, dir * penL, 0);
+        const closing = Math.abs(v.vx - otherVx);
+        const e = 0.18;                         // 反発係数（ほぼ潰れる）
+        const v1 = (m1 * v.vx + m2 * otherVx + m2 * e * (otherVx - v.vx)) / (m1 + m2);
+        const v2 = (m1 * v.vx + m2 * otherVx + m1 * e * (v.vx - otherVx)) / (m1 + m2);
+        v.vx = v1;
+        if (!car.oncoming) car.vx = Math.max(4, v2);
+        car.nudge = 0.7;
+        v.yawRate = clamp(v.yawRate + (Math.random() - 0.5) * clamp(closing / 30, 0, 1) * 1.4, -3.2, 3.2);
+        worst = Math.max(worst, clamp(closing / 32, 0.12, 1));
+      }
+    }
+
+    if (worst > 0 && v.crashCooldown <= 0) {
+      v.crashCooldown = 0.35;                   // 演出（火花・音）の連打だけ抑えます
+      this.emitSparks(v, 8 + 24 * worst);
+      this.shake = Math.max(this.shake, worst);
+      return worst;
     }
     return 0;
   }
 
+  /** 自車とライバルの接触。こちらも押し出し＋運動量保存で解きます。 */
   collideCars() {
     if (!this.rival) return;
     const a = this.player.vehicle, b = this.rival.vehicle;
-    const ds = a.s - b.s;
+    const L = this.track.length;
+    let ds = a.s - b.s;
+    if (ds > L / 2) ds -= L;
+    if (ds < -L / 2) ds += L;
+
+    const penL = (a.spec.dims.L + b.spec.dims.L) * 0.5 - Math.abs(ds);
+    if (penL <= 0) return;
     const du = a.u - b.u;
-    if (Math.abs(ds) > (a.spec.dims.L + b.spec.dims.L) * 0.5) return;
-    if (Math.abs(du) > (a.spec.dims.W + b.spec.dims.W) * 0.5) return;
-    const push = (a.spec.dims.W + b.spec.dims.W) * 0.5 - Math.abs(du);
-    const dir = du >= 0 ? 1 : -1;
-    a.vy += dir * push * 5.5;
-    b.vy -= dir * push * 5.5;
-    a.vx *= 0.985; b.vx *= 0.985;
-    this.emitSparks(a, 6);
-    this.shake = Math.max(this.shake, 0.28);
+    const penW = (a.spec.dims.W + b.spec.dims.W) * 0.5 - Math.abs(du);
+    if (penW <= 0) return;
+
+    const ma = a.spec.mass, mb = b.spec.mass;
+    const wa = mb / (ma + mb), wb = ma / (ma + mb);   // 軽いほうが大きく動く
+
+    if (penW < penL * 0.55) {
+      const dir = du >= 0 ? 1 : -1;
+      this.moveOnTrack(a, 0, dir * penW * wa);
+      this.moveOnTrack(b, 0, -dir * penW * wb);
+      a.vy = dir * Math.abs(a.vy) * 0.3 + dir * 1.2;
+      b.vy = -dir * Math.abs(b.vy) * 0.3 - dir * 1.2;
+      a.vx *= 0.995; b.vx *= 0.995;
+      this.shake = Math.max(this.shake, 0.18);
+    } else {
+      const dir = ds > 0 ? 1 : -1;
+      this.moveOnTrack(a, dir * penL * wa, 0);
+      this.moveOnTrack(b, -dir * penL * wb, 0);
+      const e = 0.22;
+      const va = (ma * a.vx + mb * b.vx + mb * e * (b.vx - a.vx)) / (ma + mb);
+      const vb = (ma * a.vx + mb * b.vx + ma * e * (a.vx - b.vx)) / (ma + mb);
+      a.vx = va; b.vx = vb;
+      this.shake = Math.max(this.shake, 0.3);
+    }
+    if (a.crashCooldown <= 0) {
+      a.crashCooldown = 0.25;
+      this.emitSparks(a, 10);
+    }
   }
 
   emitSparks(v, n) {
@@ -481,7 +562,7 @@ export class Game {
       audio && audio.crash(clamp(wallHit / 10, 0.2, 1));
     }
     pv.snapToRoad(this.track);
-    const crash = this.collideTraffic(this.player, true);
+    const crash = this.collideTraffic(this.player);
     if (crash > 0) {
       audio && audio.crash(crash);
       this.onEvent('crash', crash);
@@ -492,7 +573,7 @@ export class Game {
       rv.update(dt);
       rv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 });
       rv.snapToRoad(this.track);
-      this.collideTraffic(this.rival, false);
+      this.collideTraffic(this.rival);
       this.collideCars();
     }
 

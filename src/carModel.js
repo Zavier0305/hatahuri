@@ -103,6 +103,40 @@ const rubberMaterial = () =>
 const chromeMaterial = () =>
   new THREE.MeshStandardMaterial({ color: 0xb9bec7, metalness: 1.0, roughness: 0.18 });
 
+/** ランプの「にじみ」用の丸いテクスチャ（1枚だけ作って使い回します） */
+let _lampGlowTex = null;
+function lampGlowTexture() {
+  if (_lampGlowTex) return _lampGlowTex;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const g = cv.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.28, 'rgba(255,255,255,0.55)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 64, 64);
+  _lampGlowTex = new THREE.CanvasTexture(cv);
+  _lampGlowTex.colorSpace = THREE.SRGBColorSpace;
+  return _lampGlowTex;
+}
+
+/**
+ * ランプの手前に薄い加算の板を置いて、夜に「光っている」ように見せます。
+ * 発光マテリアルだけだと、少し離れると点にしか見えないためです。
+ */
+function lampGlow(color, size, opacity = 0.55) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(size, size * 0.62),
+    new THREE.MeshBasicMaterial({
+      map: lampGlowTexture(), color, transparent: true, opacity,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: true,
+    })
+  );
+  m.renderOrder = 3;
+  return m;
+}
+
 // ---------------------------------------------------------------- ホイール
 
 function buildWheel(radius, width, rimColor = 0x8f959e) {
@@ -230,6 +264,9 @@ export function buildCar(spec, opts = {}) {
       lamp.position.set(sx * D.W * 0.31, D.H * (spec.lights === 'popup' ? 0.46 : 0.40), D.L * 0.5 - 0.06);
       root.add(lamp);
       headOff.push(lamp);
+      const gl = lampGlow(0xfff0cc, D.W * 0.75, 0.42);
+      gl.position.set(sx * D.W * 0.31, D.H * (spec.lights === 'popup' ? 0.46 : 0.40), D.L * 0.5 + 0.03);
+      root.add(gl);
     }
   } else {
     for (const sx of [-1, 1]) {
@@ -237,6 +274,9 @@ export function buildCar(spec, opts = {}) {
       lamp.position.set(sx * D.W * 0.31, D.H * 0.42, D.L * 0.5 - 0.05);
       root.add(lamp);
       headOff.push(lamp);
+      const gl = lampGlow(0xfff0cc, D.W * 0.75, 0.42);
+      gl.position.set(sx * D.W * 0.31, D.H * 0.42, D.L * 0.5 + 0.03);
+      root.add(gl);
     }
   }
 
@@ -245,11 +285,17 @@ export function buildCar(spec, opts = {}) {
     color: 0xff2418, emissive: 0xff1a0c, emissiveIntensity: 1.5, roughness: 0.35,
   });
   const brakeLights = [];
+  const tailGlows = [];
   for (const sx of [-1, 1]) {
     const t = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.30, 0.11, 0.05), tailMat);
     t.position.set(sx * D.W * 0.31, D.H * 0.46, -D.L * 0.5 + 0.03);
     root.add(t);
     brakeLights.push(t);
+    const gl = lampGlow(0xff2a16, D.W * 0.85, 0.5);
+    gl.position.set(sx * D.W * 0.31, D.H * 0.46, -D.L * 0.5 - 0.02);
+    gl.rotation.y = Math.PI;
+    root.add(gl);
+    tailGlows.push(gl);
   }
 
   // マフラー
@@ -307,7 +353,7 @@ export function buildCar(spec, opts = {}) {
   // 車高を合わせる（タイヤ半径ぶん持ち上げ済みなので、ボディを少しだけ落とす）
   body.position.y = 0;
   root.userData = { spec, brakeLights, headOff, wheels };
-  return { root, wheels, brakeLights, headlights: headOff, paint, spec };
+  return { root, wheels, brakeLights, tailGlows, headlights: headOff, paint, spec };
 }
 
 /** 一般車（交通量）用の簡易モデル。3種類をランダムに使い分けます。 */
@@ -358,6 +404,10 @@ export function buildTrafficCar(kind, color, rand) {
       const t = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, 0.06), tailMat);
       t.position.set(sx * 0.9, 1.0, -L * 0.5 + 0.02);
       root.add(t);
+      const tg = lampGlow(0xff2a16, 1.0, 0.42);
+      tg.position.set(sx * 0.9, 1.0, -L * 0.5 - 0.03);
+      tg.rotation.y = Math.PI;
+      root.add(tg);
     }
     const wheels = [];
     for (const zz of [L * 0.5 - 1.6, -L * 0.5 + 2.6, -L * 0.5 + 1.3]) {
@@ -391,9 +441,16 @@ export function buildTrafficCar(kind, color, rand) {
     const t = new THREE.Mesh(new THREE.BoxGeometry(W * 0.28, 0.12, 0.05), tailMat);
     t.position.set(sx * W * 0.32, tall * 0.46, -L * 0.5 + 0.02);
     root.add(t);
+    const tg = lampGlow(0xff2a16, W * 0.8, 0.45);
+    tg.position.set(sx * W * 0.32, tall * 0.46, -L * 0.5 - 0.03);
+    tg.rotation.y = Math.PI;
+    root.add(tg);
     const h = new THREE.Mesh(new THREE.BoxGeometry(W * 0.26, 0.10, 0.05), headMat);
     h.position.set(sx * W * 0.32, tall * 0.44, L * 0.5 - 0.03);
     root.add(h);
+    const hg = lampGlow(0xfff2d6, W * 0.9, 0.5);
+    hg.position.set(sx * W * 0.32, tall * 0.44, L * 0.5 + 0.04);
+    root.add(hg);
   }
   const wheels = [];
   for (const zz of [L * 0.31, -L * 0.31]) {

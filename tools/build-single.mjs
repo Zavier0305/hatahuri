@@ -26,6 +26,7 @@ const ADDON_DIR = {
 
 const externalImports = new Set();
 const bodies = [];
+const declared = new Map();   // 連結後は同じスコープに入るので、同名の宣言は致命的
 
 for (const name of ORDER) {
   const src = fs.readFileSync(path.join('src', `${name}.js`), 'utf8');
@@ -44,6 +45,17 @@ for (const name of ORDER) {
       continue;
     }
     if (/^import\s+/.test(line)) continue;
+    const decl = line.match(/^(?:export\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/);
+    if (decl) {
+      const prev = declared.get(decl[1]);
+      if (prev) {
+        throw new Error(
+          `トップレベルの名前が衝突しています: "${decl[1]}" (src/${prev}.js と src/${name}.js)。` +
+          '1ファイルに束ねると同じスコープに入り、実行時に SyntaxError になります。どちらかを改名してください。'
+        );
+      }
+      declared.set(decl[1], name);
+    }
     kept.push(
       line
         .replace(/^export\s+(const|let|var|function|class|async)\b/, '$1')

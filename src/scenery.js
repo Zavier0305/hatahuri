@@ -86,9 +86,10 @@ export function buildSea(scene) {
 
 // ---------------------------------------------------------------- テクスチャ
 
-function windowTexture(seedNum, cols = 12, rows = 24) {
+const WIN_COLS = 6, WIN_ROWS = 8;   // テクスチャ1枚に入る窓の数
+function windowTexture(seedNum, cols = WIN_COLS, rows = WIN_ROWS) {
   const cv = document.createElement('canvas');
-  cv.width = 128; cv.height = 256;
+  cv.width = 192; cv.height = 256;
   const g = cv.getContext('2d');
   g.fillStyle = '#0b0d13';
   g.fillRect(0, 0, cv.width, cv.height);
@@ -97,9 +98,9 @@ function windowTexture(seedNum, cols = 12, rows = 24) {
   const tints = ['#ffe6b0', '#d8e6ff', '#fff2cf', '#bcd4ff', '#ffd9a0'];
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      if (r() < 0.42) continue;
+      if (r() < 0.55) continue;
       g.fillStyle = tints[(r() * tints.length) | 0];
-      g.globalAlpha = 0.45 + r() * 0.55;
+      g.globalAlpha = 0.35 + r() * 0.65;
       g.fillRect(x * cw + cw * 0.22, y * ch + ch * 0.24, cw * 0.56, ch * 0.44);
     }
   }
@@ -253,10 +254,118 @@ export function buildPiers(track, scene) {
   return grp;
 }
 
+// ---------------------------------------------------------------- 路側の細かい造作
+
+/**
+ * ガードレールの支柱と、壁面の視線誘導標（オレンジの反射板）。
+ * 一定間隔で流れていく小さな物体があると、速度感が一気に上がります。
+ */
+export function buildRoadside(track, scene) {
+  const group = new THREE.Group();
+  const sm = {}, basis = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const back = new THREE.Vector3(), pos = new THREE.Vector3();
+  const m = new THREE.Matrix4(), sc = new THREE.Vector3(1, 1, 1);
+
+  // --- 支柱（6mおき・左右）
+  const POST_STEP = 6;
+  const pn = Math.floor(track.length / POST_STEP);
+  const postG = new THREE.BoxGeometry(0.10, 0.86, 0.10);
+  postG.translate(0, 0.43, 0);
+  const posts = new THREE.InstancedMesh(
+    postG,
+    new THREE.MeshStandardMaterial({ color: 0x6f7681, roughness: 0.6, metalness: 0.6 }),
+    pn * 2
+  );
+  let k = 0;
+  for (let i = 0; i < pn; i++) {
+    track.sample(i * POST_STEP, sm);
+    basis.makeBasis(sm.lat, sm.up, back.copy(sm.tan).negate());
+    q.setFromRotationMatrix(basis);
+    for (const side of [-1, 1]) {
+      pos.copy(sm.pos).addScaledVector(sm.lat, side * (ROAD.halfRoad + 0.5)).addScaledVector(sm.up, 0.16);
+      m.compose(pos, q, sc);
+      posts.setMatrixAt(k++, m);
+    }
+  }
+  posts.count = k;
+  posts.instanceMatrix.needsUpdate = true;
+  posts.frustumCulled = false;
+  group.add(posts);
+
+  // --- 視線誘導標（16mおき・路肩側と中央分離帯側）
+  const DEL_STEP = 16;
+  const dn = Math.floor(track.length / DEL_STEP);
+  const delG = new THREE.BoxGeometry(0.05, 0.13, 0.11);
+  const dels = new THREE.InstancedMesh(
+    delG,
+    new THREE.MeshStandardMaterial({
+      color: 0xff9c2e, emissive: 0xff8a12, emissiveIntensity: 3.2, roughness: 0.4,
+    }),
+    dn * 4
+  );
+  k = 0;
+  const uList = [
+    -(ROAD.halfRoad + 0.45), -(ROAD.medianHalf - 0.04),
+    ROAD.medianHalf - 0.04, ROAD.halfRoad + 0.45,
+  ];
+  for (let i = 0; i < dn; i++) {
+    track.sample(i * DEL_STEP, sm);
+    basis.makeBasis(sm.lat, sm.up, back.copy(sm.tan).negate());
+    q.setFromRotationMatrix(basis);
+    for (const u of uList) {
+      pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, 0.78);
+      m.compose(pos, q, sc);
+      dels.setMatrixAt(k++, m);
+    }
+  }
+  dels.count = k;
+  dels.instanceMatrix.needsUpdate = true;
+  dels.frustumCulled = false;
+  group.add(dels);
+
+  scene.add(group);
+  return group;
+}
+
 // ---------------------------------------------------------------- ビル群
+
+/**
+ * 「その座標がコースからどれだけ離れているか」を高速に判定するための格子。
+ * コース点を100mのマスに配り、近傍9マスだけを調べます。
+ * これを使わないと、ループが自分の近くを通る場所で建物が路上に生えてしまいます。
+ */
+function trackClearance(track, cell = 100) {
+  const grid = new Map();
+  const key = (ix, iz) => `${ix},${iz}`;
+  for (let i = 0; i < track.n; i += 2) {          // 10mおき
+    const x = track.pos[i * 3], z = track.pos[i * 3 + 2];
+    const k = key(Math.floor(x / cell), Math.floor(z / cell));
+    let a = grid.get(k);
+    if (!a) grid.set(k, (a = []));
+    a.push(i);
+  }
+  return function isClear(x, z, need) {
+    const ix = Math.floor(x / cell), iz = Math.floor(z / cell);
+    const r = Math.ceil(need / cell);
+    const n2 = need * need;
+    for (let a = -r; a <= r; a++) {
+      for (let b = -r; b <= r; b++) {
+        const list = grid.get(key(ix + a, iz + b));
+        if (!list) continue;
+        for (const i of list) {
+          const dx = x - track.pos[i * 3];
+          const dz = z - track.pos[i * 3 + 2];
+          if (dx * dx + dz * dz < n2) return false;
+        }
+      }
+    }
+    return true;
+  };
+}
 
 export function buildCity(track, scene, seed = 99) {
   const r = rng(seed);
+  const isClear = trackClearance(track);
   const group = new THREE.Group();
   const near = [];   // 沿道のビル
   const far = [];    // 遠景のスカイライン
@@ -274,26 +383,34 @@ export function buildCity(track, scene, seed = 99) {
       const d = 11 + r() * 24;
       const p = sm.pos.clone().addScaledVector(sm.lat, side * dist);
       p.y = -3;
+      // コース本体（他の区間も含む）に被る位置には建てない
+      if (!isClear(p.x, p.z, ROAD.halfRoad + 10 + Math.hypot(w, d) * 0.5)) continue;
       near.push({ p, w, h, d, rot: r() * TAU });
     }
   }
   // 遠景（水平線に並ぶ高層ビル）
-  for (let i = 0; i < 420; i++) {
+  for (let i = 0; i < 620 && far.length < 420; i++) {
     const a = r() * TAU;
     const rad = 2600 + r() * 3400;
     const h = 70 + Math.pow(r(), 2.2) * 250;
-    near.length; // noop
-    far.push({
-      p: new THREE.Vector3(Math.cos(a) * rad, -3, Math.sin(a) * rad),
-      w: 26 + r() * 46, h, d: 26 + r() * 46, rot: r() * TAU,
-    });
+    const w = 26 + r() * 46, d = 26 + r() * 46;
+    const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+    // 遠景のビルもコースの真上に来ることがあるので同じ判定を通す
+    if (!isClear(x, z, ROAD.halfRoad + 14 + Math.hypot(w, d) * 0.5)) continue;
+    far.push({ p: new THREE.Vector3(x, -3, z), w, h, d, rot: r() * TAU });
   }
 
+  // 窓1枚が約4.2m×3.4mになるよう、繰り返し数を「必要な窓数 ÷ テクスチャ1枚の窓数」で決めます。
+  // （ここを窓数そのものにすると窓が極小になり、遠目にはただの明るい箱になってしまいます）
+  const repeatFor = (w, h) => [
+    Math.max(1, Math.round(w / 4.2 / WIN_COLS)),
+    Math.max(1, Math.round(h / 3.4 / WIN_ROWS)),
+  ];
   const mk = (list, texSeed, repU, repV, emis) => {
     const tex = windowTexture(texSeed);
     tex.repeat.set(repU, repV);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x11141b, roughness: 0.85, metalness: 0.1,
+      color: 0x0d1017, roughness: 0.88, metalness: 0.1,
       map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: emis,
     });
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -312,10 +429,26 @@ export function buildCity(track, scene, seed = 99) {
     return im;
   };
 
-  group.add(mk(near, 31, 2, 4, 0.9));
-  const farMesh = mk(far, 57, 2, 5, 1.15);
-  farMesh.frustumCulled = false;
-  group.add(farMesh);
+  // 高さ帯で3つに分け、それぞれ窓の縮尺を合わせる
+  const bands = [[0, 70], [70, 120], [120, 1e9]];
+  bands.forEach(([lo, hi], bi) => {
+    const list = near.filter((b) => b.h >= lo && b.h < hi);
+    if (!list.length) return;
+    const avgW = list.reduce((a, b) => a + b.w, 0) / list.length;
+    const avgH = list.reduce((a, b) => a + b.h, 0) / list.length;
+    const [ru, rv] = repeatFor(avgW, avgH);
+    group.add(mk(list, 31 + bi * 7, ru, rv, 0.85));
+  });
+  bands.forEach(([lo, hi], bi) => {
+    const list = far.filter((b) => b.h >= lo && b.h < hi);
+    if (!list.length) return;
+    const avgW = list.reduce((a, b) => a + b.w, 0) / list.length;
+    const avgH = list.reduce((a, b) => a + b.h, 0) / list.length;
+    const [ru, rv] = repeatFor(avgW, avgH);
+    const mesh = mk(list, 57 + bi * 11, ru, rv, 1.05);
+    mesh.frustumCulled = false;
+    group.add(mesh);
+  });
 
   // 航空障害灯（赤い点滅）
   const redG = new THREE.SphereGeometry(2.6, 6, 6);

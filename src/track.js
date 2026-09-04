@@ -212,15 +212,30 @@ function makeRoadTexture() {
   }
   g.globalAlpha = 1;
 
+  // 伸縮目地（20mごとの継ぎ目）とタールの補修跡
+  g.globalAlpha = 0.55;
+  g.fillStyle = '#15171b';
+  g.fillRect(0, 0, cv.width, 4);
+  g.globalAlpha = 0.28;
+  for (let i = 0; i < 7; i++) {
+    const y = Math.random() * cv.height;
+    g.fillStyle = '#101216';
+    g.fillRect(0, y, cv.width, 2 + Math.random() * 3);
+  }
+  g.globalAlpha = 1;
+
   const solid = (u, w = 0.15, color = '#e8e8e4') => {
     g.fillStyle = color;
     g.fillRect(toPx(u - w / 2), 0, Math.max(2, toPx(u + w / 2) - toPx(u - w / 2)), cv.height);
   };
   const dashed = (u, w = 0.15) => {
-    g.fillStyle = '#e8e8e4';
+    g.fillStyle = '#eef0ec';
     const x = toPx(u - w / 2);
     const ww = Math.max(2, toPx(u + w / 2) - toPx(u - w / 2));
     g.fillRect(x, 0, ww, toPy(8));   // 8m 引いて 12m 空ける
+    // 車線境界の反射鋲（キャッツアイ）
+    g.fillStyle = '#fffef2';
+    g.fillRect(x - ww * 0.4, toPy(14), ww * 1.8, Math.max(2, toPy(0.25)));
   };
 
   // 自車線側（u<0）

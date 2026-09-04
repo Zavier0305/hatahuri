@@ -27,7 +27,10 @@ export class Traffic {
         model, kind,
         s: 0, u: 0, vx: 0, lane: 0, oncoming: false, active: false,
         laneChange: 0, targetU: 0,
-        halfW: model.width * 0.5, halfL: model.length * 0.5,
+        // 衝突の計算に使う実寸と質量（大型トラックに突っ込めば、当然こちらが弾かれます）
+        halfW: model.width * 0.5, halfL: model.length * 0.5, cruise: 0,
+        mass: kind === 'truck' ? 13000 : kind === 'van' ? 2100 : 1450,
+        nudge: 0,
       });
     }
     this._tmp = {};
@@ -48,7 +51,8 @@ export class Traffic {
     car.u = lanes[car.lane];
     car.targetU = car.u;
     const base = car.kind === 'truck' ? 78 : car.kind === 'van' ? 88 : 95;
-    car.vx = (base + r() * 26 - car.lane * 9) / 3.6;
+    car.cruise = (base + r() * 26 - car.lane * 9) / 3.6;
+    car.vx = car.cruise;
     const dist = 260 + r() * 900;
     car.s = playerS + (ahead ? dist : -dist * 0.55);
     car.active = true;
@@ -76,6 +80,15 @@ export class Traffic {
         c.laneChange = 6 + this.rand() * 16;
       }
       c.u = lerp(c.u, c.targetU, 1 - Math.exp(-dt * 0.9));
+      // 押し出された速度は、じわっと本来の巡航速度へ戻します
+      if (c.cruise && Math.abs(c.vx - c.cruise) > 0.05) {
+        c.vx = lerp(c.vx, c.cruise, 1 - Math.exp(-dt * 0.55));
+      }
+      // ぶつけられた直後は少しふらつく
+      if (c.nudge > 0) {
+        c.nudge = Math.max(0, c.nudge - dt);
+        c.u += Math.sin(c.nudge * 22) * c.nudge * 0.35;
+      }
 
       // 相対距離で再配置
       let rel = c.s - playerS;
