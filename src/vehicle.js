@@ -71,6 +71,7 @@ export class Vehicle {
     this.assist = true;      // カウンターステア補助（設定でOFFにできます）
     this.autoSteer = false;  // AI が代わりに運転しているか（デモ走行）
     this.roadHeading = undefined;  // いま走っている場所の道の向き
+    this.roadCurv = 0;             // そこの曲率（直進復帰補助の減衰項が使います）
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -89,7 +90,7 @@ export class Vehicle {
     this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, 0.02);
     this.heading = Math.atan2(sm.tan.x, sm.tan.z);
     this.s = s; this.u = u; this.trackIndex = sm.index;
-    this.roadHeading = sm.heading;
+    this.roadHeading = sm.heading; this.roadCurv = sm.curv;
     this.vx = 0; this.vy = 0; this.yawRate = 0;
     this.gear = 1; this.rpm = this.spec.idle; this.boost = 0;
   }
@@ -185,15 +186,26 @@ export class Vehicle {
       // 手を離したあとも横へ流れ続けていました。
       //
       // そこで、舵を入れていないときに限り、道の向きとのズレを埋める方向へ
-      // 補助を入れます。出せる量は人間の最大舵角までに抑えるので、
-      // 自分で曲げているあいだは一切邪魔をしません。
+      // 補助を入れます。自分で曲げているあいだは一切邪魔をしません。
+      //
+      // 中身は PD 制御です。
+      //   P … 道の向きとのズレ（大きいほど強く戻す）
+      //   D … 「道なりに走るのに必要なヨーレート」との差（行き過ぎを抑える）
+      // カーブでは必要なヨーレートは0ではないので、道の曲率から求めます。
+      // 生のヨーレートを引くと、旋回中に自分の舵を打ち消してしまいます。
       //
       // AI が運転しているとき（メニューのデモ）は掛けません。AI は自分で
       // 道への角度を計算して舵を出しているので、二重に当てると乱れます。
-      if (!this.autoSteer && v > 8 && Math.abs(inp.steer) < 0.08 && this.roadHeading !== undefined) {
+      if (!this.autoSteer && v > 8 && Math.abs(inp.steer) < 0.10 && this.roadHeading !== undefined) {
         const err = wrapAngle(this.roadHeading - this.heading);
-        const gain = clamp(0.9 / (1 + v * 0.02), 0.22, 0.9);
-        target = clamp(target + clamp(err * gain, -maxSteer, maxSteer), -bound, bound);
+        const wantYaw = v * (this.roadCurv || 0);
+        const kp = clamp(2.2 / (1 + v * 0.02), 0.85, 2.2);
+        const help = err * kp + (wantYaw - this.yawRate) * 0.35;
+        // 補助が出せる量は人間の最大舵角の2倍まで。
+        // 「曲げる」のではなく「戻す」方向にしか働かないので、
+        // ここは人間の舵より広く取らないと、高速では戻りきりません。
+        const cap = maxSteer * 2.0;
+        target = clamp(target + clamp(help, -cap, cap), -bound, bound);
       }
     }
     // 速いほど舵の入りをゆっくりに（据わりを出すため）
@@ -395,6 +407,7 @@ export class Vehicle {
   snapToRoad(track) {
     const sm = track.sample(this.s, this._sm);
     this.roadHeading = sm.heading;   // 直進復帰補助が参照します
+    this.roadCurv = sm.curv;
     const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u);
     this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);
     return sm;
