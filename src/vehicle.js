@@ -69,6 +69,7 @@ export class Vehicle {
     this.slipstream = 0;
     this.crashCooldown = 0;
     this.assist = true;      // カウンターステア補助（設定でOFFにできます）
+    this.autoSteer = false;  // AI が代わりに運転しているか（デモ走行）
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -134,10 +135,31 @@ export class Vehicle {
     // 高速でも10度以上切れると、わずかな操作で車体が向きを変えてしまい
     // 「曲がりやすすぎる」感触になります。実車の高速巡航は数度の世界です。
     //   0 m/s → 30度 / 20 m/s(72km/h) → 13度 / 60 m/s(216km/h) → 6度
-    // AI は角度を計算して当ててくるので、人間向けの「据わり」の制限は不要です。
-    // 同じ制限を掛けると、AI が曲がりきれずに壁を擦るようになります。
+    // --- 最大舵角は「そのときタイヤが支えられる旋回」から逆算します。
+    //
+    // 速度で割るだけの式だと、216km/h でも 6度 も切れました。
+    // ところが同じ速度で限界旋回に必要な舵角は 0.5度 ほどしかありません。
+    // つまり限界の10倍以上を一気に入れられる状態で、ほんの少し傾けただけで
+    // タイヤが飽和し「勝手に曲がる」感触になっていました。
+    //
+    // ここでは 必要舵角 = ホイールベース × 使える横G ÷ 速度² を基準にし、
+    // 過渡やドリフトのぶんだけ余裕（人間2.1倍 / AI 3.0倍）を上乗せします。
     const v = Math.abs(this.vx);
-    const maxSteer = this.isAI ? 0.55 / (1 + v * 0.040) : 0.52 / (1 + v * 0.062);
+    const wetK = env && env.wet ? 0.78 : 1;
+    const dfAccel = (0.5 * RHO * S.downforce * 1.6 * S.area * v * v) / S.mass;
+    const latCap = S.grip * wetK * (G + dfAccel);
+    const needed = (S.dims.WB * latCap) / Math.max(36, v * v);
+    // AI には従来どおり広い舵角を残します。
+    // 上の制限は「人間の入力をどう舵角へ割り当てるか」という操作感の話であって、
+    // 車そのものの制約ではありません。AI は角度を計算して直接指令するので、
+    // 同じ制限を掛けると横ズレの補正ぶんが足りなくなり、遅く・不安定になります。
+    // autoSteer は「プレイヤーの車を AI が運転している」状態（メニュー背景のデモ）。
+    // このとき人間向けの制限を掛けると、AI が曲がりきれず極端に遅くなります。
+    const byMachine = this.isAI || this.autoSteer;
+    const maxSteer = byMachine
+      ? 0.55 / (1 + v * 0.040)
+      : clamp(needed * 2.1, 0.008, 0.52);
+    this.maxSteer = maxSteer;   // AI のフィードフォワードが同じ値を使えるように公開
     let target = inp.steer * maxSteer;
 
     // カウンターステア補助：リアが流れた向きへ自動で少しだけ舵を当てます。

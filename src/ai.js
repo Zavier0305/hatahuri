@@ -136,7 +136,8 @@ export class RivalAI {
 
     // コーナーで必要な舵角を先に入れておく（曲率×ホイールベース）
     const ahead = track.sample(v.s + clamp(speed * 0.55, 12, 60), this._tmp);
-    const maxSteer = 0.55 / (1 + speed * 0.040);   // vehicle.js の AI 用と揃えます
+    // 車両側が実際に使っている最大舵角。別式で持つとフィードフォワードがずれます。
+    const maxSteer = v.maxSteer || 0.2;
     const ff = clamp((v.spec.dims.WB * ahead.curv) / maxSteer, -0.8, 0.8);
 
     // ヨーの減衰は「そのコーナーで本来出るべきヨー」との差にだけ効かせます。

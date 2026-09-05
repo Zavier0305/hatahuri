@@ -526,6 +526,8 @@ export class Game {
     }
 
     // --- 入力
+    // デモ中は自車を AI が運転するので、舵角の割り当ても機械側に切り替えます
+    pv.autoSteer = this.demo;
     if (this.demo && this.mode === 'racing' && this.autoAI) {
       this.autoAI.update(dt, this.buildObstacles(null), 0);
       if (pv.shiftTimer <= 0) {
