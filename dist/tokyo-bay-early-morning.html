@@ -2240,7 +2240,7 @@ class Vehicle {
     const byMachine = this.isAI || this.autoSteer;
     const maxSteer = byMachine
       ? 0.55 / (1 + v * 0.040)
-      : clamp(needed * 2.1, 0.008, 0.52);
+      : clamp(needed * 1.45, 0.008, 0.44);
     this.maxSteer = maxSteer;   // AI のフィードフォワードが同じ値を使えるように公開
     let target = inp.steer * maxSteer;
 
@@ -2253,7 +2253,7 @@ class Vehicle {
       target = clamp(target + counter * (inp.handbrake > 0.5 ? 0.25 : 0.6), -0.62, 0.62);
     }
     // 速いほど舵の入りをゆっくりに（据わりを出すため）
-    const rate = this.isAI ? 9.0 : 12.0 - clamp(v / 13, 0, 5.0);
+    const rate = this.isAI ? 9.0 : 10.0 - clamp(v / 11, 0, 5.5);
     this.steer = damp(this.steer, target, rate, dt);
     const st = this.steer;
 
@@ -2310,7 +2310,8 @@ class Vehicle {
     const vxs = Math.max(2.0, v);
     const af = Math.atan2(this.vy + this.yawRate * lf, vxs) - st * Math.sign(this.vx || 1);
     const ar = Math.atan2(this.vy - this.yawRate * lr, vxs);
-    const Cf = 15.5 * Nf, Cr = 16.0 * Nr;
+    // フロントのコーナリングパワーを抑えると、鼻の入りが穏やかになります
+    const Cf = 12.5 * Nf, Cr = 16.0 * Nr;
     let Fyf = -Cf * af;
     let Fyr = -Cr * ar;
     const maxFyf = muF * Nf, maxFyr = muR * Nr;
