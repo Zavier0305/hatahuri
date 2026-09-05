@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const out = process.argv[2] || 'dist/wangan-single.html';
+const out = process.argv[2] || 'dist/tokyo-bay-early-morning.html';
 const threeBase = process.argv[3] || 'https://cdn.jsdelivr.net/npm/three@0.160.0';
 
 // 依存の順に並べます。新しいモジュールを足したらここにも追加してください

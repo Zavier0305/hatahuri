@@ -737,7 +737,7 @@ kbd{
         <div class="set-group">
           <div class="set-head">操作</div>
           <label><span>オートマチック変速</span><input type="checkbox" id="set-at"></label>
-          <label><span>ドライビングアシスト<i>滑ったぶんだけ自動でカウンターを当てます</i></span><input type="checkbox" id="set-assist"></label>
+          <label><span>ドライビングアシスト<i>滑ったぶんのカウンターと、舵を戻したときの直進復帰を助けます</i></span><input type="checkbox" id="set-assist"></label>
           <label><span>タッチ操作パネル</span><input type="checkbox" id="set-touch"></label>
         </div>
         <div class="set-group">
@@ -2152,6 +2152,7 @@ class Vehicle {
     this.crashCooldown = 0;
     this.assist = true;      // カウンターステア補助（設定でOFFにできます）
     this.autoSteer = false;  // AI が代わりに運転しているか（デモ走行）
+    this.roadHeading = undefined;  // いま走っている場所の道の向き
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -2170,6 +2171,7 @@ class Vehicle {
     this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, 0.02);
     this.heading = Math.atan2(sm.tan.x, sm.tan.z);
     this.s = s; this.u = u; this.trackIndex = sm.index;
+    this.roadHeading = sm.heading;
     this.vx = 0; this.vy = 0; this.yawRate = 0;
     this.gear = 1; this.rpm = this.spec.idle; this.boost = 0;
   }
@@ -2244,13 +2246,37 @@ class Vehicle {
     this.maxSteer = maxSteer;   // AI のフィードフォワードが同じ値を使えるように公開
     let target = inp.steer * maxSteer;
 
-    // カウンターステア補助：リアが流れた向きへ自動で少しだけ舵を当てます。
-    // 「勝手に曲がる」のではなく「滑ったぶんを戻す」だけなので、
-    // 自分で操作している感覚は残したまま、立て直しが効くようになります。
-    if (this.assist && !this.isAI && v > 6) {
-      const beta = Math.atan2(this.vy, v);          // 車体のスリップ角（＋が左）
-      const counter = clamp(beta * 0.85, -0.30, 0.30);
-      target = clamp(target + counter * (inp.handbrake > 0.5 ? 0.25 : 0.6), -0.62, 0.62);
+    if (this.assist && !this.isAI) {
+      // --- カウンターステア補助：リアが流れた向きへ自動で少しだけ舵を当てます。
+      // 「勝手に曲がる」のではなく「滑ったぶんを戻す」だけです。
+      // 補助が出せる量は、プレイヤー自身の最大舵角＋一定量までに抑えます
+      // （抑えないと、限界まで絞った人間の舵の何倍もの角度を補助が勝手に出せてしまう）。
+      const bound = maxSteer + 0.22;
+      if (v > 6) {
+        const beta = Math.atan2(this.vy, v);        // 車体のスリップ角（＋が左）
+        const counter = clamp(beta * 0.85, -0.30, 0.30);
+        target = clamp(target + counter * (inp.handbrake > 0.5 ? 0.25 : 0.6), -bound, bound);
+      }
+
+      // --- 直進復帰補助：舵を戻しているあいだ、道の向きへ穏やかに戻します。
+      //
+      // 実車と同じく、舵を中立に戻しても車は変わった向きのまま走り続けます。
+      // 物理としては正しいのですが、道の上を走るゲームでは
+      // 「一度曲がると曲がりっぱなしで、戻すのに毎回当て舵が要る」体感になります。
+      // 実測では 80km/h で1秒切っただけで方位が20度変わり、
+      // 手を離したあとも横へ流れ続けていました。
+      //
+      // そこで、舵を入れていないときに限り、道の向きとのズレを埋める方向へ
+      // 補助を入れます。出せる量は人間の最大舵角までに抑えるので、
+      // 自分で曲げているあいだは一切邪魔をしません。
+      //
+      // AI が運転しているとき（メニューのデモ）は掛けません。AI は自分で
+      // 道への角度を計算して舵を出しているので、二重に当てると乱れます。
+      if (!this.autoSteer && v > 8 && Math.abs(inp.steer) < 0.08 && this.roadHeading !== undefined) {
+        const err = wrapAngle(this.roadHeading - this.heading);
+        const gain = clamp(0.9 / (1 + v * 0.02), 0.22, 0.9);
+        target = clamp(target + clamp(err * gain, -maxSteer, maxSteer), -bound, bound);
+      }
     }
     // 速いほど舵の入りをゆっくりに（据わりを出すため）
     const rate = this.isAI ? 9.0 : 10.0 - clamp(v / 11, 0, 5.5);
@@ -2450,6 +2476,7 @@ class Vehicle {
   /** 路面の高さ・傾きに車体を合わせます。 */
   snapToRoad(track) {
     const sm = track.sample(this.s, this._sm);
+    this.roadHeading = sm.heading;   // 直進復帰補助が参照します
     const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u);
     this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);
     return sm;
