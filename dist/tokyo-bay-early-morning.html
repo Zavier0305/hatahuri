@@ -1643,14 +1643,17 @@ function bodyMaterial(color, metal = 0.18) {
   });
 }
 
+// ガラスは金属ではありません。metalness を上げると映り込みがガラスの色に
+// 染まってしまいます。不透明度も 0.88 では中がほぼ見えないので、内装が
+// うっすら透ける程度まで下げます。
 const glassMaterial = () =>
   new THREE.MeshStandardMaterial({
-    color: 0x070a0e,
-    metalness: 0.12,
-    roughness: 0.04,
-    envMapIntensity: 1.6,
+    color: 0x0a0e14,
+    metalness: 0.0,
+    roughness: 0.05,
+    envMapIntensity: 1.7,
     transparent: true,
-    opacity: 0.88,
+    opacity: 0.74,
   });
 
 const rubberMaterial = () =>
@@ -1696,14 +1699,30 @@ function lampGlow(color, size, opacity = 0.55) {
 
 // ---------------------------------------------------------------- ホイール
 
-function buildWheel(radius, width, rimColor = 0x8f959e) {
+/**
+ * @param {boolean} simple スポークとローターを省いた簡易版。
+ *   一般車は1輪8メッシュ（タイヤ・リム・スポーク5本・ローター）で作られており、
+ *   4輪で32メッシュ、交通量ぶんを合わせると描画コールの大半を占めていました
+ *   （渋滞コースで一般車だけ3366コール）。走行中スポークは見えないので、
+ *   一般車は2メッシュで済ませます。
+ */
+function buildWheel(radius, width, rimColor = 0x8f959e, simple = false) {
   const g = new THREE.Group();
   const tire = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius, radius, width, 24, 1, false),
+    new THREE.CylinderGeometry(radius, radius, width, simple ? 12 : 24, 1, false),
     rubberMaterial()
   );
   tire.rotation.z = Math.PI / 2;
   g.add(tire);
+  if (simple) {
+    const rim = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius * 0.66, radius * 0.66, width * 1.02, 10),
+      new THREE.MeshStandardMaterial({ color: rimColor, metalness: 0.9, roughness: 0.45 })
+    );
+    rim.rotation.z = Math.PI / 2;
+    g.add(rim);
+    return g;
+  }
 
   const rim = new THREE.Mesh(
     new THREE.CylinderGeometry(radius * 0.68, radius * 0.68, width * 1.01, 20),
@@ -1941,6 +1960,80 @@ function buildCar(spec, opts = {}) {
     wheels.push({ pivot, spin, front, side: sx });
   }
 
+  // ---- 室内
+  // ガラスの中が空洞だったため、キャビンが「黒い塊」に見えていました。
+  // 夜でも、街灯の下やガレージの照明ではシートとダッシュボードの影が
+  // 透けて見えます。ここが入るだけで、模型ではなく車に見えます。
+  {
+    const trim = new THREE.MeshStandardMaterial({
+      color: 0x14161b, metalness: 0.05, roughness: 0.85, envMapIntensity: 0.35,
+    });
+    // キャビンの前後位置は、ガラス断面の t からそのまま求めます
+    const gs = prof.glass;
+    const zFront = (0.5 - gs[0][0]) * D.L;
+    const zBack = (0.5 - gs[gs.length - 1][0]) * D.L;
+    const cabinMid = (zFront + zBack) * 0.5;
+    const floorY = D.H * 0.40;
+
+    const tub = new THREE.Mesh(
+      new THREE.BoxGeometry(D.W * 0.80, 0.05, Math.abs(zFront - zBack) * 0.92), trim);
+    tub.position.set(0, floorY, cabinMid);
+    root.add(tub);
+
+    const dash = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.78, 0.16, 0.30), trim);
+    dash.position.set(0, floorY + 0.13, zFront - 0.22);
+    root.add(dash);
+
+    // 座席（座面と背もたれ）
+    for (const sx of [-1, 1]) {
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.26, 0.09, 0.42), trim);
+      seat.position.set(sx * D.W * 0.20, floorY + 0.09, cabinMid - 0.05);
+      root.add(seat);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.26, 0.46, 0.10), trim);
+      back.position.set(sx * D.W * 0.20, floorY + 0.31, cabinMid - 0.27);
+      back.rotation.x = -0.13;
+      root.add(back);
+    }
+    // ハンドル（右ハンドル）
+    const wheelRim = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 6, 14), trim);
+    wheelRim.position.set(D.W * 0.20, floorY + 0.30, zFront - 0.40);
+    wheelRim.rotation.x = Math.PI * 0.42;
+    root.add(wheelRim);
+  }
+
+  // ---- パネルの合わせ目とナンバープレート
+  // 一体成型に見えていた面を、ドアの合わせ目で割ります。
+  {
+    const seam = new THREE.MeshStandardMaterial({
+      color: 0x0a0c10, metalness: 0.0, roughness: 0.95, envMapIntensity: 0.2,
+    });
+    for (const sx of [-1, 1]) {
+      // ドア前後の合わせ目（2本）
+      for (const zz of [D.L * 0.10, -D.L * 0.16]) {
+        const line = new THREE.Mesh(new THREE.BoxGeometry(0.016, D.H * 0.30, 0.016), seam);
+        line.position.set(sx * (D.W * 0.5 - 0.005), D.H * 0.36, zz);
+        root.add(line);
+      }
+    }
+    // ボンネットとトランクの合わせ目
+    for (const [zz, w] of [[D.L * 0.5 - D.L * 0.30, D.W * 0.74], [-D.L * 0.5 + D.L * 0.14, D.W * 0.70]]) {
+      const line = new THREE.Mesh(new THREE.BoxGeometry(w, 0.014, 0.014), seam);
+      line.position.set(0, D.H * 0.54, zz);
+      root.add(line);
+    }
+    // ナンバープレート（前後）
+    const plateMat = new THREE.MeshStandardMaterial({
+      color: 0xe8e9e4, metalness: 0.0, roughness: 0.6,
+      emissive: 0x2a2c28, emissiveIntensity: 0.6,
+    });
+    for (const [zz, ry] of [[D.L * 0.5 + 0.012, 0], [-D.L * 0.5 - 0.012, Math.PI]]) {
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.33, 0.16, 0.012), plateMat);
+      plate.position.set(0, D.H * 0.24, zz);
+      plate.rotation.y = ry;
+      root.add(plate);
+    }
+  }
+
   // 車高を合わせる（タイヤ半径ぶん持ち上げ済みなので、ボディを少しだけ落とす）
   body.position.y = 0;
   // 路面への映り込み（濡れたアスファルトにテールランプが伸びる表現）
@@ -2037,10 +2130,52 @@ function buildTrafficCar(kind, color, rand) {
       tg.rotation.y = Math.PI;
       root.add(tg);
     }
+    // 箱の側面が完全な無地の板で、至近距離で画面の1/4を占めると
+    // 「白い壁」に見えていました。実物にある要素だけ足します。
+    {
+      const rib = new THREE.MeshStandardMaterial({
+        color: 0xb9bcc2, metalness: 0.35, roughness: 0.6, envMapIntensity: 0.5,
+      });
+      const skirt = new THREE.MeshStandardMaterial({
+        color: 0x2b2e34, metalness: 0.2, roughness: 0.85,
+      });
+      const tape = new THREE.MeshStandardMaterial({
+        color: 0xffb43a, emissive: 0xff9c14, emissiveIntensity: 0.9, roughness: 0.5,
+      });
+      const boxL = L - 3.4;
+      // 側面の補強リブ（等間隔の縦桟）
+      for (const sx of [-1, 1]) {
+        for (let i = -2; i <= 1; i++) {
+          const r = new THREE.Mesh(new THREE.BoxGeometry(0.05, boxH * 0.92, 0.10), rib);
+          r.position.set(sx * (W * 0.5 + 0.02), boxH * 0.5 + 0.85, -1.5 + (i + 0.5) * (boxL / 4.5));
+          root.add(r);
+        }
+        // 下部の泥よけ／スカート
+        const sk = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.55, boxL * 0.82), skirt);
+        sk.position.set(sx * (W * 0.5 - 0.02), 0.62, -1.5);
+        root.add(sk);
+        // 反射テープ（夜はこれが車体の輪郭を示します）
+        const tp = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.10, boxL * 0.86), tape);
+        tp.position.set(sx * (W * 0.5 + 0.03), 1.05, -1.5);
+        root.add(tp);
+      }
+      // 後部：観音扉の合わせ目と、下端の反射テープ
+      const seam = new THREE.Mesh(new THREE.BoxGeometry(0.07, boxH * 0.9, 0.06), skirt);
+      seam.position.set(0, boxH * 0.5 + 0.85, -L * 0.5 + 0.03);
+      root.add(seam);
+      const rearTape = new THREE.Mesh(new THREE.BoxGeometry(W * 0.9, 0.11, 0.05), tape);
+      rearTape.position.set(0, 0.75, -L * 0.5 + 0.02);
+      root.add(rearTape);
+      // 天面の縁（箱の上端が空と溶けないように）
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(W + 0.06, 0.10, boxL + 0.06), rib);
+      cap.position.set(0, boxH + 0.85, -1.5);
+      root.add(cap);
+    }
+
     const wheels = [];
     for (const zz of [L * 0.5 - 1.6, -L * 0.5 + 2.6, -L * 0.5 + 1.3]) {
       for (const sx of [-1, 1]) {
-        const w = buildWheel(0.5, 0.34, 0x50545c);
+        const w = buildWheel(0.5, 0.34, 0x50545c, true);
         w.position.set(sx * (W * 0.5 - 0.16), 0.5, zz);
         root.add(w);
         wheels.push(w);
@@ -2085,7 +2220,7 @@ function buildTrafficCar(kind, color, rand) {
   const wheels = [];
   for (const zz of [L * 0.31, -L * 0.31]) {
     for (const sx of [-1, 1]) {
-      const w = buildWheel(0.31, 0.22, 0x6a6f78);
+      const w = buildWheel(0.31, 0.22, 0x6a6f78, true);
       w.position.set(sx * (W * 0.5 - 0.12), 0.31, zz);
       root.add(w);
       wheels.push(w);
@@ -3355,25 +3490,60 @@ function buildSea(scene) {
 
 // ---------------------------------------------------------------- テクスチャ
 
-const WIN_COLS = 6, WIN_ROWS = 8;   // テクスチャ1枚に入る窓の数
+const WIN_COLS = 8, WIN_ROWS = 12;   // テクスチャ1枚に入る窓の数
+/**
+ * ビルの窓。
+ *
+ * 以前は「1枚1枚を独立に45%の確率で点ける」だけだったので、点いた窓が
+ * 一様に散らばり、遠目にはただのノイズに見えていました。実際のビルは
+ * ・フロア単位で明かりが揃う（残業しているフロア／消えているフロア）
+ * ・階段室や設備の縦のラインだけが点いている
+ * ・機械室の階は窓がない
+ * という構造を持っていて、その規則性こそが「ビルらしさ」になります。
+ */
 function windowTexture(seedNum, cols = WIN_COLS, rows = WIN_ROWS) {
   const cv = document.createElement('canvas');
-  cv.width = 192; cv.height = 256;
+  cv.width = 256; cv.height = 512;
   const g = cv.getContext('2d');
-  g.fillStyle = '#0b0d13';
-  g.fillRect(0, 0, cv.width, cv.height);
   const r = rng(seedNum);
+  g.fillStyle = '#0a0c11';
+  g.fillRect(0, 0, cv.width, cv.height);
+
   const cw = cv.width / cols, ch = cv.height / rows;
-  const tints = ['#ffe6b0', '#d8e6ff', '#fff2cf', '#bcd4ff', '#ffd9a0'];
+  // 建物ごとに照明の色味を決めます（蛍光灯の白／電球色）
+  const warm = r() < 0.55;
+  const tints = warm
+    ? ['#ffe6b0', '#fff2cf', '#ffd9a0', '#ffeccb']
+    : ['#dfeaff', '#cfe0ff', '#eef4ff', '#bcd4ff'];
+
+  // 縦の芯（階段室・エレベーターホール）は上から下までだいたい点いています
+  const coreX = (r() * cols) | 0;
+  // 設備階（窓のない帯）
+  const plantRow = r() < 0.5 ? (1 + r() * (rows - 2)) | 0 : -1;
+
   for (let y = 0; y < rows; y++) {
+    if (y === plantRow) continue;                 // 機械室の階：窓なし
+    const floorLit = r();                         // その階全体の在館率
     for (let x = 0; x < cols; x++) {
-      if (r() < 0.55) continue;
+      const isCore = x === coreX;
+      const on = isCore ? r() < 0.85 : r() < floorLit * 0.85;
+      const px = x * cw, py = y * ch;
+      // 窓わく（サッシ）。これがないと明かりが板に見えます。
+      g.fillStyle = '#141821';
+      g.fillRect(px + cw * 0.14, py + ch * 0.16, cw * 0.72, ch * 0.60);
+      if (!on) continue;
       g.fillStyle = tints[(r() * tints.length) | 0];
-      g.globalAlpha = 0.35 + r() * 0.65;
-      g.fillRect(x * cw + cw * 0.22, y * ch + ch * 0.24, cw * 0.56, ch * 0.44);
+      g.globalAlpha = isCore ? 0.55 : 0.35 + r() * 0.6;
+      g.fillRect(px + cw * 0.20, py + ch * 0.22, cw * 0.60, ch * 0.48);
+      g.globalAlpha = 1;
     }
   }
+  // 各階の床スラブ（横の暗い帯）
+  g.globalAlpha = 0.5;
+  g.fillStyle = '#080a0e';
+  for (let y = 0; y < rows; y++) g.fillRect(0, y * ch + ch * 0.80, cv.width, ch * 0.18);
   g.globalAlpha = 1;
+
   const t = new THREE.CanvasTexture(cv);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
@@ -3796,6 +3966,50 @@ function buildCity(track, scene, seed = 99, density = 0.9) {
   buildGroups(far, 16, 70, 57, 1.05, farMeshes);
   for (const m of nearMeshes) group.add(m);
   for (const m of farMeshes) { m.frustumCulled = false; group.add(m); }
+
+  // ---- 屋上まわり
+  // すべてのビルが「窓のついた直方体」で頭が真っ平らだったため、
+  // 街並みが積み木に見えていました。実際のビルの頭には必ず
+  // パラペット（立ち上がり）があり、その上に塔屋・貯水槽・アンテナが載ります。
+  // 輪郭にこの凹凸が出るだけで、遠景の見え方が大きく変わります。
+  {
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: 0x191d25, roughness: 0.92, metalness: 0.05, envMapIntensity: 0.3,
+    });
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    box.translate(0, 0.5, 0);
+    const rr = rng(seed + 771);
+    const parapets = new THREE.InstancedMesh(box, roofMat, near.length);
+    const huts = new THREE.InstancedMesh(box, roofMat, near.length);
+    const masts = new THREE.InstancedMesh(box, roofMat, near.length);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    const axis = new THREE.Vector3(0, 1, 0);
+    const p = new THREE.Vector3();
+    let np = 0, nh = 0, nm = 0;
+    for (const b of near) {
+      q.setFromAxisAngle(axis, b.rot);
+      // パラペット：本体よりわずかに広く、屋上の縁に立ち上がる
+      p.set(b.p.x, b.p.y + b.h - 0.4, b.p.z);
+      sc.set(b.w * 1.04, 1.5, b.d * 1.04);
+      m.compose(p, q, sc); parapets.setMatrixAt(np++, m);
+      // 塔屋（エレベーター機械室・貯水槽）。屋上の中心から少しずらして置きます
+      if (rr() < 0.8) {
+        const ox = (rr() - 0.5) * b.w * 0.35, oz = (rr() - 0.5) * b.d * 0.35;
+        const ca = Math.cos(b.rot), sa = Math.sin(b.rot);
+        p.set(b.p.x + ox * ca - oz * sa, b.p.y + b.h + 0.6, b.p.z + ox * sa + oz * ca);
+        sc.set(b.w * (0.22 + rr() * 0.16), 2.5 + rr() * 3.5, b.d * (0.22 + rr() * 0.16));
+        m.compose(p, q, sc); huts.setMatrixAt(nh++, m);
+      }
+      // アンテナ／避雷針
+      if (rr() < 0.45) {
+        p.set(b.p.x, b.p.y + b.h + 1.0, b.p.z);
+        sc.set(0.35, 5 + rr() * 9, 0.35);
+        m.compose(p, q, sc); masts.setMatrixAt(nm++, m);
+      }
+    }
+    parapets.count = np; huts.count = nh; masts.count = nm;
+    for (const im of [parapets, huts, masts]) { im.instanceMatrix.needsUpdate = true; group.add(im); }
+  }
 
   // 航空障害灯（赤い点滅）
   const redG = new THREE.SphereGeometry(2.6, 6, 6);
@@ -6039,15 +6253,54 @@ function initPreview() {
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.45;
   const scene = new THREE.Scene();
+  // 塗装は「映り込むもの」があって初めて金属らしく見えます。ここには環境が
+  // 無かったため、灯りを2倍にしても絵が変わりませんでした。
+  //
+  // 走行シーン側の環境マップをそのまま借りることはできません。テクスチャは
+  // それを作った WebGL コンテキストに紐づいていて、プレビューは別の
+  // レンダラー＝別コンテキストだからです（実際、代入しても何も変わりません
+  // でした）。ここのレンダラーで焼き直します。
+  //
+  // 中身は夜空ではなくスタジオにします。ガレージは屋内で、天井に照明が
+  // 並んでいる場所です。夜空を映しても暗いままで、実際に灯りを2倍にしても
+  // 環境マップを差し替えても絵はほとんど変わりませんでした。
+  scene.environment = (() => {
+    const env = new THREE.Scene();
+    const panel = (w, h, x, y, z, rx, ry, c, i) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
+      m.position.set(x, y, z); m.rotation.set(rx, ry, 0);
+      m.material.color.multiplyScalar(i);
+      env.add(m);
+    };
+    // 天井のライトバー（横長の面を2枚）と、左右からの弱い返し
+    panel(9, 2.2, 0, 5.0, 1.2, Math.PI / 2, 0, 0xffffff, 1.0);
+    panel(9, 1.6, 0, 5.0, -2.2, Math.PI / 2, 0, 0xfff0dc, 0.75);
+    panel(6, 4, -5.5, 1.6, 0, 0, Math.PI / 2, 0x9fc4ff, 0.30);
+    panel(6, 4, 5.5, 1.6, 0, 0, -Math.PI / 2, 0xffd9b0, 0.22);
+    // 床と背景は暗く（車の輪郭を出すため）
+    panel(24, 24, 0, -0.6, 0, -Math.PI / 2, 0, 0x0b0f18, 1.0);
+    const back = new THREE.Mesh(new THREE.SphereGeometry(30, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0x0d1119, side: THREE.BackSide }));
+    env.add(back);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    const rt = pmrem.fromScene(env, 0.02);
+    pmrem.dispose();
+    return rt.texture;
+  })();
   const camera = new THREE.PerspectiveCamera(34, 2, 0.1, 100);
-  scene.add(new THREE.HemisphereLight(0x7f96bc, 0x0a0e16, 1.0));
+  // 造形を見るための場所なので、走行中より明るく起こします。
+  // 以前は走行シーンと同じ暗さで、ドアの合わせ目も内装も読めませんでした。
+  scene.add(new THREE.HemisphereLight(0x8ea6cc, 0x11151c, 1.9));
   // 夜明けの配色に合わせた三点照明（暖色のキー、冷たいリム、東の空からの弱いフィル）
-  const key = new THREE.DirectionalLight(0xffe6c8, 1.25);
+  const key = new THREE.DirectionalLight(0xffe6c8, 2.4);
   key.position.set(4, 6, 5); scene.add(key);
-  const rim = new THREE.DirectionalLight(0x7fd4ff, 1.7);
+  const rim = new THREE.DirectionalLight(0x7fd4ff, 2.6);
   rim.position.set(-5, 3, -6); scene.add(rim);
-  const fill = new THREE.DirectionalLight(0xff9a52, 0.85);
+  const fill = new THREE.DirectionalLight(0xff9a52, 1.3);
   fill.position.set(3, 1.0, -5); scene.add(fill);
   // 床は中心から外へ消えるように。単色の円板だと縁が出て「板の上の模型」に見えます。
   const floorTex = (() => {
@@ -6073,6 +6326,18 @@ function initPreview() {
   scene.add(floor);
   const holder = new THREE.Group();
   scene.add(holder);
+  // 接地影。これがないと車が床から浮いて「模型を宙に置いた」ように見えます。
+  const contact = new THREE.Mesh(
+    new THREE.CircleGeometry(2.6, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false, map: floorTex,
+    })
+  );
+  contact.rotation.x = -Math.PI / 2;
+  contact.position.y = 0.006;
+  contact.scale.set(1.0, 1.0, 1.45);   // 車は前後に長いので楕円に
+  contact.renderOrder = 1;
+  holder.add(contact);
   preview = { renderer, scene, camera, holder, angle: 0.6, car: null };
 }
 
@@ -6095,9 +6360,11 @@ function renderPreview() {
   }
   preview.angle += 0.0055;
   preview.holder.rotation.y = preview.angle;
-  const r = 6.5;
-  preview.camera.position.set(Math.sin(0.95) * r, 1.95, Math.cos(0.95) * r);
-  preview.camera.lookAt(0, 0.62, 0);
+  // プレビューの枠は横長なので、距離を詰めないと車が小さくしか写りません。
+  // 画面の横幅に対して車が7割ほどを占める位置まで寄せます。
+  const r = 5.0;
+  preview.camera.position.set(Math.sin(0.95) * r, 1.55, Math.cos(0.95) * r);
+  preview.camera.lookAt(0, 0.52, 0);
   preview.renderer.render(preview.scene, preview.camera);
 }
 

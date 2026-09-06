@@ -156,25 +156,60 @@ export function buildSea(scene) {
 
 // ---------------------------------------------------------------- テクスチャ
 
-const WIN_COLS = 6, WIN_ROWS = 8;   // テクスチャ1枚に入る窓の数
+const WIN_COLS = 8, WIN_ROWS = 12;   // テクスチャ1枚に入る窓の数
+/**
+ * ビルの窓。
+ *
+ * 以前は「1枚1枚を独立に45%の確率で点ける」だけだったので、点いた窓が
+ * 一様に散らばり、遠目にはただのノイズに見えていました。実際のビルは
+ * ・フロア単位で明かりが揃う（残業しているフロア／消えているフロア）
+ * ・階段室や設備の縦のラインだけが点いている
+ * ・機械室の階は窓がない
+ * という構造を持っていて、その規則性こそが「ビルらしさ」になります。
+ */
 function windowTexture(seedNum, cols = WIN_COLS, rows = WIN_ROWS) {
   const cv = document.createElement('canvas');
-  cv.width = 192; cv.height = 256;
+  cv.width = 256; cv.height = 512;
   const g = cv.getContext('2d');
-  g.fillStyle = '#0b0d13';
-  g.fillRect(0, 0, cv.width, cv.height);
   const r = rng(seedNum);
+  g.fillStyle = '#0a0c11';
+  g.fillRect(0, 0, cv.width, cv.height);
+
   const cw = cv.width / cols, ch = cv.height / rows;
-  const tints = ['#ffe6b0', '#d8e6ff', '#fff2cf', '#bcd4ff', '#ffd9a0'];
+  // 建物ごとに照明の色味を決めます（蛍光灯の白／電球色）
+  const warm = r() < 0.55;
+  const tints = warm
+    ? ['#ffe6b0', '#fff2cf', '#ffd9a0', '#ffeccb']
+    : ['#dfeaff', '#cfe0ff', '#eef4ff', '#bcd4ff'];
+
+  // 縦の芯（階段室・エレベーターホール）は上から下までだいたい点いています
+  const coreX = (r() * cols) | 0;
+  // 設備階（窓のない帯）
+  const plantRow = r() < 0.5 ? (1 + r() * (rows - 2)) | 0 : -1;
+
   for (let y = 0; y < rows; y++) {
+    if (y === plantRow) continue;                 // 機械室の階：窓なし
+    const floorLit = r();                         // その階全体の在館率
     for (let x = 0; x < cols; x++) {
-      if (r() < 0.55) continue;
+      const isCore = x === coreX;
+      const on = isCore ? r() < 0.85 : r() < floorLit * 0.85;
+      const px = x * cw, py = y * ch;
+      // 窓わく（サッシ）。これがないと明かりが板に見えます。
+      g.fillStyle = '#141821';
+      g.fillRect(px + cw * 0.14, py + ch * 0.16, cw * 0.72, ch * 0.60);
+      if (!on) continue;
       g.fillStyle = tints[(r() * tints.length) | 0];
-      g.globalAlpha = 0.35 + r() * 0.65;
-      g.fillRect(x * cw + cw * 0.22, y * ch + ch * 0.24, cw * 0.56, ch * 0.44);
+      g.globalAlpha = isCore ? 0.55 : 0.35 + r() * 0.6;
+      g.fillRect(px + cw * 0.20, py + ch * 0.22, cw * 0.60, ch * 0.48);
+      g.globalAlpha = 1;
     }
   }
+  // 各階の床スラブ（横の暗い帯）
+  g.globalAlpha = 0.5;
+  g.fillStyle = '#080a0e';
+  for (let y = 0; y < rows; y++) g.fillRect(0, y * ch + ch * 0.80, cv.width, ch * 0.18);
   g.globalAlpha = 1;
+
   const t = new THREE.CanvasTexture(cv);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
@@ -597,6 +632,50 @@ export function buildCity(track, scene, seed = 99, density = 0.9) {
   buildGroups(far, 16, 70, 57, 1.05, farMeshes);
   for (const m of nearMeshes) group.add(m);
   for (const m of farMeshes) { m.frustumCulled = false; group.add(m); }
+
+  // ---- 屋上まわり
+  // すべてのビルが「窓のついた直方体」で頭が真っ平らだったため、
+  // 街並みが積み木に見えていました。実際のビルの頭には必ず
+  // パラペット（立ち上がり）があり、その上に塔屋・貯水槽・アンテナが載ります。
+  // 輪郭にこの凹凸が出るだけで、遠景の見え方が大きく変わります。
+  {
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: 0x191d25, roughness: 0.92, metalness: 0.05, envMapIntensity: 0.3,
+    });
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    box.translate(0, 0.5, 0);
+    const rr = rng(seed + 771);
+    const parapets = new THREE.InstancedMesh(box, roofMat, near.length);
+    const huts = new THREE.InstancedMesh(box, roofMat, near.length);
+    const masts = new THREE.InstancedMesh(box, roofMat, near.length);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    const axis = new THREE.Vector3(0, 1, 0);
+    const p = new THREE.Vector3();
+    let np = 0, nh = 0, nm = 0;
+    for (const b of near) {
+      q.setFromAxisAngle(axis, b.rot);
+      // パラペット：本体よりわずかに広く、屋上の縁に立ち上がる
+      p.set(b.p.x, b.p.y + b.h - 0.4, b.p.z);
+      sc.set(b.w * 1.04, 1.5, b.d * 1.04);
+      m.compose(p, q, sc); parapets.setMatrixAt(np++, m);
+      // 塔屋（エレベーター機械室・貯水槽）。屋上の中心から少しずらして置きます
+      if (rr() < 0.8) {
+        const ox = (rr() - 0.5) * b.w * 0.35, oz = (rr() - 0.5) * b.d * 0.35;
+        const ca = Math.cos(b.rot), sa = Math.sin(b.rot);
+        p.set(b.p.x + ox * ca - oz * sa, b.p.y + b.h + 0.6, b.p.z + ox * sa + oz * ca);
+        sc.set(b.w * (0.22 + rr() * 0.16), 2.5 + rr() * 3.5, b.d * (0.22 + rr() * 0.16));
+        m.compose(p, q, sc); huts.setMatrixAt(nh++, m);
+      }
+      // アンテナ／避雷針
+      if (rr() < 0.45) {
+        p.set(b.p.x, b.p.y + b.h + 1.0, b.p.z);
+        sc.set(0.35, 5 + rr() * 9, 0.35);
+        m.compose(p, q, sc); masts.setMatrixAt(nm++, m);
+      }
+    }
+    parapets.count = np; huts.count = nh; masts.count = nm;
+    for (const im of [parapets, huts, masts]) { im.instanceMatrix.needsUpdate = true; group.add(im); }
+  }
 
   // 航空障害灯（赤い点滅）
   const redG = new THREE.SphereGeometry(2.6, 6, 6);

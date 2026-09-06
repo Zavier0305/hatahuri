@@ -129,15 +129,54 @@ function initPreview() {
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.45;
   const scene = new THREE.Scene();
+  // 塗装は「映り込むもの」があって初めて金属らしく見えます。ここには環境が
+  // 無かったため、灯りを2倍にしても絵が変わりませんでした。
+  //
+  // 走行シーン側の環境マップをそのまま借りることはできません。テクスチャは
+  // それを作った WebGL コンテキストに紐づいていて、プレビューは別の
+  // レンダラー＝別コンテキストだからです（実際、代入しても何も変わりません
+  // でした）。ここのレンダラーで焼き直します。
+  //
+  // 中身は夜空ではなくスタジオにします。ガレージは屋内で、天井に照明が
+  // 並んでいる場所です。夜空を映しても暗いままで、実際に灯りを2倍にしても
+  // 環境マップを差し替えても絵はほとんど変わりませんでした。
+  scene.environment = (() => {
+    const env = new THREE.Scene();
+    const panel = (w, h, x, y, z, rx, ry, c, i) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+        new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
+      m.position.set(x, y, z); m.rotation.set(rx, ry, 0);
+      m.material.color.multiplyScalar(i);
+      env.add(m);
+    };
+    // 天井のライトバー（横長の面を2枚）と、左右からの弱い返し
+    panel(9, 2.2, 0, 5.0, 1.2, Math.PI / 2, 0, 0xffffff, 1.0);
+    panel(9, 1.6, 0, 5.0, -2.2, Math.PI / 2, 0, 0xfff0dc, 0.75);
+    panel(6, 4, -5.5, 1.6, 0, 0, Math.PI / 2, 0x9fc4ff, 0.30);
+    panel(6, 4, 5.5, 1.6, 0, 0, -Math.PI / 2, 0xffd9b0, 0.22);
+    // 床と背景は暗く（車の輪郭を出すため）
+    panel(24, 24, 0, -0.6, 0, -Math.PI / 2, 0, 0x0b0f18, 1.0);
+    const back = new THREE.Mesh(new THREE.SphereGeometry(30, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0x0d1119, side: THREE.BackSide }));
+    env.add(back);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    const rt = pmrem.fromScene(env, 0.02);
+    pmrem.dispose();
+    return rt.texture;
+  })();
   const camera = new THREE.PerspectiveCamera(34, 2, 0.1, 100);
-  scene.add(new THREE.HemisphereLight(0x7f96bc, 0x0a0e16, 1.0));
+  // 造形を見るための場所なので、走行中より明るく起こします。
+  // 以前は走行シーンと同じ暗さで、ドアの合わせ目も内装も読めませんでした。
+  scene.add(new THREE.HemisphereLight(0x8ea6cc, 0x11151c, 1.9));
   // 夜明けの配色に合わせた三点照明（暖色のキー、冷たいリム、東の空からの弱いフィル）
-  const key = new THREE.DirectionalLight(0xffe6c8, 1.25);
+  const key = new THREE.DirectionalLight(0xffe6c8, 2.4);
   key.position.set(4, 6, 5); scene.add(key);
-  const rim = new THREE.DirectionalLight(0x7fd4ff, 1.7);
+  const rim = new THREE.DirectionalLight(0x7fd4ff, 2.6);
   rim.position.set(-5, 3, -6); scene.add(rim);
-  const fill = new THREE.DirectionalLight(0xff9a52, 0.85);
+  const fill = new THREE.DirectionalLight(0xff9a52, 1.3);
   fill.position.set(3, 1.0, -5); scene.add(fill);
   // 床は中心から外へ消えるように。単色の円板だと縁が出て「板の上の模型」に見えます。
   const floorTex = (() => {
@@ -163,6 +202,18 @@ function initPreview() {
   scene.add(floor);
   const holder = new THREE.Group();
   scene.add(holder);
+  // 接地影。これがないと車が床から浮いて「模型を宙に置いた」ように見えます。
+  const contact = new THREE.Mesh(
+    new THREE.CircleGeometry(2.6, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false, map: floorTex,
+    })
+  );
+  contact.rotation.x = -Math.PI / 2;
+  contact.position.y = 0.006;
+  contact.scale.set(1.0, 1.0, 1.45);   // 車は前後に長いので楕円に
+  contact.renderOrder = 1;
+  holder.add(contact);
   preview = { renderer, scene, camera, holder, angle: 0.6, car: null };
 }
 
@@ -185,9 +236,11 @@ function renderPreview() {
   }
   preview.angle += 0.0055;
   preview.holder.rotation.y = preview.angle;
-  const r = 6.5;
-  preview.camera.position.set(Math.sin(0.95) * r, 1.95, Math.cos(0.95) * r);
-  preview.camera.lookAt(0, 0.62, 0);
+  // プレビューの枠は横長なので、距離を詰めないと車が小さくしか写りません。
+  // 画面の横幅に対して車が7割ほどを占める位置まで寄せます。
+  const r = 5.0;
+  preview.camera.position.set(Math.sin(0.95) * r, 1.55, Math.cos(0.95) * r);
+  preview.camera.lookAt(0, 0.52, 0);
   preview.renderer.render(preview.scene, preview.camera);
 }
 
