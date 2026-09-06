@@ -580,6 +580,14 @@ export class Game {
     }
 
     // --- 物理
+    // 補助が「どこへ戻すか」を決めます。いま自分がいる場所にいちばん近い車線の中心。
+    // 元いた車線へ引き戻すのではなく近いほうへ寄せるので、車線変更の邪魔になりません。
+    let lane = LANE_U[0];
+    for (const u of LANE_U) if (Math.abs(pv.u - u) < Math.abs(pv.u - lane)) lane = u;
+    // 追越車線の中心(-2.9)ちょうどに寄せると中央分離帯まで1mしかなく、
+    // わずかな振れで擦り続けます。分離帯側だけ余裕を持たせます（AI と同じ扱い）。
+    pv.laneU = clamp(lane, -10.6, -3.4);
+
     pv.update(dt, { wet: this.wet });
     const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
     if (wallHit > 1.5) {

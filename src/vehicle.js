@@ -72,6 +72,7 @@ export class Vehicle {
     this.autoSteer = false;  // AI が代わりに運転しているか（デモ走行）
     this.roadHeading = undefined;  // いま走っている場所の道の向き
     this.roadCurv = 0;             // そこの曲率（直進復帰補助の減衰項が使います）
+    this.laneU = undefined;        // 戻る先の車線中心（game.js が毎フレーム入れます）
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -200,7 +201,20 @@ export class Vehicle {
         const err = wrapAngle(this.roadHeading - this.heading);
         const wantYaw = v * (this.roadCurv || 0);
         const kp = clamp(2.2 / (1 + v * 0.02), 0.85, 2.2);
-        const help = err * kp + (wantYaw - this.yawRate) * 0.35;
+
+        // --- 横位置の復帰（車線維持）
+        // 向きだけ直しても、横へズレた位置はそのままです（実車も同じ）。
+        // ここでは「車線の中心から何m外れているか」を、それを埋めるのに
+        // ちょうどよい進入角へ変換して足します（Stanley 制御と同じ考え方）。
+        // 速いほど角度が浅くなるので、高速で急に寄せて破綻することがありません。
+        let cross = 0;
+        if (this.laneU !== undefined) {
+          // ＋なら車線中心より右。舵は＋が左なので、そのまま足せば戻る向きです。
+          const off = clamp(this.u - this.laneU, -8, 8);
+          cross = clamp(Math.atan2(off * 1.0, Math.max(12, v)), -0.30, 0.30) * 0.9;
+        }
+
+        const help = err * kp + cross + (wantYaw - this.yawRate) * 0.35;
         // 補助が出せる量は人間の最大舵角の2倍まで。
         // 「曲げる」のではなく「戻す」方向にしか働かないので、
         // ここは人間の舵より広く取らないと、高速では戻りきりません。
