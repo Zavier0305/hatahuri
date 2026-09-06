@@ -133,6 +133,9 @@ export class AudioEngine {
   setEnabled(on) {
     this.enabled = on;
     if (this.master) this.master.gain.setTargetAtTime(on ? 0.55 : 0, this.ctx.currentTime, 0.08);
+    // 音を切ると game 側は audio を渡さなくなるので、鳴りっぱなしを避けるために
+    // ここで止めます（マスターを絞るだけでは発振器は動いたままです）。
+    if (!on) this.siren(null);
   }
 
   /** 毎フレーム、車の状態から音を作ります。 */
@@ -200,6 +203,46 @@ export class AudioEngine {
     g.gain.value = clamp(power, 0, 1) * 0.5;
     src.connect(f); f.connect(g); g.connect(this.master);
     src.start();
+  }
+
+  /**
+   * パトカーのサイレン。2音を交互に鳴らします。
+   * 音量は距離で決めるので、近づいてくるのが音だけでも分かります。
+   * 追われていない間は発振器を止めておきます（常時鳴らすと重い）。
+   */
+  siren(st) {
+    if (!this.ready) return;
+    const want = (this.enabled && st && st.chasing)
+      ? clamp(1 - st.near / 260, 0, 1) * 0.10 : 0;
+    if (want <= 0.001) {
+      if (this._siren) {
+        this._siren.osc.stop();
+        this._siren.osc.disconnect();
+        this._siren.gain.disconnect();
+        this._siren = null;
+      }
+      return;
+    }
+    const ctx = this.ctx;
+    if (!this._siren) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = 900;
+      f.Q.value = 2.0;
+      osc.connect(f); f.connect(g); g.connect(this.master);
+      osc.start();
+      this._siren = { osc, gain: g, t: 0 };
+    }
+    const s2 = this._siren;
+    const t = ctx.currentTime;
+    // 0.62秒ごとに高低を切り替え（日本のパトカーの「ウーウー」に近い間隔）
+    const hi = Math.floor(t / 0.62) % 2 === 0;
+    s2.osc.frequency.setTargetAtTime(hi ? 860 : 640, t, 0.05);
+    s2.gain.gain.setTargetAtTime(want, t, 0.10);
   }
 
   /** カウントダウンやメニュー用の短い電子音 */

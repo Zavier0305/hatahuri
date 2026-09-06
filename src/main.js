@@ -784,6 +784,24 @@ function onGameEvent(type, payload) {
     audio.beep(payload.by === 'player' ? 1180 : 420, 0.12, 0.12);
   }
   if (type === 'danger') document.getElementById('hud').classList.toggle('danger', payload);
+  // --- 高速隊
+  if (type === 'wanted') {
+    if (payload.level > payload.was) {
+      hud.message('WANTED', payload.level === 1 ? '高速隊が来た' : `手配度 ${payload.level}`, 1800);
+      audio.beep(payload.level >= 3 ? 340 : 420, 0.22, 0.16);
+    } else if (payload.level === 0) {
+      hud.message('振り切った', '', 1500);
+      audio.beep(880, 0.14, 0.12);
+    } else {
+      hud.message(`手配度 ${payload.level}`, '1台まいた', 1300);
+    }
+  }
+  if (type === 'busted') {
+    data.money = Math.max(0, data.money - payload.fine);
+    save(data);
+    hud.message('BUSTED', `罰金 ¥${formatMoney(payload.fine)}`, 2600);
+    audio.beep(220, 0.4, 0.18);
+  }
   if (type === 'finish') {
     setTimeout(() => showResult(payload.result, payload.state), 900);
     hud.message(payload.result === 'win' ? 'WIN' : payload.result === 'abort' ? 'GIVE UP' : 'LOSE', '', 2000);

@@ -84,6 +84,22 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 @keyframes pop{from{transform:scale(.68);opacity:0}to{transform:scale(1);opacity:1}}
 #hud-sub{margin-top:8px;font-size:15px;color:var(--dim);letter-spacing:.12em}
 
+/* 手配度。ミニマップの下に出します */
+#hud-wanted{position:absolute;right:20px;top:262px;width:152px;text-align:right}
+.wt-stars{display:flex;gap:5px;justify-content:flex-end}
+.wt-stars i{
+  width:15px;height:15px;background:rgba(255,255,255,.14);
+  clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);
+  transition:background .18s
+}
+.wt-stars i.on{background:#ff4d4d;box-shadow:0 0 12px rgba(255,77,77,.9)}
+.wt-bar{margin-top:6px;height:3px;background:rgba(255,255,255,.14)}
+.wt-bar span{display:block;height:100%;width:0;background:#ff9a52}
+.wt-bar.evade span{background:#5ff0ff}
+.wt-bar.bust span{background:#ff2a2a}
+.wt-note{margin-top:5px;font-size:11px;letter-spacing:.1em;color:var(--dim)}
+#hud-wanted.chase .wt-note{color:#ff8f8f}
+
 /* パーキングエリアでできること。ポインタも通すのでタッチでも押せます */
 #hud-prompt{
   position:absolute;left:50%;bottom:19%;transform:translateX(-50%);
@@ -543,6 +559,13 @@ kbd{
     <div id="hud-sub"></div>
   </div>
 
+  <!-- 手配度。星の数だけパトカーが追ってきます -->
+  <div id="hud-wanted" style="display:none">
+    <div class="wt-stars"><i></i><i></i><i></i></div>
+    <div class="wt-bar"><span></span></div>
+    <div class="wt-note"></div>
+  </div>
+
   <!-- パーキングエリアでできること。タッチでも押せるようボタンにしています -->
   <button id="hud-prompt" style="display:none">
     <kbd>F</kbd><b></b><i></i>
@@ -589,6 +612,7 @@ kbd{
         <li><kbd>C</kbd> カメラ切替　<kbd>Esc</kbd> ポーズ</li>
         <li>前車の40m以内はスリップストリームで伸びる</li>
         <li>出口から降りるとPA。停まって <kbd>F</kbd> で勝負／整備</li>
+        <li>飛ばしすぎると高速隊が来る。PAへ逃げ込めば巻ける</li>
       </ul>
       <span class="fh-close">何かキーを押すと消えます</span>
     </div>
@@ -738,6 +762,13 @@ kbd{
           <p>レッドゾーン手前でシフトアップ。コーナーはブレーキで前に荷重をかけてから曲げる。
           前車の40m以内に入るとスリップストリームが効き、空気抵抗が約4割減ります。
           追越車線には一般車が出てこないので、全開で使えます。</p>
+          <b>高速隊</b>
+          <p>フリーラン中だけ、140km/h を大きく超えて走りつづけると手配度が上がり、
+          星の数だけパトカーが追ってきます。ぶつける・壁を擦るのも見咎められます。
+          <b>速度超過をやめない限り振り切れません。</b>
+          速度を落とすか、インターで降りてPAへ逃げ込んでください（パトカーは本線から出られません）。
+          真後ろに付かれて止まると連行され、罰金を取られます。</p>
+
           <b>インターで降りる</b>
           <p>出口の標識が出たら左へ寄る。ランプを下りた先はパーキングエリアで、自由に走り回れます。
           走り屋が停まっているので、真横につけて <kbd>F</kbd> でその場で勝負。
@@ -5112,6 +5143,307 @@ class RivalAI {
 }
 
 
+// ============================== src/police.js ==============================
+
+/**
+ * 高速隊（パトカー）と手配度。
+ *
+ * フリーランに「やってはいけないこと」を作るための仕組みです。
+ * 速く走りつづける・ぶつける・壁を擦る、で手配度が上がり、上がった数だけ
+ * パトカーが後ろから追ってきます。振り切れば下がり、捕まれば罰金です。
+ *
+ * パトカーは本線しか走れません（AIはランプへ降りない）。そのため
+ * 「パーキングエリアへ逃げ込むと巻ける」という遊びが、特別な処理を書かなくても
+ * そのまま成立します。
+ */
+
+/** これを超えた速度で走りつづけると手配度が上がります[km/h] */
+const LIMIT_KMH = 140;
+const MAX_LEVEL = 3;
+
+/** 手配度ごとのパトカーの仕様。上の階級ほど速い個体が出ます。 */
+// 最上位は、フルチューンの自車と同じ最高速まで持たせています。
+// ここを控えめにすると、仕上がった車では手配度3でも一切怖くありません。
+const UNIT = [
+  null,
+  { count: 1, tune: { power: 2, weight: 1, tire: 2, aero: 1, gear: 1, turbo: 2 }, skill: 0.84 },
+  { count: 2, tune: { power: 3, weight: 2, tire: 3, aero: 2, gear: 3, turbo: 3 }, skill: 0.89 },
+  { count: 3, tune: { power: 5, weight: 4, tire: 5, aero: 4, gear: 5, turbo: 5 }, skill: 0.95 },
+];
+
+/**
+ * 屋根の赤色灯と、車体の塗り分け。
+ * 白いだけでは、遠目には一般車と見分けがつきません。
+ * 日本の高速隊と同じ「上が白・下が黒」にして、屋根に赤色灯を載せます。
+ */
+function liveryAndBar(spec) {
+  const g = new THREE.Group();
+  const D = spec.dims;
+  const dark = new THREE.MeshStandardMaterial({ color: 0x0d1015, roughness: 0.55, metalness: 0.2 });
+  // 下半分の黒。ボディよりわずかに外へ出して、面が重なってちらつくのを防ぎます
+  const skirt = new THREE.Mesh(new THREE.BoxGeometry(D.W * 1.005, D.H * 0.30, D.L * 0.86), dark);
+  skirt.position.y = D.H * 0.17;
+  g.add(skirt);
+
+  const bar = new THREE.Group();
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(D.W * 0.66, 0.09, 0.30),
+    new THREE.MeshStandardMaterial({ color: 0x14171c, roughness: 0.7, metalness: 0.2 })
+  );
+  base.position.y = 0.045;
+  bar.add(base);
+  const lamps = [];
+  for (const [dx, col] of [[-1, 0xff2a2a], [1, 0x2a6bff]]) {
+    const m = new THREE.MeshStandardMaterial({
+      color: col, emissive: col, emissiveIntensity: 0.2, roughness: 0.35,
+    });
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(D.W * 0.30, 0.15, 0.28), m);
+    lamp.position.set(dx * D.W * 0.17, 0.17, 0);
+    bar.add(lamp);
+    lamps.push(m);
+  }
+  bar.position.set(0, D.H * 0.86, -0.15);
+  g.add(bar);
+  return { group: g, lamps };
+}
+
+/**
+ * 路面へ落ちる赤青の光。
+ * 実際の光源を車ごとに足すと、全マテリアルのシェーダが重くなります。
+ * 路面に落ちた光の板だけで、夜の見え方はほぼ同じになります。
+ */
+function flashPool(color) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(11, 18),
+    new THREE.MeshBasicMaterial({
+      // 縁がぼけていないと、路面に色板が置いてあるようにしか見えません
+      map: softDot(0.10), color, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.renderOrder = 2;
+  return m;
+}
+
+class Police {
+  constructor(scene, track, opts = {}) {
+    this.scene = scene;
+    this.track = track;
+    this.onEvent = opts.onEvent || (() => {});
+    this.enabled = false;
+    this.wet = false;
+    this.heat = 0;        // 0..MAX_LEVEL。整数部が手配度
+    this.units = [];
+    this.evade = 0;       // 振り切っている時間[s]
+    this.bust = 0;        // 捕まりかけている時間[s]
+    this.blink = 0;
+    this.crashCd = 0;     // 追突で手配度を上げたあとの待ち時間[s]
+    this._sm = {};
+  }
+
+  get level() { return Math.min(MAX_LEVEL, Math.floor(this.heat)); }
+  get active() { return this.units.length > 0; }
+
+  setTrack(track) {
+    this.track = track;
+    this.clear();
+  }
+
+  /** 全部片付けて手配度も0に戻します。 */
+  clear() {
+    for (const u of this.units) {
+      u.actor.dispose(this.scene);
+      this.scene.remove(u.flashA);
+      this.scene.remove(u.flashB);
+      u.flashA.geometry.dispose(); u.flashA.material.dispose();
+      u.flashB.geometry.dispose(); u.flashB.material.dispose();
+    }
+    this.units = [];
+    this.heat = 0;
+    this.evade = 0;
+    this.bust = 0;
+  }
+
+  /** 自車の後方に1台出します。 */
+  spawn(player) {
+    const cfg = UNIT[Math.max(1, this.level)];
+    const spec = CAR_BY_ID.bnr34;
+    const actor = new Actor(spec, cfg.tune, this.scene, {
+      isAI: true, color: 0xeef1f5, name: 'POLICE',
+    });
+    actor.vehicle.name = '高速隊';
+    const bar = liveryAndBar(spec);
+    actor.mesh.add(bar.group);
+
+    const ai = new RivalAI(actor.vehicle, this.track, {
+      skill: cfg.skill, aggression: 0.9,
+      // 追う側なので、離されるほど強く詰めます。
+      // 通常のライバル(0.10)のままだと、チューンした自車には一生追いつけません。
+      rubber: 0.42,
+    });
+    ai.gripScale = this.wet ? 0.80 : 1;
+
+    // 後ろから、車線をずらして出します
+    const back = 190 + Math.random() * 90;
+    const lane = LANE_U[this.units.length % LANE_U.length];
+    const s0 = player.vehicle.s - back;
+    actor.vehicle.placeOnTrack(this.track, s0, lane);
+    actor.vehicle.vx = Math.max(45, Math.abs(player.vehicle.vx) * 0.95);
+    actor.vehicle.gear = 5;
+
+    const flashA = flashPool(0xff2a2a);
+    const flashB = flashPool(0x2a6bff);
+    this.scene.add(flashA); this.scene.add(flashB);
+
+    const u = { actor, ai, lamps: bar.lamps, flashA, flashB };
+    this.units.push(u);
+    return u;
+  }
+
+  /** 手配度に見合う台数へ増減させます。 */
+  fleet(player) {
+    const want = this.level > 0 ? UNIT[this.level].count : 0;
+    while (this.units.length < want) this.spawn(player);
+    while (this.units.length > want) {
+      const u = this.units.pop();
+      u.actor.dispose(this.scene);
+      this.scene.remove(u.flashA); this.scene.remove(u.flashB);
+      u.flashA.geometry.dispose(); u.flashA.material.dispose();
+      u.flashB.geometry.dispose(); u.flashB.material.dispose();
+    }
+  }
+
+  /** 一番近いパトカーとの距離[m]（見つからなければ Infinity） */
+  nearest(v) {
+    const L = this.track.length;
+    let best = Infinity;
+    for (const u of this.units) {
+      let d = u.actor.vehicle.s - v.s;
+      if (d > L / 2) d -= L;
+      if (d < -L / 2) d += L;
+      best = Math.min(best, Math.abs(d));
+    }
+    return best;
+  }
+
+  /**
+   * 壁ずりで手配度を上げます。接触しているあいだ毎フレーム呼ばれるので、
+   * 「時間あたり」で積みます。1回ぶんとして積むと、壁に沿って数秒こするだけで
+   * 手配度が最大になりました（実際になりました）。
+   */
+  scrape(dt, severity) {
+    if (!this.enabled) return;
+    this.heat = clamp(this.heat + clamp(severity / 26, 0.05, 0.5) * 0.22 * dt, 0, MAX_LEVEL + 0.999);
+  }
+
+  /**
+   * 追突で手配度を上げます。こちらは1回ぶん。
+   * めり込んでいるあいだは毎フレーム検出されるので、間隔を空けます。
+   */
+  impact(severity) {
+    if (!this.enabled || this.crashCd > 0) return;
+    this.crashCd = 1.6;
+    this.heat = clamp(this.heat + clamp(severity * 0.35, 0.05, 0.30), 0, MAX_LEVEL + 0.999);
+  }
+
+  /**
+   * @param dt        経過時間
+   * @param player    自車の Actor
+   * @param obstacles AI に渡す障害物リスト
+   */
+  update(dt, player, obstacles) {
+    const v = player.vehicle;
+    if (!this.enabled) {
+      if (this.units.length) this.clear();
+      return;
+    }
+    const before = this.level;
+    this.crashCd = Math.max(0, this.crashCd - dt);
+
+    // --- 手配度の増減
+    // 速度超過は「超えているあいだ、超えたぶんだけ」積み上がります。
+    const over = clamp((v.speedKmh - LIMIT_KMH) / 140, 0, 1);
+    if (over > 0) this.heat = Math.min(MAX_LEVEL + 0.999, this.heat + over * 0.085 * dt);
+
+    // 振り切り判定。
+    // 速度超過を続けているあいだは、どれだけ離しても振り切ったことになりません。
+    // ここを見ないと、速い車では「離す→冷める」が延々と繰り返され、手配度が
+    // 2以上に上がらないままでした（追われている実感がまるで出ませんでした）。
+    // つまり逃げ切るには「速度を落とす」か「ランプへ降りる」しかありません。
+    // ランプへ降りればパトカーは付いてこられません（AIは本線から出ないため）。
+    const near = this.nearest(v);
+    this._near = near;
+    const away = over <= 0.001 && (near > 300 || v.onRamp);
+    if (this.level > 0 && away) {
+      this.evade += dt * (v.onRamp ? 2.4 : 1);
+      if (this.evade > 9) {
+        this.evade = 0;
+        this.heat = Math.max(0, Math.floor(this.heat) - 1 + 0.99);
+        if (this.level === 0) this.heat = 0;
+      }
+    } else {
+      this.evade = Math.max(0, this.evade - dt * 2);
+    }
+
+    // 捕まる判定。真後ろに付かれて速度を落とすと連行されます
+    if (this.level > 0 && near < 16 && v.speedKmh < 45) {
+      this.bust += dt;
+      if (this.bust > 2.5) {
+        const lv = this.level;
+        this.bust = 0;
+        this.heat = 0;
+        this.onEvent('busted', { level: lv, fine: 80000 * lv });
+      }
+    } else {
+      this.bust = Math.max(0, this.bust - dt * 1.5);
+    }
+
+    this.fleet(player);
+    if (this.level !== before) this.onEvent('wanted', { level: this.level, was: before });
+
+    // --- 走らせる
+    const L = this.track.length;
+    this.blink += dt;
+    const on = (this.blink * 4.4) % 2 < 1;   // 赤と青が交互
+    for (const u of this.units) {
+      const pv2 = u.actor.vehicle;
+      let gap = v.s - pv2.s;
+      if (gap > L / 2) gap -= L;
+      if (gap < -L / 2) gap += L;
+      u.ai.update(dt, obstacles, gap);
+      pv2.update(dt, { wet: this.wet });
+      pv2.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
+      pv2.snapToRoad(this.track);
+      u.actor.wet = this.wet;
+      u.actor.syncMesh(this.track);
+
+      // 赤色灯
+      u.lamps[0].emissiveIntensity = on ? 9.0 : 0.12;
+      u.lamps[1].emissiveIntensity = on ? 0.12 : 9.0;
+      const sm = this.track.sample(pv2.s, this._sm);
+      for (const [mesh, lit] of [[u.flashA, on], [u.flashB, !on]]) {
+        mesh.position.copy(sm.pos).addScaledVector(sm.lat, pv2.u).addScaledVector(sm.up, 0.05);
+        mesh.material.opacity = lit ? 0.55 : 0.05;
+      }
+    }
+  }
+
+  /** HUD・音へ渡す状態 */
+  state() {
+    if (!this.enabled) return null;
+    return {
+      level: this.level,
+      heat: this.heat - Math.floor(this.heat),
+      chasing: this.units.length > 0,
+      near: this._near === undefined ? Infinity : this._near,
+      evade: this.level > 0 ? clamp(this.evade / 9, 0, 1) : 0,
+      bust: clamp(this.bust / 2.5, 0, 1),
+    };
+  }
+}
+
+
 // ============================== src/traffic.js ==============================
 
 const COLORS = [0xd8dade, 0x1b1d22, 0x5a6068, 0x2a3a5a, 0x8f9298, 0x30425c, 0xbfc3c8, 0x6b3f2a];
@@ -5387,6 +5719,9 @@ class AudioEngine {
   setEnabled(on) {
     this.enabled = on;
     if (this.master) this.master.gain.setTargetAtTime(on ? 0.55 : 0, this.ctx.currentTime, 0.08);
+    // 音を切ると game 側は audio を渡さなくなるので、鳴りっぱなしを避けるために
+    // ここで止めます（マスターを絞るだけでは発振器は動いたままです）。
+    if (!on) this.siren(null);
   }
 
   /** 毎フレーム、車の状態から音を作ります。 */
@@ -5454,6 +5789,46 @@ class AudioEngine {
     g.gain.value = clamp(power, 0, 1) * 0.5;
     src.connect(f); f.connect(g); g.connect(this.master);
     src.start();
+  }
+
+  /**
+   * パトカーのサイレン。2音を交互に鳴らします。
+   * 音量は距離で決めるので、近づいてくるのが音だけでも分かります。
+   * 追われていない間は発振器を止めておきます（常時鳴らすと重い）。
+   */
+  siren(st) {
+    if (!this.ready) return;
+    const want = (this.enabled && st && st.chasing)
+      ? clamp(1 - st.near / 260, 0, 1) * 0.10 : 0;
+    if (want <= 0.001) {
+      if (this._siren) {
+        this._siren.osc.stop();
+        this._siren.osc.disconnect();
+        this._siren.gain.disconnect();
+        this._siren = null;
+      }
+      return;
+    }
+    const ctx = this.ctx;
+    if (!this._siren) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = 900;
+      f.Q.value = 2.0;
+      osc.connect(f); f.connect(g); g.connect(this.master);
+      osc.start();
+      this._siren = { osc, gain: g, t: 0 };
+    }
+    const s2 = this._siren;
+    const t = ctx.currentTime;
+    // 0.62秒ごとに高低を切り替え（日本のパトカーの「ウーウー」に近い間隔）
+    const hi = Math.floor(t / 0.62) % 2 === 0;
+    s2.osc.frequency.setTargetAtTime(hi ? 860 : 640, t, 0.05);
+    s2.gain.gain.setTargetAtTime(want, t, 0.10);
   }
 
   /** カウントダウンやメニュー用の短い電子音 */
@@ -5607,6 +5982,11 @@ class HUD {
       sub: root.querySelector('#hud-sub'),
       zone: root.querySelector('#hud-zone'),
       money: root.querySelector('#hud-money'),
+      wanted: root.querySelector('#hud-wanted'),
+      wantedStars: Array.from(root.querySelectorAll('#hud-wanted .wt-stars i')),
+      wantedBar: root.querySelector('#hud-wanted .wt-bar'),
+      wantedFill: root.querySelector('#hud-wanted .wt-bar span'),
+      wantedNote: root.querySelector('#hud-wanted .wt-note'),
       prompt: root.querySelector('#hud-prompt'),
       promptLabel: root.querySelector('#hud-prompt b'),
       promptSub: root.querySelector('#hud-prompt i'),
@@ -5818,6 +6198,33 @@ class HUD {
     this.el.gap.className = ahead ? 'ahead' : 'behind';
   }
 
+  /**
+   * 手配度。
+   * 星の数＝追ってくるパトカーの台数。下のバーは、追われていないときは
+   * 「次の星までの溜まり具合」、追われているときは「振り切りまで」または
+   * 「捕まるまで」を出します。何が起きているのか分からないまま
+   * 手配度だけ上がるのを避けるためです。
+   */
+  setWanted(p) {
+    const el = this.el.wanted;
+    if (!el) return;
+    if (!p || (p.level === 0 && p.heat < 0.02)) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    for (let i = 0; i < this.el.wantedStars.length; i++) {
+      this.el.wantedStars[i].classList.toggle('on', i < p.level);
+    }
+    const bar = this.el.wantedBar;
+    bar.classList.remove('evade', 'bust');
+    let w = p.heat, note = '';
+    if (p.bust > 0.02) { bar.classList.add('bust'); w = p.bust; note = '停止命令'; }
+    else if (p.evade > 0.02) { bar.classList.add('evade'); w = p.evade; note = '振り切り中'; }
+    else if (p.chasing) note = '追跡中';
+    else if (p.heat > 0.02) note = '速度超過';
+    this.el.wantedFill.style.width = `${clamp(w, 0, 1) * 100}%`;
+    this.el.wantedNote.textContent = note;
+    el.classList.toggle('chase', !!p.chasing);
+  }
+
   /** パーキングエリアでできること（近づいたときだけ出します） */
   setPrompt(p) {
     const el = this.el.prompt;
@@ -5857,6 +6264,7 @@ class HUD {
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
     if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
     this.setPrompt(st.prompt);
+    this.setWanted(st.police);
     if (this.el.money) this.el.money.textContent = `¥${formatMoney(st.money || 0)}`;
     if (this.msgTimer > 0) {
       this.msgTimer -= dt;
@@ -6114,6 +6522,8 @@ class Game {
     this.player = null;
     this.rival = null;
     this.rivalAI = null;
+    // 高速隊。フリーラン中だけ有効にします
+    this.police = new Police(this.scene, null, { onEvent: (t, p) => this.onEvent(t, p) });
     this.demo = false;        // メニュー背景の自動走行
     this.autoAI = null;
     this.mode = 'idle';
@@ -6175,6 +6585,7 @@ class Game {
     // このコースのパーキングエリア。たむろしている車を置く場所です
     this.setPaRacers(null);
     this.paSpots = paSpots(this.track);
+    if (this.police) { this.police.setTrack(this.track); this.police.wet = !!course.wet; }
 
     // 天候。濡れた路面はグリップが落ち、映り込みが強くなります。
     // 海も高さ -2m 固定でした。路面がそれより低くなる区間では海が路面を
@@ -6436,6 +6847,11 @@ class Game {
     }
     this.traffic.density = opts.traffic ?? 1;
     this.paPrompt = null;
+    // 高速隊はフリーランだけ。バトルやタイムアタックに割り込ませると
+    // 勝負にならず、記録も意味がなくなります。
+    this.police.clear();
+    this.police.enabled = (kind === 'free');
+    this.paPrompt = null;
     this.mode = this.state.countdown > 0 ? 'countdown' : 'racing';
     if (opts.camMode !== undefined) this.userCamMode = opts.camMode;
     this.camMode = this.userCamMode;
@@ -6546,10 +6962,11 @@ class Game {
     return 0;
   }
 
-  /** 自車とライバルの接触。こちらも押し出し＋運動量保存で解きます。 */
-  collideCars() {
-    if (!this.rival) return;
-    const a = this.player.vehicle, b = this.rival.vehicle;
+  /** 自車ともう1台の接触。こちらも押し出し＋運動量保存で解きます。 */
+  collideCars(other) {
+    const b = other || (this.rival && this.rival.vehicle);
+    if (!b) return;
+    const a = this.player.vehicle;
     const L = this.track.length;
     let ds = a.s - b.s;
     if (ds > L / 2) ds -= L;
@@ -6740,6 +7157,7 @@ class Game {
     pv.update(dt, { wet: this.wet });
     const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
     if (wallHit > 1.5) {
+      this.police.scrape(dt, wallHit);
       this.emitSparks(pv, 14);
       this.shake = Math.max(this.shake, clamp(wallHit / 12, 0.1, 0.9));
       audio && audio.crash(clamp(wallHit / 14, 0.2, 1));
@@ -6749,6 +7167,8 @@ class Game {
     if (crash > 0) {
       audio && audio.crash(crash);
       this.onEvent('crash', crash);
+      // 一般車にぶつければ、それだけで見咎められます
+      this.police.impact(crash);
     }
 
     if (this.rival) {
@@ -6758,6 +7178,15 @@ class Game {
       rv.snapToRoad(this.track);
       this.collideTraffic(this.rival);
       this.collideCars();
+    }
+
+    // --- 高速隊
+    if (this.mode === 'racing') {
+      this.police.update(dt, this.player, this.buildObstacles(pv));
+      for (const u of this.police.units) {
+        this.collideTraffic(u.actor);
+        this.collideCars(u.actor.vehicle);
+      }
     }
 
     this.traffic.update(dt, pv.s, pv.u);
@@ -6829,6 +7258,7 @@ class Game {
     this.player.wet = this.wet;
     this.player.syncMesh(this.track);
     if (this.rival) { this.rival.wet = this.wet; this.rival.syncMesh(this.track); }
+    audio && audio.siren(this.police.state());
     audio && audio.update(pv, dt, {
       inside: CAM_MODES[this.camMode].id === 'hood',
       tunnel: this.track.isTunnel(pv.s),
@@ -7074,6 +7504,7 @@ class Game {
       // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
       // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
       prompt: this.paPrompt,
+      police: this.police.state(),
       battle: this.kind === 'battle' && this.rival && !this.state.finished
         ? { life: this.state.life, rivalLife: this.state.rivalLife, gap: this.state.gap }
         : null,
@@ -7866,6 +8297,24 @@ function onGameEvent(type, payload) {
     audio.beep(payload.by === 'player' ? 1180 : 420, 0.12, 0.12);
   }
   if (type === 'danger') document.getElementById('hud').classList.toggle('danger', payload);
+  // --- 高速隊
+  if (type === 'wanted') {
+    if (payload.level > payload.was) {
+      hud.message('WANTED', payload.level === 1 ? '高速隊が来た' : `手配度 ${payload.level}`, 1800);
+      audio.beep(payload.level >= 3 ? 340 : 420, 0.22, 0.16);
+    } else if (payload.level === 0) {
+      hud.message('振り切った', '', 1500);
+      audio.beep(880, 0.14, 0.12);
+    } else {
+      hud.message(`手配度 ${payload.level}`, '1台まいた', 1300);
+    }
+  }
+  if (type === 'busted') {
+    data.money = Math.max(0, data.money - payload.fine);
+    save(data);
+    hud.message('BUSTED', `罰金 ¥${formatMoney(payload.fine)}`, 2600);
+    audio.beep(220, 0.4, 0.18);
+  }
   if (type === 'finish') {
     setTimeout(() => showResult(payload.result, payload.state), 900);
     hud.message(payload.result === 'win' ? 'WIN' : payload.result === 'abort' ? 'GIVE UP' : 'LOSE', '', 2000);

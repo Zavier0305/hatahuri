@@ -22,6 +22,11 @@ export class HUD {
       sub: root.querySelector('#hud-sub'),
       zone: root.querySelector('#hud-zone'),
       money: root.querySelector('#hud-money'),
+      wanted: root.querySelector('#hud-wanted'),
+      wantedStars: Array.from(root.querySelectorAll('#hud-wanted .wt-stars i')),
+      wantedBar: root.querySelector('#hud-wanted .wt-bar'),
+      wantedFill: root.querySelector('#hud-wanted .wt-bar span'),
+      wantedNote: root.querySelector('#hud-wanted .wt-note'),
       prompt: root.querySelector('#hud-prompt'),
       promptLabel: root.querySelector('#hud-prompt b'),
       promptSub: root.querySelector('#hud-prompt i'),
@@ -233,6 +238,33 @@ export class HUD {
     this.el.gap.className = ahead ? 'ahead' : 'behind';
   }
 
+  /**
+   * 手配度。
+   * 星の数＝追ってくるパトカーの台数。下のバーは、追われていないときは
+   * 「次の星までの溜まり具合」、追われているときは「振り切りまで」または
+   * 「捕まるまで」を出します。何が起きているのか分からないまま
+   * 手配度だけ上がるのを避けるためです。
+   */
+  setWanted(p) {
+    const el = this.el.wanted;
+    if (!el) return;
+    if (!p || (p.level === 0 && p.heat < 0.02)) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    for (let i = 0; i < this.el.wantedStars.length; i++) {
+      this.el.wantedStars[i].classList.toggle('on', i < p.level);
+    }
+    const bar = this.el.wantedBar;
+    bar.classList.remove('evade', 'bust');
+    let w = p.heat, note = '';
+    if (p.bust > 0.02) { bar.classList.add('bust'); w = p.bust; note = '停止命令'; }
+    else if (p.evade > 0.02) { bar.classList.add('evade'); w = p.evade; note = '振り切り中'; }
+    else if (p.chasing) note = '追跡中';
+    else if (p.heat > 0.02) note = '速度超過';
+    this.el.wantedFill.style.width = `${clamp(w, 0, 1) * 100}%`;
+    this.el.wantedNote.textContent = note;
+    el.classList.toggle('chase', !!p.chasing);
+  }
+
   /** パーキングエリアでできること（近づいたときだけ出します） */
   setPrompt(p) {
     const el = this.el.prompt;
@@ -272,6 +304,7 @@ export class HUD {
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
     if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
     this.setPrompt(st.prompt);
+    this.setWanted(st.police);
     if (this.el.money) this.el.money.textContent = `¥${formatMoney(st.money || 0)}`;
     if (this.msgTimer > 0) {
       this.msgTimer -= dt;

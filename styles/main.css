@@ -78,6 +78,22 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 @keyframes pop{from{transform:scale(.68);opacity:0}to{transform:scale(1);opacity:1}}
 #hud-sub{margin-top:8px;font-size:15px;color:var(--dim);letter-spacing:.12em}
 
+/* 手配度。ミニマップの下に出します */
+#hud-wanted{position:absolute;right:20px;top:262px;width:152px;text-align:right}
+.wt-stars{display:flex;gap:5px;justify-content:flex-end}
+.wt-stars i{
+  width:15px;height:15px;background:rgba(255,255,255,.14);
+  clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);
+  transition:background .18s
+}
+.wt-stars i.on{background:#ff4d4d;box-shadow:0 0 12px rgba(255,77,77,.9)}
+.wt-bar{margin-top:6px;height:3px;background:rgba(255,255,255,.14)}
+.wt-bar span{display:block;height:100%;width:0;background:#ff9a52}
+.wt-bar.evade span{background:#5ff0ff}
+.wt-bar.bust span{background:#ff2a2a}
+.wt-note{margin-top:5px;font-size:11px;letter-spacing:.1em;color:var(--dim)}
+#hud-wanted.chase .wt-note{color:#ff8f8f}
+
 /* パーキングエリアでできること。ポインタも通すのでタッチでも押せます */
 #hud-prompt{
   position:absolute;left:50%;bottom:19%;transform:translateX(-50%);

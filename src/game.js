@@ -10,6 +10,7 @@ import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSi
 import { slipstreamFactor } from './vehicle.js';
 import { RivalAI } from './ai.js';
 import { Traffic } from './traffic.js';
+import { Police } from './police.js';
 import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
@@ -127,6 +128,8 @@ export class Game {
     this.player = null;
     this.rival = null;
     this.rivalAI = null;
+    // 高速隊。フリーラン中だけ有効にします
+    this.police = new Police(this.scene, null, { onEvent: (t, p) => this.onEvent(t, p) });
     this.demo = false;        // メニュー背景の自動走行
     this.autoAI = null;
     this.mode = 'idle';
@@ -188,6 +191,7 @@ export class Game {
     // このコースのパーキングエリア。たむろしている車を置く場所です
     this.setPaRacers(null);
     this.paSpots = paSpots(this.track);
+    if (this.police) { this.police.setTrack(this.track); this.police.wet = !!course.wet; }
 
     // 天候。濡れた路面はグリップが落ち、映り込みが強くなります。
     // 海も高さ -2m 固定でした。路面がそれより低くなる区間では海が路面を
@@ -449,6 +453,11 @@ export class Game {
     }
     this.traffic.density = opts.traffic ?? 1;
     this.paPrompt = null;
+    // 高速隊はフリーランだけ。バトルやタイムアタックに割り込ませると
+    // 勝負にならず、記録も意味がなくなります。
+    this.police.clear();
+    this.police.enabled = (kind === 'free');
+    this.paPrompt = null;
     this.mode = this.state.countdown > 0 ? 'countdown' : 'racing';
     if (opts.camMode !== undefined) this.userCamMode = opts.camMode;
     this.camMode = this.userCamMode;
@@ -559,10 +568,11 @@ export class Game {
     return 0;
   }
 
-  /** 自車とライバルの接触。こちらも押し出し＋運動量保存で解きます。 */
-  collideCars() {
-    if (!this.rival) return;
-    const a = this.player.vehicle, b = this.rival.vehicle;
+  /** 自車ともう1台の接触。こちらも押し出し＋運動量保存で解きます。 */
+  collideCars(other) {
+    const b = other || (this.rival && this.rival.vehicle);
+    if (!b) return;
+    const a = this.player.vehicle;
     const L = this.track.length;
     let ds = a.s - b.s;
     if (ds > L / 2) ds -= L;
@@ -753,6 +763,7 @@ export class Game {
     pv.update(dt, { wet: this.wet });
     const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
     if (wallHit > 1.5) {
+      this.police.scrape(dt, wallHit);
       this.emitSparks(pv, 14);
       this.shake = Math.max(this.shake, clamp(wallHit / 12, 0.1, 0.9));
       audio && audio.crash(clamp(wallHit / 14, 0.2, 1));
@@ -762,6 +773,8 @@ export class Game {
     if (crash > 0) {
       audio && audio.crash(crash);
       this.onEvent('crash', crash);
+      // 一般車にぶつければ、それだけで見咎められます
+      this.police.impact(crash);
     }
 
     if (this.rival) {
@@ -771,6 +784,15 @@ export class Game {
       rv.snapToRoad(this.track);
       this.collideTraffic(this.rival);
       this.collideCars();
+    }
+
+    // --- 高速隊
+    if (this.mode === 'racing') {
+      this.police.update(dt, this.player, this.buildObstacles(pv));
+      for (const u of this.police.units) {
+        this.collideTraffic(u.actor);
+        this.collideCars(u.actor.vehicle);
+      }
     }
 
     this.traffic.update(dt, pv.s, pv.u);
@@ -842,6 +864,7 @@ export class Game {
     this.player.wet = this.wet;
     this.player.syncMesh(this.track);
     if (this.rival) { this.rival.wet = this.wet; this.rival.syncMesh(this.track); }
+    audio && audio.siren(this.police.state());
     audio && audio.update(pv, dt, {
       inside: CAM_MODES[this.camMode].id === 'hood',
       tunnel: this.track.isTunnel(pv.s),
@@ -1087,6 +1110,7 @@ export class Game {
       // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
       // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
       prompt: this.paPrompt,
+      police: this.police.state(),
       battle: this.kind === 'battle' && this.rival && !this.state.finished
         ? { life: this.state.life, rivalLife: this.state.rivalLife, gap: this.state.gap }
         : null,
