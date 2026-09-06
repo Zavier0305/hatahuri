@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rng, clamp, lerp, TAU } from './util.js';
-import { ROAD, RAMP } from './track.js';
+import { ROAD, RAMP, rampHeightAtU } from './track.js';
 
 // ---------------------------------------------------------------- 空と海
 
@@ -604,6 +604,34 @@ export function buildCity(track, scene, seed = 99, density = 0.9) {
   const r = rng(seed);
   const isClear = trackClearance(track);
   const ground = cityGroundY(track);
+  // ランプと広場の上にビルが生えないようにします。本線からの距離しか見て
+  // いないと、外へ張り出した広場（本線から約58m）と重なります。
+  const rampPts = [];
+  {
+    const eps = track.exitPoints || [];
+    const sm2 = {};
+    for (const ep of eps) {
+      if (!ep) continue;
+      for (let d = 0; d <= RAMP.span; d += 16) {
+        const rr = track.rampAt(ep.s - RAMP.lead + d);
+        if (!rr) continue;
+        track.sample(ep.s - RAMP.lead + d, sm2);
+        const mid = (rr.outerU + rr.innerU) * 0.5;
+        rampPts.push({
+          x: sm2.pos.x + sm2.lat.x * mid, z: sm2.pos.z + sm2.lat.z * mid,
+          r: Math.abs(rr.outerU - rr.innerU) * 0.5 + 26,
+        });
+      }
+    }
+  }
+  const clearOfRamp = (x, z, extra) => {
+    for (const p of rampPts) {
+      const dx = x - p.x, dz = z - p.z;
+      const need = p.r + extra;
+      if (dx * dx + dz * dz < need * need) return false;
+    }
+    return true;
+  };
   const group = new THREE.Group();
   const near = [];   // 沿道のビル
   const far = [];    // 遠景のスカイライン
@@ -627,6 +655,7 @@ export function buildCity(track, scene, seed = 99, density = 0.9) {
       p.y = ground(s);
       // コース本体（他の区間も含む）に被る位置には建てない
       if (!isClear(p.x, p.z, ROAD.halfRoad + 10 + Math.hypot(w, d) * 0.5)) continue;
+      if (!clearOfRamp(p.x, p.z, Math.hypot(w, d) * 0.5)) continue;
       near.push({ p, w, h, d, rot: r() * TAU });
     }
   }
@@ -642,6 +671,7 @@ export function buildCity(track, scene, seed = 99, density = 0.9) {
     const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
     // 遠景のビルもコースの真上に来ることがあるので同じ判定を通す
     if (!isClear(x, z, ROAD.halfRoad + 14 + Math.hypot(w, d) * 0.5)) continue;
+    if (!clearOfRamp(x, z, Math.hypot(w, d) * 0.5)) continue;
     far.push({ p: new THREE.Vector3(x, groundY, z), w, h, d, rot: r() * TAU });
   }
 
@@ -866,10 +896,19 @@ export function buildSigns(track, scene) {
   const sm = {}, basis = new THREE.Matrix4(), q = new THREE.Quaternion();
   const back = new THREE.Vector3();
   const L = track.length;
-  const exits = (track.course && track.course.exits && track.course.exits.length)
-    ? track.course.exits : [['出口', 'Exit']];
+  // 標識を出すのは、実際にランプがある出口だけです。
+  // 走れる形にならなかった出口にも看板を立てると、
+  // 「出口の看板だけあって降りる道が無い」という元の状態に戻ってしまいます。
+  const all = (track.course && track.course.exits) || [];
+  const eps = track.exitPoints || [];
+  const exits = [], exitS = [];
+  for (let i = 0; i < all.length; i++) {
+    if (!eps[i]) continue;
+    if (track.zoneAt(eps[i].s) === 'tunnel') continue;
+    exits.push(all[i]); exitS.push(eps[i].s);
+  }
+  if (!exits.length) { scene.add(group); return group; }
   const n = exits.length;
-  const exitS = exits.map((_, i) => (L * (i + 0.5)) / n);
   const dist = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 100) * 100} m`);
 
   const board = (parent, rows, kind, w, h, y) => {
@@ -959,8 +998,10 @@ export function buildRamps(track, scene) {
   const sm = {};
   const STEPS = 64;
 
+  const eps = track.exitPoints || [];
   for (let e = 0; e < exits.length; e++) {
-    const es = (L * (e + 0.5)) / exits.length;
+    if (!eps[e]) continue;                 // 走れる形にならなかった出口には作りません
+    const es = eps[e].s;
     if (track.zoneAt(es) === 'tunnel') continue;
 
     // 形は track.rampAt() から取ります。当たり判定と同じ式なので、
@@ -973,7 +1014,7 @@ export function buildRamps(track, scene) {
       track.sample(s2, sm);
       rows.push({
         pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(),
-        outerU: r.outerU, innerU: r.innerU, h: r.h, f: r.f,
+        outerU: r.outerU, innerU: r.innerU, h: r.h, f: r.f, pad: r.pad || 0, r,
         c: sm.pos.clone().addScaledVector(sm.lat, r.u).addScaledVector(sm.up, r.h),
       });
     }
@@ -989,10 +1030,13 @@ export function buildRamps(track, scene) {
         const r = rows[i];
         for (let qq = 0; qq < 2; qq++) {
           const u = qq === 0 ? uOfA(r) : uOfB(r);
+          // 高さは横位置から決めます（当たり判定と同じ式）。
+          // これで分岐部は「本線側が水平・外側だけ下がる」ねじれた面になります。
+          const y = rampHeightAtU(r.r, u) + yOff;
           posA.push(
-            r.pos.x + r.lat.x * u + r.up.x * (r.h + yOff),
-            r.pos.y + r.lat.y * u + r.up.y * (r.h + yOff),
-            r.pos.z + r.lat.z * u + r.up.z * (r.h + yOff)
+            r.pos.x + r.lat.x * u + r.up.x * y,
+            r.pos.y + r.lat.y * u + r.up.y * y,
+            r.pos.z + r.lat.z * u + r.up.z * y
           );
         }
       }
@@ -1017,7 +1061,13 @@ export function buildRamps(track, scene) {
     const EDGE = -(ROAD.halfRoad - 0.35);
     const OUT = (r) => r.outerU;
     const IN = (r) => Math.min(r.innerU, EDGE);
-    strip(OUT, IN, 0, road);                                        // 路面（分岐部は三角に広がる）
+    // 高さの式 rampHeightAtU は「ランプ中心より外は一定」という折れ線です。
+    // 帯の両端だけで面を張ると、折れ点をまたぐ広場で面が実際より高く描かれ、
+    // 車が舗装の下に埋まって見えなくなりました（実際になりました）。
+    // 折れ点（ランプ中心）で分けて張ります。
+    const MIDU = (r) => r.r.u;
+    strip(OUT, MIDU, 0, road);                                      // 中心より外（平ら）
+    strip(MIDU, IN, 0, road);                                       // 中心より内（ねじれる）
     strip(OUT, (r) => r.outerU + 0.18, 0.012, line);                // 外側の白線
     strip((r) => Math.min(r.innerU, EDGE) - 0.18, IN, 0.012, line); // 内側の白線
     strip((r) => r.outerU - 0.30, (r) => r.outerU - 0.30, 0.85, rail, true);
@@ -1053,6 +1103,57 @@ export function buildRamps(track, scene) {
         l.position.set(u, 4.4, 2.4); g3.add(l);
       }
       group.add(g3);
+    }
+
+    // ---- パーキングエリアの設備
+    // 広場だけだと「ただの広い舗装」なので、目印になるものを置きます。
+    {
+      let wide = rows[0], bestPad = -1;
+      for (const rr of rows) if (rr.pad > bestPad) { bestPad = rr.pad; wide = rr; }
+      if (bestPad > 0.5) {
+        const wall = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.85, metalness: 0.05 });
+        const win = new THREE.MeshStandardMaterial({
+          color: 0xffe6b0, emissive: 0xffd48a, emissiveIntensity: 2.2, roughness: 0.5,
+        });
+        const paint = new THREE.MeshStandardMaterial({
+          color: 0xcfd3ca, roughness: 0.75, emissive: 0x24261f, emissiveIntensity: 0.5,
+        });
+        const g4 = new THREE.Group();
+        g4.position.copy(wide.pos);
+        const bs2 = new THREE.Matrix4();
+        bs2.makeBasis(wide.lat, wide.up, new THREE.Vector3().crossVectors(wide.lat, wide.up).negate());
+        g4.quaternion.setFromRotationMatrix(bs2);
+        const outEdge = wide.outerU, inEdge = Math.min(wide.innerU, -(ROAD.halfRoad - 0.35));
+        const midU = (outEdge + inEdge) * 0.5;
+        const y0 = rampHeightAtU(wide.r, midU);
+        // 売店（奥側に置きます）
+        const b = new THREE.Mesh(new THREE.BoxGeometry(16, 4.4, 9), wall);
+        b.position.set(outEdge + 9, y0 + 2.2, 0);
+        g4.add(b);
+        for (const dz of [-2.6, 0, 2.6]) {
+          const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.6, 1.9), win);
+          w2.position.set(outEdge + 9 - 8.1, y0 + 2.3, dz);
+          g4.add(w2);
+        }
+        // 駐車ますの白線
+        for (let k = -4; k <= 4; k++) {
+          const linem = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.02, 0.16), paint);
+          linem.position.set(outEdge + 3.0, y0 + 0.02, k * 2.6);
+          g4.add(linem);
+        }
+        // 照明柱
+        for (const dz of [-16, 16]) {
+          const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 8, 6), wall);
+          pole.position.set(midU - wide.pos.x * 0 , y0 + 4, dz);
+          pole.position.x = midU;
+          g4.add(pole);
+          const head = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.6),
+            new THREE.MeshStandardMaterial({ color: 0xffe7bb, emissive: 0xffd79a, emissiveIntensity: 4.0 }));
+          head.position.set(midU, y0 + 8, dz);
+          g4.add(head);
+        }
+        group.add(g4);
+      }
     }
   }
   scene.add(group);

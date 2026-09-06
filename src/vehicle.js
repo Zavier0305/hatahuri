@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, wrapAngle, RADS_TO_RPM, KMH } from './util.js';
+import { rampHeightAtU } from './track.js';
 
 const G = 9.81;
 const RHO = 1.225;      // 空気密度[kg/m^3]
@@ -410,7 +411,7 @@ export class Vehicle {
       if (this.onRamp) {
         lo = rLo;
         hi = Math.min(hi, rHi);
-        rampH = ramp.h;
+        rampH = rampHeightAtU(ramp, pr.u);
       } else {
         // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
         lo = Math.min(lo, rLo);
@@ -458,7 +459,7 @@ export class Vehicle {
     let hOff = 0;
     if (this.onRamp && track.rampAt) {
       const r = track.rampAt(this.s);
-      if (r) hOff = r.h;
+      if (r) hOff = rampHeightAtU(r, this.u);
     }
     const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u).addScaledVector(sm.up, hOff);
     this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);

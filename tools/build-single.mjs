@@ -11,7 +11,7 @@ const threeBase = process.argv[3] || 'https://cdn.jsdelivr.net/npm/three@0.160.0
 // 依存の順に並べます。新しいモジュールを足したらここにも追加してください
 // （入れ忘れは下の検査で必ず落ちます）。
 const ORDER = [
-  'util', 'courses', 'cars', 'carModel', 'vehicle', 'actors', 'track', 'scenery',
+  'util', 'courses', 'cars', 'carModel', 'track', 'vehicle', 'actors', 'scenery',
   'ai', 'traffic', 'audio', 'input', 'hud', 'story', 'save', 'game', 'main',
 ];
 

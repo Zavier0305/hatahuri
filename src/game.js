@@ -4,7 +4,7 @@ import { RenderPass } from 'three/addons/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/OutputPass.js';
 import { clamp, lerp, damp, formatTime } from './util.js';
-import { createTrack, buildRoad, ROAD, LANE_U } from './track.js';
+import { createTrack, buildRoad, ROAD, LANE_U, rampHeightAtU } from './track.js';
 import { COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildRamps, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
 import { slipstreamFactor } from './vehicle.js';
@@ -791,6 +791,28 @@ export class Game {
       light.intensity = tunnel ? 0 : clamp(1 - d / 60, 0, 1) * 190;
       light.color.setHex(0xffd9a0);
     }
+    // ランプと広場は本線の街灯から40m以上離れて11m下にあるため、真っ暗でした
+    // （実際に、降りると車も白線も見えませんでした）。灯りをランプ沿いに
+    // 置き直します。置いた照明柱は自己発光しているだけで周りを照らしません。
+    if (v.onRamp && this.track.rampAt) {
+      const RSTEP = 40;
+      const rb = Math.round(v.s / RSTEP);
+      for (let k = 0; k < this.lampLights.length; k++) {
+        const light = this.lampLights[k];
+        const ls = (rb + k - 1) * RSTEP;
+        const rr = this.track.rampAt(ls);
+        if (!rr) { light.intensity = 0; continue; }
+        const lsm = this.track.sample(ls, this._tmpB);
+        const mid = (rr.outerU + Math.min(rr.innerU, -(ROAD.halfRoad - 0.35))) * 0.5;
+        light.position.copy(lsm.pos)
+          .addScaledVector(lsm.lat, mid)
+          .addScaledVector(lsm.up, rampHeightAtU(rr, mid) + 8.5);
+        const d = Math.abs(ls - v.s);
+        light.intensity = clamp(1 - d / 55, 0, 1) * 165;
+        light.color.setHex(0xffd9a0);
+      }
+    }
+
     if (tunnel) {
       // トンネルの天井灯は 14m おきに左右へ交互に付いています（scenery.js と同じ間隔）。
       // 以前は「車の真上に1灯」だけを置き続けていたため、天井のその一点だけが
@@ -931,7 +953,7 @@ export class Game {
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
       wet: this.wet,
       zoneText: v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
-        ? `${this.course.name}  ${this.track.rampAt(v.s).name} 出口ランプ  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
+        ? `${this.course.name}  ${this.track.rampAt(v.s).name} ${this.track.rampAt(v.s).pad > 0.35 ? 'パーキングエリア' : '出口ランプ'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
         : `${this.course.name}${this.wet ? '（雨）' : ''}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
     };
   }

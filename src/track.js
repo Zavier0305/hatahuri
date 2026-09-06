@@ -33,11 +33,45 @@ export const ONCOMING_U = [2.9, 6.5, 10.1];
 // span 320 / out 44 では約20度あり、110km/h では曲がりきれずに車が
 // 逆向きになりました（実測で s が減少）。実際のインターの分岐は5〜8度です。
 // span 560 / out 30 で、分岐にかかる距離は約210m、角度は約8度になります。
-export const RAMP = { lead: 160, span: 560, inU: -8.0, out: 30, drop: 11, half: 5.0 };
+export const RAMP = {
+  lead: 160, span: 560, inU: -8.0, out: 30, drop: 11, half: 5.0,
+  // ランプの中間は平らな台地にして、横へ大きく広げます。そこが
+  // パーキングエリア＝自由に走り回れる広場になります。
+  // 広げるのは外側だけ（内側を広げると本線に届いてしまいます）。
+  pad: 20,
+};
 
-/** 0..1 の位置から「どれだけ本線から離れているか」を返します（両端で0）。 */
+/**
+ * ランプ上のある横位置での高さ。
+ * 本線の路肩では0、ランプの中心で r.h、それより外は r.h のまま。
+ * 分岐部のねじれ（本線側は水平、外側だけ下がる）はこれで表せます。
+ * 当たり判定と見た目が同じ式を使うので、床が食い違いません。
+ */
+export function rampHeightAtU(r, u) {
+  const EDGE = -(ROAD.halfRoad - 0.35);
+  if (u >= EDGE) return 0;
+  const span = EDGE - r.u;
+  if (span <= 0.01) return r.h;
+  const k = Math.min(1, Math.max(0, (EDGE - u) / span));
+  return r.h * k;
+}
+
+/**
+ * 0..1 の位置から「どれだけ本線から離れているか」を返します（両端で0）。
+ * 中間を 1 のまま保つ台形にしてあります。その平らな区間が広場になります。
+ */
+const RAMP_RISE = 0.375, RAMP_HOLD = 0.25;
 export function rampProfile(t) {
-  return Math.pow(Math.sin(Math.PI * t), 1.6);
+  if (t <= 0 || t >= 1) return 0;
+  if (t < RAMP_RISE) { const x = t / RAMP_RISE; return x * x * (3 - 2 * x); }
+  if (t < RAMP_RISE + RAMP_HOLD) return 1;
+  const x = (1 - t) / RAMP_RISE;
+  return x * x * (3 - 2 * x);
+}
+/** 平らな区間のどのあたりにいるか（両端0・中央1）。広場の広がり方に使います。 */
+export function rampPad(t) {
+  if (t <= RAMP_RISE || t >= RAMP_RISE + RAMP_HOLD) return 0;
+  return Math.sin(Math.PI * ((t - RAMP_RISE) / RAMP_HOLD));
 }
 const smoothstep01 = (x) => {
   const k = x < 0 ? 0 : x > 1 ? 1 : x;
@@ -211,8 +245,92 @@ export function createTrack(course) {
     else zones.push({ from: 0, to: length, kind: 'bay' });
   }
 
+  // ---- 出口の位置と、そこに作れるランプの大きさ
+  //
+  // 等間隔に置くと曲線の途中に分岐ができます。そのうえ、曲がっている場所で
+  // 横へ大きく振ると、ランプの曲率半径が潰れて走れなくなります
+  // （海ほたるで半径20m・勾配43%になりました。実際のランプは半径100m以上、
+  // 勾配4〜6%です）。
+  //
+  // そこで「いちばん真っ直ぐな場所へ寄せる」→「実際に形を作って半径と勾配を
+  // 測る」→「基準を満たすまで振り幅と落差を縮める」→「それでも駄目なら
+  // その出口にはランプを作らない」という順で決めます。
+  // 走れないものを作らないほうが、無理に作って壊れるより良いという判断です。
+  const exitPoints = [];
+  {
+    const ex = (course.exits && course.exits.length) ? course.exits : [];
+    const gap = ex.length ? length / ex.length : 0;
+    const sampleAt = (x) => {
+      const xx = ((x % length) + length) % length;
+      const i0 = Math.floor(xx / spacing) % n;
+      const i1 = (i0 + 1) % n;
+      const fr = xx / spacing - Math.floor(xx / spacing);
+      const g = (arr, k) => lerp(arr[i0 * 3 + k], arr[i1 * 3 + k], fr);
+      return {
+        px: g(pos, 0), py: g(pos, 1), pz: g(pos, 2),
+        lx: g(lat, 0), ly: g(lat, 1), lz: g(lat, 2),
+        ux: g(up, 0), uy: g(up, 1), uz: g(up, 2),
+      };
+    };
+    // 与えた振り幅・落差でランプを作ったときの、最小半径と最大勾配
+    const measure = (es, out, drop) => {
+      const pts = [];
+      for (let d = 0; d <= RAMP.span; d += 4) {
+        const t = d / RAMP.span;
+        const f = rampProfile(t);
+        const u = RAMP.inU - out * f;
+        const h = -drop * f;
+        const m = sampleAt(es - RAMP.lead + d);
+        pts.push({
+          x: m.px + m.lx * u + m.ux * h,
+          y: m.py + m.ly * u + m.uy * h,
+          z: m.pz + m.lz * u + m.uz * h,
+        });
+      }
+      let minR = Infinity, maxG = 0;
+      for (let i = 1; i < pts.length - 1; i++) {
+        const a = pts[i - 1], b = pts[i], c = pts[i + 1];
+        const h1 = Math.atan2(b.x - a.x, b.z - a.z);
+        const h2 = Math.atan2(c.x - b.x, c.z - b.z);
+        let dh = wrapAngle(h2 - h1);
+        const d1 = Math.hypot(b.x - a.x, b.z - a.z);
+        const d2 = Math.hypot(c.x - b.x, c.z - b.z);
+        const step = (d1 + d2) / 2;
+        if (step > 0.5 && Math.abs(dh) > 1e-7) minR = Math.min(minR, step / Math.abs(dh));
+        if (d1 > 0.5) maxG = Math.max(maxG, Math.abs(b.y - a.y) / d1);
+      }
+      return { minR, maxG };
+    };
+
+    for (let i = 0; i < ex.length; i++) {
+      const base = gap * (i + 0.5);
+      const reach = Math.min(gap * 0.4, 900);
+      // まず、ランプが占める区間がいちばん真っ直ぐな位置を探します
+      let es = base, bestCost = Infinity;
+      for (let d = -reach; d <= reach; d += 20) {
+        const c = base + d;
+        let cost = 0;
+        for (let k = -RAMP.lead; k < RAMP.span - RAMP.lead; k += 20) {
+          const x = ((c + k) % length + length) % length;
+          cost += Math.abs(curvature[Math.floor(x / spacing) % n]);
+        }
+        cost += (Math.abs(d) / reach) * 0.02;
+        if (cost < bestCost) { bestCost = cost; es = c; }
+      }
+      es = ((es % length) + length) % length;
+
+      // 次に、走れる大きさまで縮めます
+      let chosen = null;
+      for (const [out, drop] of [[RAMP.out, RAMP.drop], [22, 8], [15, 5], [10, 3]]) {
+        const m = measure(es, out, drop);
+        if (m.minR >= 95 && m.maxG <= 0.11) { chosen = { s: es, out, drop, minR: m.minR, maxG: m.maxG }; break; }
+      }
+      exitPoints.push(chosen);   // 作れなければ null（その出口にランプは作りません）
+    }
+  }
+
   const track = {
-    curve, length, n, spacing, course,
+    curve, length, n, spacing, course, exitPoints,
     pos, tan, lat, up, curvature, bank, heading, zones, seed: course.seed,
 
     /** 距離 s（m, 0..length）における位置・方向を返します。 */
@@ -279,7 +397,9 @@ export function createTrack(course) {
       if (!ex || !ex.length) return null;
       const x = ((s % length) + length) % length;
       for (let i = 0; i < ex.length; i++) {
-        const es = (length * (i + 0.5)) / ex.length;
+        const ep = exitPoints[i];
+        if (!ep) continue;                            // 走れる形にならなかった出口
+        const es = ep.s;
         if (this.zoneAt(es) === 'tunnel') continue;   // トンネル内には作りません
         let d = x - (es - RAMP.lead);
         if (d < -length / 2) d += length;
@@ -287,19 +407,25 @@ export function createTrack(course) {
         if (d < 0 || d > RAMP.span) continue;
         const t = d / RAMP.span;
         const f = rampProfile(t);
-        const u = RAMP.inU - RAMP.out * f;
+        const u = RAMP.inU - ep.out * f;
         // 分岐部では、ランプの内側の縁を本線の路肩まで広げます。
         // これが実際のインターにある三角形の舗装（ゴア）です。
         // ここが地続きでないと、一瞬のうちに横へ寄り切らないと降りられません
         // （実際、最初の実装では本線の壁に阻まれて一度も降りられませんでした）。
         const gore = f < 0.55;
-        const outerU = u - RAMP.half;
+        // 平らな区間では外側だけを広げて、走り回れる広場にします
+        const pad = rampPad(t);
+        const outerU = u - (RAMP.half + (RAMP.pad - RAMP.half) * pad);
         const innerU = gore
           ? Math.max(u + RAMP.half, -(ROAD.halfRoad - 0.35))
           : u + RAMP.half;
-        // 下り始めるのは、本線と分かれきってから。ゴアの区間は本線と同じ高さです。
-        const h = -RAMP.drop * smoothstep01((f - 0.5) / 0.5);
-        return { index: i, t, f, u, outerU, innerU, h, gore, name: ex[i][0] };
+        // 下りは分岐と同時に始めます。以前は「ゴアの区間は水平に保つ」ために
+        // 下りを後半へ押し込んでいましたが、そのぶん勾配が15〜18%になり
+        // （実際のランプは4〜6%）崖のようになっていました。
+        // 本線側の縁は水平のまま、外側だけがねじれて下がる形にします。
+        // ＝ 高さは「本線からどれだけ外へ出たか」で決まります（rampHeightAtU）。
+        const h = -ep.drop * f;
+        return { index: i, t, f, u, outerU, innerU, h, gore, pad, name: ex[i][0] };
       }
       return null;
     },
