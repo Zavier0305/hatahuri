@@ -235,6 +235,7 @@ export class HUD {
     if (this.el.time) this.el.time.textContent = st.timeText || '';
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
+    if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
     if (this.el.money) this.el.money.textContent = `¥${formatMoney(st.money || 0)}`;
     if (this.msgTimer > 0) {
       this.msgTimer -= dt;

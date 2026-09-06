@@ -76,7 +76,7 @@ export class Game {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-        color: 0xc4d6ec, transparent: true, opacity: 0.30,
+        color: 0xb8cbe4, transparent: true, opacity: 0.20,
         depthWrite: false, fog: false,
       }));
       lines.frustumCulled = false;
@@ -185,10 +185,14 @@ export class Game {
     this.rain.lines.visible = this.wet;
     const roadMat = w.children[0] && w.children[0].userData.roadMat;
     if (roadMat) {
-      roadMat.roughness = this.wet ? 0.28 : 0.62;
-      roadMat.metalness = this.wet ? 0.55 : 0.16;
-      roadMat.envMapIntensity = this.wet ? 1.5 : 0.55;
-      roadMat.color.setHex(this.wet ? 0x9aa2ae : 0xffffff);
+      // 濡れたアスファルトも「金属」ではありません。metalness を上げると
+      // 反射が路面の色に染まってしまい、ただ明るい灰色の道になります。
+      // metalness 0・粗さをごく低くすると、正面は暗いまま浅い角度でだけ
+      // 強く映り込む（フレネル反射）＝濡れた路面そのものの見え方になります。
+      roadMat.roughness = this.wet ? 0.10 : 0.62;
+      roadMat.metalness = this.wet ? 0.0 : 0.16;
+      roadMat.envMapIntensity = this.wet ? 1.7 : 0.55;
+      roadMat.color.setHex(this.wet ? 0x6e747e : 0xffffff);
     }
     this.scene.fog.density = this.wet ? 0.0042 : 0.0021;
 
@@ -760,10 +764,12 @@ export class Game {
     }
     if (tunnel) {
       // トンネル内は天井灯が連続しているので、真上に1灯だけ置き続けます
+      // 強度120では至近距離すぎて画面が白飛びしていました（比較実験で確認：
+      // この光を消すと平均輝度が 166 → 69 まで落ちた＝白飛びの主因）。
       const l = this.lampLights[0];
       l.position.copy(v.pos).addScaledVector(sm.up, 5.6);
       l.color.setHex(0xfff2d8);
-      l.intensity = 120;
+      l.intensity = 46;
     }
     this.rimLight.position.copy(v.pos).addScaledVector(carDir, -4.0).addScaledVector(sm.up, 3.2);
 
@@ -788,8 +794,10 @@ export class Game {
     // 物理的には時速200kmの雨は水平近くまで寝ますが、そのまま描くと
     // 消失点から放射状に伸びて「ワープ」にしか見えません。
     // ここは絵づくりを優先して、ほぼ縦の短い筋に留めます。
-    const dy = -1.5 - speed * 0.002;
-    const dz = clamp(-0.2 - speed * 0.010, -0.9, -0.2);
+    // 以前は1本1.7mほどあり、白く長い線が画面に散って「レンズの傷」に
+    // 見えていました。短く・薄くして、路面の映り込みのほうを主役にします。
+    const dy = -0.85 - speed * 0.0015;
+    const dz = clamp(-0.15 - speed * 0.007, -0.6, -0.15);
     const a = r.arr;
     for (let i = 0; i < r.N; i++) {
       r.off[i * 3 + 1] -= (26 + speed * 0.4) * dt;
@@ -841,6 +849,12 @@ export class Game {
       player: v,
       others,
       money,
+      // バトル中の体力・車間。これを渡していなかったため、HUD の
+      // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
+      // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
+      battle: this.kind === 'battle' && this.rival && !this.state.finished
+        ? { life: this.state.life, rivalLife: this.state.rivalLife, gap: this.state.gap }
+        : null,
       timeText: this.kind === 'timeattack'
         ? formatTime(this.state.lapTime)
         : `${this.state.elapsed.toFixed(1)}s`,

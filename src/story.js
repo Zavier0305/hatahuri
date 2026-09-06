@@ -88,7 +88,3 @@ export const RIVALS = [
     lose: '「―――」（追いつけない。空が明るくなる前に、見失った）',
   },
 ];
-
-export function rivalAt(stage) {
-  return RIVALS[Math.min(stage, RIVALS.length - 1)];
-}

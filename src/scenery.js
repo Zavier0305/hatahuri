@@ -133,9 +133,19 @@ export function buildEnvironment(renderer, skyMesh) {
 
 export function buildSea(scene) {
   const geo = new THREE.PlaneGeometry(24000, 24000, 1, 1);
+  // 水は金属ではなく誘電体です。metalness を上げると反射が水面の色に染まり、
+  // 環境マップに焼いた夜明けの帯をそのまま拾って「砂浜」に見えていました。
+  // metalness 0 にすると、真上から見ると暗く・浅い角度でだけ明るく映る
+  // （フレネル反射）という、実際の水面の見え方になります。
+  // 前回 envMapIntensity を下げすぎて、海がただの黒い面になりました
+  // （タイトル画面の平均輝度が 42 → 22 まで落ちた）。
+  // 暗くすべきなのは「真上から見たとき」だけで、水平に近い角度では
+  // 夜明けの空を強く映して光の道ができるのが本来の見え方です。
+  // 粗さを少し上げると、その反射がさざ波状に広がります。
   const mat = new THREE.MeshStandardMaterial({
-    color: 0x0b1526, roughness: 0.30, metalness: 0.45,
-    emissive: 0x0a1220, emissiveIntensity: 0.55,
+    color: 0x070d18, roughness: 0.22, metalness: 0.0,
+    emissive: 0x0a1120, emissiveIntensity: 0.55,
+    envMapIntensity: 1.8,
   });
   const sea = new THREE.Mesh(geo, mat);
   sea.rotation.x = -Math.PI / 2;
@@ -530,12 +540,35 @@ export function buildCity(track, scene, seed = 99, density = 0.9) {
     far.push({ p: new THREE.Vector3(x, -3, z), w, h, d, rot: r() * TAU });
   }
 
-  // 窓1枚が約4.2m×3.4mになるよう、繰り返し数を「必要な窓数 ÷ テクスチャ1枚の窓数」で決めます。
-  // （ここを窓数そのものにすると窓が極小になり、遠目にはただの明るい箱になってしまいます）
-  const repeatFor = (w, h) => [
-    Math.max(1, Math.round(w / 4.2 / WIN_COLS)),
-    Math.max(1, Math.round(h / 3.4 / WIN_ROWS)),
-  ];
+  // 窓1枚を約4.2m×3.4mに保ちます。
+  //
+  // 以前は「高さ帯ごとの平均サイズ」から繰り返し数を出し、しかも整数に
+  // 丸めていました。横方向は round(幅/4.2/6) がほぼ常に 1 になるため、
+  // 幅11mのビルも35mのビルも同じ6列で窓を描き、窓の大きさが3倍以上ばらつく
+  // という結果になっていました（実際に画面で確認）。
+  //
+  // ここではビルを「幅と高さの近いものどうし」に仕分けし、組ごとに
+  // 実寸から繰り返し数を出します。丸めないので、窓の大きさが揃います。
+  const PITCH_W = 4.2, PITCH_H = 3.4;
+  const buildGroups = (list, wStep, hStep, seedBase, emis, out) => {
+    const buckets = new Map();
+    for (const b of list) {
+      const k = `${Math.round(b.w / wStep)}_${Math.round(b.h / hStep)}`;
+      let a = buckets.get(k);
+      if (!a) buckets.set(k, (a = []));
+      a.push(b);
+    }
+    let n = 0;
+    for (const [, a] of buckets) {
+      const w = a.reduce((x, b) => x + b.w, 0) / a.length;
+      const h = a.reduce((x, b) => x + b.h, 0) / a.length;
+      // 丸めずに実寸から出します。端で窓が途切れるのは実際のビルでも起きます。
+      const ru = Math.max(0.6, w / PITCH_W / WIN_COLS);
+      const rv = Math.max(0.6, h / PITCH_H / WIN_ROWS);
+      out.push(mk(a, seedBase + n * 13, ru, rv, emis));
+      n++;
+    }
+  };
   const mk = (list, texSeed, repU, repV, emis) => {
     const tex = windowTexture(texSeed);
     tex.repeat.set(repU, repV);
@@ -559,26 +592,11 @@ export function buildCity(track, scene, seed = 99, density = 0.9) {
     return im;
   };
 
-  // 高さ帯で3つに分け、それぞれ窓の縮尺を合わせる
-  const bands = [[0, 70], [70, 120], [120, 1e9]];
-  bands.forEach(([lo, hi], bi) => {
-    const list = near.filter((b) => b.h >= lo && b.h < hi);
-    if (!list.length) return;
-    const avgW = list.reduce((a, b) => a + b.w, 0) / list.length;
-    const avgH = list.reduce((a, b) => a + b.h, 0) / list.length;
-    const [ru, rv] = repeatFor(avgW, avgH);
-    group.add(mk(list, 31 + bi * 7, ru, rv, 0.85));
-  });
-  bands.forEach(([lo, hi], bi) => {
-    const list = far.filter((b) => b.h >= lo && b.h < hi);
-    if (!list.length) return;
-    const avgW = list.reduce((a, b) => a + b.w, 0) / list.length;
-    const avgH = list.reduce((a, b) => a + b.h, 0) / list.length;
-    const [ru, rv] = repeatFor(avgW, avgH);
-    const mesh = mk(list, 57 + bi * 11, ru, rv, 1.05);
-    mesh.frustumCulled = false;
-    group.add(mesh);
-  });
+  const nearMeshes = [], farMeshes = [];
+  buildGroups(near, 8, 30, 31, 0.85, nearMeshes);
+  buildGroups(far, 16, 70, 57, 1.05, farMeshes);
+  for (const m of nearMeshes) group.add(m);
+  for (const m of farMeshes) { m.frustumCulled = false; group.add(m); }
 
   // 航空障害灯（赤い点滅）
   const redG = new THREE.SphereGeometry(2.6, 6, 6);
@@ -605,8 +623,11 @@ export function buildTunnels(track, scene) {
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
     // 面の法線がトンネル内側を向くように張っているので FrontSide のままで内壁が見えます
-    color: 0xb9bfc7, roughness: 0.88, metalness: 0.05, side: THREE.FrontSide,
-    emissive: 0x2f353d, emissiveIntensity: 1.0,
+    // 以前は 0xb9bfc7（ほぼ白）。夜のトンネルで至近距離から照らすと
+    // 画面全体が白飛びし、路面もライトも見えなくなっていました。
+    // 実際の覆工コンクリートは汚れた灰色です。
+    color: 0x6b7178, roughness: 0.93, metalness: 0.03, side: THREE.FrontSide,
+    emissive: 0x232830, emissiveIntensity: 0.9,
   });
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff0d0 });
   const sm = {};

@@ -449,9 +449,3 @@ for (const c of CARS) {
 }
 
 export const CAR_BY_ID = Object.fromEntries(CARS.map((c) => [c.id, c]));
-
-/** ストーリーのボス機などに使う、チューン済みの派生スペックを作ります。 */
-export function tuned(baseId, over) {
-  const base = CAR_BY_ID[baseId];
-  return { ...base, profile: base.profile, dims: { ...base.dims }, ...over };
-}

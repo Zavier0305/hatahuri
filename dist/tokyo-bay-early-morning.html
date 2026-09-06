@@ -1548,12 +1548,6 @@ for (const c of CARS) {
 
 const CAR_BY_ID = Object.fromEntries(CARS.map((c) => [c.id, c]));
 
-/** ストーリーのボス機などに使う、チューン済みの派生スペックを作ります。 */
-function tuned(baseId, over) {
-  const base = CAR_BY_ID[baseId];
-  return { ...base, profile: base.profile, dims: { ...base.dims }, ...over };
-}
-
 
 // ============================== src/carModel.js ==============================
 /**
@@ -3308,9 +3302,19 @@ function buildEnvironment(renderer, skyMesh) {
 
 function buildSea(scene) {
   const geo = new THREE.PlaneGeometry(24000, 24000, 1, 1);
+  // 水は金属ではなく誘電体です。metalness を上げると反射が水面の色に染まり、
+  // 環境マップに焼いた夜明けの帯をそのまま拾って「砂浜」に見えていました。
+  // metalness 0 にすると、真上から見ると暗く・浅い角度でだけ明るく映る
+  // （フレネル反射）という、実際の水面の見え方になります。
+  // 前回 envMapIntensity を下げすぎて、海がただの黒い面になりました
+  // （タイトル画面の平均輝度が 42 → 22 まで落ちた）。
+  // 暗くすべきなのは「真上から見たとき」だけで、水平に近い角度では
+  // 夜明けの空を強く映して光の道ができるのが本来の見え方です。
+  // 粗さを少し上げると、その反射がさざ波状に広がります。
   const mat = new THREE.MeshStandardMaterial({
-    color: 0x0b1526, roughness: 0.30, metalness: 0.45,
-    emissive: 0x0a1220, emissiveIntensity: 0.55,
+    color: 0x070d18, roughness: 0.22, metalness: 0.0,
+    emissive: 0x0a1120, emissiveIntensity: 0.55,
+    envMapIntensity: 1.8,
   });
   const sea = new THREE.Mesh(geo, mat);
   sea.rotation.x = -Math.PI / 2;
@@ -3705,12 +3709,35 @@ function buildCity(track, scene, seed = 99, density = 0.9) {
     far.push({ p: new THREE.Vector3(x, -3, z), w, h, d, rot: r() * TAU });
   }
 
-  // 窓1枚が約4.2m×3.4mになるよう、繰り返し数を「必要な窓数 ÷ テクスチャ1枚の窓数」で決めます。
-  // （ここを窓数そのものにすると窓が極小になり、遠目にはただの明るい箱になってしまいます）
-  const repeatFor = (w, h) => [
-    Math.max(1, Math.round(w / 4.2 / WIN_COLS)),
-    Math.max(1, Math.round(h / 3.4 / WIN_ROWS)),
-  ];
+  // 窓1枚を約4.2m×3.4mに保ちます。
+  //
+  // 以前は「高さ帯ごとの平均サイズ」から繰り返し数を出し、しかも整数に
+  // 丸めていました。横方向は round(幅/4.2/6) がほぼ常に 1 になるため、
+  // 幅11mのビルも35mのビルも同じ6列で窓を描き、窓の大きさが3倍以上ばらつく
+  // という結果になっていました（実際に画面で確認）。
+  //
+  // ここではビルを「幅と高さの近いものどうし」に仕分けし、組ごとに
+  // 実寸から繰り返し数を出します。丸めないので、窓の大きさが揃います。
+  const PITCH_W = 4.2, PITCH_H = 3.4;
+  const buildGroups = (list, wStep, hStep, seedBase, emis, out) => {
+    const buckets = new Map();
+    for (const b of list) {
+      const k = `${Math.round(b.w / wStep)}_${Math.round(b.h / hStep)}`;
+      let a = buckets.get(k);
+      if (!a) buckets.set(k, (a = []));
+      a.push(b);
+    }
+    let n = 0;
+    for (const [, a] of buckets) {
+      const w = a.reduce((x, b) => x + b.w, 0) / a.length;
+      const h = a.reduce((x, b) => x + b.h, 0) / a.length;
+      // 丸めずに実寸から出します。端で窓が途切れるのは実際のビルでも起きます。
+      const ru = Math.max(0.6, w / PITCH_W / WIN_COLS);
+      const rv = Math.max(0.6, h / PITCH_H / WIN_ROWS);
+      out.push(mk(a, seedBase + n * 13, ru, rv, emis));
+      n++;
+    }
+  };
   const mk = (list, texSeed, repU, repV, emis) => {
     const tex = windowTexture(texSeed);
     tex.repeat.set(repU, repV);
@@ -3734,26 +3761,11 @@ function buildCity(track, scene, seed = 99, density = 0.9) {
     return im;
   };
 
-  // 高さ帯で3つに分け、それぞれ窓の縮尺を合わせる
-  const bands = [[0, 70], [70, 120], [120, 1e9]];
-  bands.forEach(([lo, hi], bi) => {
-    const list = near.filter((b) => b.h >= lo && b.h < hi);
-    if (!list.length) return;
-    const avgW = list.reduce((a, b) => a + b.w, 0) / list.length;
-    const avgH = list.reduce((a, b) => a + b.h, 0) / list.length;
-    const [ru, rv] = repeatFor(avgW, avgH);
-    group.add(mk(list, 31 + bi * 7, ru, rv, 0.85));
-  });
-  bands.forEach(([lo, hi], bi) => {
-    const list = far.filter((b) => b.h >= lo && b.h < hi);
-    if (!list.length) return;
-    const avgW = list.reduce((a, b) => a + b.w, 0) / list.length;
-    const avgH = list.reduce((a, b) => a + b.h, 0) / list.length;
-    const [ru, rv] = repeatFor(avgW, avgH);
-    const mesh = mk(list, 57 + bi * 11, ru, rv, 1.05);
-    mesh.frustumCulled = false;
-    group.add(mesh);
-  });
+  const nearMeshes = [], farMeshes = [];
+  buildGroups(near, 8, 30, 31, 0.85, nearMeshes);
+  buildGroups(far, 16, 70, 57, 1.05, farMeshes);
+  for (const m of nearMeshes) group.add(m);
+  for (const m of farMeshes) { m.frustumCulled = false; group.add(m); }
 
   // 航空障害灯（赤い点滅）
   const redG = new THREE.SphereGeometry(2.6, 6, 6);
@@ -3780,8 +3792,11 @@ function buildTunnels(track, scene) {
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
     // 面の法線がトンネル内側を向くように張っているので FrontSide のままで内壁が見えます
-    color: 0xb9bfc7, roughness: 0.88, metalness: 0.05, side: THREE.FrontSide,
-    emissive: 0x2f353d, emissiveIntensity: 1.0,
+    // 以前は 0xb9bfc7（ほぼ白）。夜のトンネルで至近距離から照らすと
+    // 画面全体が白飛びし、路面もライトも見えなくなっていました。
+    // 実際の覆工コンクリートは汚れた灰色です。
+    color: 0x6b7178, roughness: 0.93, metalness: 0.03, side: THREE.FrontSide,
+    emissive: 0x232830, emissiveIntensity: 0.9,
   });
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff0d0 });
   const sm = {};
@@ -4827,6 +4842,7 @@ class HUD {
     if (this.el.time) this.el.time.textContent = st.timeText || '';
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
+    if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
     if (this.el.money) this.el.money.textContent = `¥${formatMoney(st.money || 0)}`;
     if (this.msgTimer > 0) {
       this.msgTimer -= dt;
@@ -4927,10 +4943,6 @@ const RIVALS = [
     lose: '「―――」（追いつけない。空が明るくなる前に、見失った）',
   },
 ];
-
-function rivalAt(stage) {
-  return RIVALS[Math.min(stage, RIVALS.length - 1)];
-}
 
 
 // ============================== src/save.js ==============================
@@ -5039,7 +5051,7 @@ class Game {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-        color: 0xc4d6ec, transparent: true, opacity: 0.30,
+        color: 0xb8cbe4, transparent: true, opacity: 0.20,
         depthWrite: false, fog: false,
       }));
       lines.frustumCulled = false;
@@ -5148,10 +5160,14 @@ class Game {
     this.rain.lines.visible = this.wet;
     const roadMat = w.children[0] && w.children[0].userData.roadMat;
     if (roadMat) {
-      roadMat.roughness = this.wet ? 0.28 : 0.62;
-      roadMat.metalness = this.wet ? 0.55 : 0.16;
-      roadMat.envMapIntensity = this.wet ? 1.5 : 0.55;
-      roadMat.color.setHex(this.wet ? 0x9aa2ae : 0xffffff);
+      // 濡れたアスファルトも「金属」ではありません。metalness を上げると
+      // 反射が路面の色に染まってしまい、ただ明るい灰色の道になります。
+      // metalness 0・粗さをごく低くすると、正面は暗いまま浅い角度でだけ
+      // 強く映り込む（フレネル反射）＝濡れた路面そのものの見え方になります。
+      roadMat.roughness = this.wet ? 0.10 : 0.62;
+      roadMat.metalness = this.wet ? 0.0 : 0.16;
+      roadMat.envMapIntensity = this.wet ? 1.7 : 0.55;
+      roadMat.color.setHex(this.wet ? 0x6e747e : 0xffffff);
     }
     this.scene.fog.density = this.wet ? 0.0042 : 0.0021;
 
@@ -5723,10 +5739,12 @@ class Game {
     }
     if (tunnel) {
       // トンネル内は天井灯が連続しているので、真上に1灯だけ置き続けます
+      // 強度120では至近距離すぎて画面が白飛びしていました（比較実験で確認：
+      // この光を消すと平均輝度が 166 → 69 まで落ちた＝白飛びの主因）。
       const l = this.lampLights[0];
       l.position.copy(v.pos).addScaledVector(sm.up, 5.6);
       l.color.setHex(0xfff2d8);
-      l.intensity = 120;
+      l.intensity = 46;
     }
     this.rimLight.position.copy(v.pos).addScaledVector(carDir, -4.0).addScaledVector(sm.up, 3.2);
 
@@ -5751,8 +5769,10 @@ class Game {
     // 物理的には時速200kmの雨は水平近くまで寝ますが、そのまま描くと
     // 消失点から放射状に伸びて「ワープ」にしか見えません。
     // ここは絵づくりを優先して、ほぼ縦の短い筋に留めます。
-    const dy = -1.5 - speed * 0.002;
-    const dz = clamp(-0.2 - speed * 0.010, -0.9, -0.2);
+    // 以前は1本1.7mほどあり、白く長い線が画面に散って「レンズの傷」に
+    // 見えていました。短く・薄くして、路面の映り込みのほうを主役にします。
+    const dy = -0.85 - speed * 0.0015;
+    const dz = clamp(-0.15 - speed * 0.007, -0.6, -0.15);
     const a = r.arr;
     for (let i = 0; i < r.N; i++) {
       r.off[i * 3 + 1] -= (26 + speed * 0.4) * dt;
@@ -5804,6 +5824,12 @@ class Game {
       player: v,
       others,
       money,
+      // バトル中の体力・車間。これを渡していなかったため、HUD の
+      // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
+      // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
+      battle: this.kind === 'battle' && this.rival && !this.state.finished
+        ? { life: this.state.life, rivalLife: this.state.rivalLife, gap: this.state.gap }
+        : null,
       timeText: this.kind === 'timeattack'
         ? formatTime(this.state.lapTime)
         : `${this.state.elapsed.toFixed(1)}s`,
