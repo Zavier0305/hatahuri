@@ -900,6 +900,8 @@ const COURSES = [
     cycles: 3.4,
     cityDensity: 0.9,
     traffic: 1.0,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['大井', 'Oi'], ['空港中央', 'Airport Central'], ['湾岸環八', 'Kanpachi'], ['葛西', 'Kasai'], ['千鳥町', 'Chidoricho']],
   },
   {
     id: 'aqualine',
@@ -917,6 +919,8 @@ const COURSES = [
     cycles: 1.2,
     cityDensity: 0.35,
     traffic: 0.75,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['浮島', 'Ukishima'], ['海ほたる', 'Umihotaru'], ['木更津金田', 'Kisarazu Kaneda'], ['袖ヶ浦', 'Sodegaura']],
   },
   {
     id: 'umihotaru',
@@ -934,6 +938,8 @@ const COURSES = [
     cycles: 1.0,
     cityDensity: 0.55,
     traffic: 0.6,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['海ほたる', 'Umihotaru PA'], ['川崎方面', 'To Kawasaki'], ['木更津方面', 'To Kisarazu']],
   },
   {
     id: 'daikoku',
@@ -951,6 +957,8 @@ const COURSES = [
     cycles: 2.2,
     cityDensity: 1.0,
     traffic: 1.15,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['大黒ふ頭', 'Daikoku Futo'], ['生麦', 'Namamugi'], ['新山下', 'Shin-Yamashita'], ['ベイブリッジ', 'Bay Bridge']],
   },
   {
     id: 'tatsumi',
@@ -968,6 +976,8 @@ const COURSES = [
     cycles: 3.0,
     cityDensity: 0.95,
     traffic: 1.05,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['辰巳', 'Tatsumi'], ['有明', 'Ariake'], ['新木場', 'Shin-Kiba'], ['台場', 'Daiba']],
   },
   {
     id: 'haneda',
@@ -985,6 +995,8 @@ const COURSES = [
     cycles: 1.6,
     cityDensity: 0.5,
     traffic: 0.85,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['空港中央', 'Airport Central'], ['羽田', 'Haneda'], ['浮島', 'Ukishima'], ['大師', 'Daishi']],
   },
   {
     id: 'minatomirai',
@@ -1002,6 +1014,8 @@ const COURSES = [
     cycles: 2.6,
     cityDensity: 1.0,
     traffic: 1.2,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['みなとみらい', 'Minato Mirai'], ['新山下', 'Shin-Yamashita'], ['本牧ふ頭', 'Honmoku Futo'], ['大黒ふ頭', 'Daikoku Futo']],
   },
   {
     id: 'grandtour',
@@ -1019,6 +1033,8 @@ const COURSES = [
     cycles: 3.2,
     cityDensity: 0.85,
     traffic: 1.0,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['大黒ふ頭', 'Daikoku Futo'], ['空港中央', 'Airport Central'], ['有明', 'Ariake'], ['葛西', 'Kasai'], ['市川', 'Ichikawa'], ['幕張', 'Makuhari']],
   },
   {
     id: 'rainbay',
@@ -1037,6 +1053,8 @@ const COURSES = [
     cycles: 3.0,
     cityDensity: 0.85,
     traffic: 0.9,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['大井', 'Oi'], ['空港中央', 'Airport Central'], ['葛西', 'Kasai'], ['千鳥町', 'Chidoricho']],
   },
   {
     id: 'jam',
@@ -1054,6 +1072,8 @@ const COURSES = [
     cycles: 2.4,
     cityDensity: 1.0,
     traffic: 2.6,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['辰巳', 'Tatsumi'], ['有明', 'Ariake'], ['新木場', 'Shin-Kiba'], ['台場', 'Daiba']],
   },
   {
     id: 'kawasaki',
@@ -1071,6 +1091,8 @@ const COURSES = [
     cycles: 2.8,
     cityDensity: 1.0,
     traffic: 1.1,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['浮島', 'Ukishima'], ['大師', 'Daishi'], ['千鳥町', 'Chidoricho'], ['東扇島', 'Higashi-Ogishima']],
   },
   {
     id: 'makuhari',
@@ -1088,6 +1110,8 @@ const COURSES = [
     cycles: 1.4,
     cityDensity: 0.45,
     traffic: 0.7,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['幕張', 'Makuhari'], ['湾岸習志野', 'Narashino'], ['湾岸市川', 'Ichikawa'], ['千葉北', 'Chiba-Kita']],
   },
 ];
 
@@ -3569,22 +3593,49 @@ function glowTexture() {
   return t;
 }
 
-function signTexture(text, sub) {
+/**
+ * 案内標識。日本の高速道路の緑看板に寄せています。
+ * 行き先と、そこまでの距離を並べます。距離の無い飾りの看板は情報が無いので出しません。
+ */
+function signTexture(rows, kind = 'dest') {
   const cv = document.createElement('canvas');
-  cv.width = 512; cv.height = 128;
+  cv.width = 640; cv.height = rows.length > 1 ? 208 : 128;
   const g = cv.getContext('2d');
-  g.fillStyle = '#0d4a2c';
+  const bg = kind === 'exit' ? '#123a72' : '#0d4a2c';
+  g.fillStyle = bg;
   g.fillRect(0, 0, cv.width, cv.height);
   g.strokeStyle = '#e9eef0';
   g.lineWidth = 6;
   g.strokeRect(9, 9, cv.width - 18, cv.height - 18);
-  g.fillStyle = '#f2f6f7';
-  g.font = 'bold 58px "Hiragino Sans","Noto Sans JP",sans-serif';
-  g.textBaseline = 'middle';
-  g.fillText(text, 34, 56);
-  g.font = '26px "Hiragino Sans",sans-serif';
-  g.fillStyle = '#cfe6da';
-  g.fillText(sub, 36, 100);
+
+  const rowH = (cv.height - 28) / rows.length;
+  rows.forEach((r, i) => {
+    const cy = 14 + rowH * (i + 0.5);
+    g.fillStyle = '#f2f6f7';
+    g.font = 'bold 52px "Hiragino Sans","Noto Sans JP",sans-serif';
+    g.textBaseline = 'middle';
+    g.textAlign = 'left';
+    g.fillText(r.jp, 34, cy - (r.en ? 10 : 0));
+    if (r.en) {
+      g.font = '22px "Hiragino Sans",sans-serif';
+      g.fillStyle = '#cfe6da';
+      g.fillText(r.en, 36, cy + 26);
+    }
+    if (r.dist) {
+      g.textAlign = 'right';
+      g.fillStyle = '#f2f6f7';
+      g.font = 'bold 44px "Roboto Condensed","Hiragino Sans",sans-serif';
+      g.fillText(r.dist, cv.width - 34, cy);
+    }
+    if (i < rows.length - 1) {
+      g.strokeStyle = 'rgba(233,238,240,0.45)';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(24, 14 + rowH * (i + 1));
+      g.lineTo(cv.width - 24, 14 + rowH * (i + 1));
+      g.stroke();
+    }
+  });
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
@@ -3726,6 +3777,36 @@ function buildPiers(track, scene) {
  * これがないと、ビルの足元が真っ黒な海のままになり「宙に浮いた箱」に見えます。
  * コースに沿った幅広の帯として1枚だけ張るので、重なりによるちらつきも起きません。
  */
+/**
+ * 市街地の地面の高さ。
+ *
+ * 高さを -1.4m 固定にしていた時期は、路面が沈む区間で地面が路面を覆っていました。
+ * その後「路面にそのまま追従」させたところ、今度は路面が上下するたびに地面まで
+ * 波打ち、行く手に黒い山が立ちはだかるようになりました（実際に画面で確認）。
+ *
+ * 実際の街の地面は、高架が上下しても平らなままです。区間ごとに
+ * 「その区間でいちばん低い路面より下」の一定の高さを使います。
+ */
+function cityGroundY(track) {
+  const spans = [];
+  for (const z of track.zones) {
+    if (z.kind !== 'city') continue;
+    let lo = Infinity;
+    for (let s = z.from - 140; s < z.to + 140; s += 20) {
+      const x = ((s % track.length) + track.length) % track.length;
+      const i = Math.floor(x / track.spacing) % track.n;
+      lo = Math.min(lo, track.pos[i * 3 + 1]);
+    }
+    spans.push({ from: z.from - 140, to: z.to + 140, y: lo - 11 });
+  }
+  const fallback = spans.length ? spans[0].y : -1.4;
+  return (s) => {
+    const x = ((s % track.length) + track.length) % track.length;
+    for (const sp of spans) if (x >= sp.from && x < sp.to) return sp.y;
+    return fallback;
+  };
+}
+
 function buildLand(track, scene) {
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
@@ -3736,18 +3817,19 @@ function buildLand(track, scene) {
   // -33m〜+50m と大きく上下するため、路面が沈む区間では地面が路面を覆い、
   // 画面の半分が真っ黒になっていました（12コース中7コースで発生）。
   // 高架下の地面として、路面から一定の深さを保って追従させます。
-  const BELOW = 11;
+  const groundY = cityGroundY(track);
   const sm = {};
   for (const z of track.zones) {
     if (z.kind !== 'city') continue;
     const from = z.from - 120, to = z.to + 120;
+    const zoneY = groundY((z.from + z.to) * 0.5);
     const rows = Math.max(2, Math.floor((to - from) / 60));
     const posA = new Float32Array((rows + 1) * 2 * 3);
     const idx = [];
     for (let r = 0; r <= rows; r++) {
       const s2 = lerp(from, to, r / rows);
       track.sample(s2, sm);
-      const y = sm.pos.y - BELOW;
+      const y = zoneY;
       for (let q = 0; q < 2; q++) {
         const u = q === 0 ? -HALF : HALF;
         const o = (r * 2 + q) * 3;
@@ -3883,6 +3965,7 @@ function trackClearance(track, cell = 100) {
 function buildCity(track, scene, seed = 99, density = 0.9) {
   const r = rng(seed);
   const isClear = trackClearance(track);
+  const ground = cityGroundY(track);
   const group = new THREE.Group();
   const near = [];   // 沿道のビル
   const far = [];    // 遠景のスカイライン
@@ -3902,7 +3985,8 @@ function buildCity(track, scene, seed = 99, density = 0.9) {
       const p = sm.pos.clone().addScaledVector(sm.lat, side * dist);
       // 土台も -3m 固定でした。路面が沈む区間ではビルの足元が路面より
       // 上に来てしまい、道が建物の下をくぐるような絵になっていました。
-      p.y = sm.pos.y - 11;
+      // 地面と同じ高さに揃えます（そうしないと建物が宙に浮きます）。
+      p.y = ground(s);
       // コース本体（他の区間も含む）に被る位置には建てない
       if (!isClear(p.x, p.z, ROAD.halfRoad + 10 + Math.hypot(w, d) * 0.5)) continue;
       near.push({ p, w, h, d, rot: r() * TAU });
@@ -4129,34 +4213,49 @@ function buildTunnels(track, scene) {
 
 // ---------------------------------------------------------------- 案内標識
 
-const SIGN_TEXTS = [
-  ['湾岸線', 'Wangan Line'],
-  ['大黒ふ頭', 'Daikoku Futo'],
-  ['ベイブリッジ', 'Bay Bridge'],
-  ['有明', 'Ariake'],
-  ['辰巳', 'Tatsumi'],
-  ['葛西', 'Kasai'],
-  ['浮島', 'Ukishima'],
-  ['空港中央', 'Airport Central'],
-  ['市川', 'Ichikawa'],
-  ['幸浦', 'Sachiura'],
-];
 
+/**
+ * 案内標識と出口。
+ *
+ * 以前は 760m おきに、固定10件の地名を順番に貼っていました。コースとも
+ * 位置とも無関係で、幕張を走っていても「大黒ふ頭」が出るという状態でした。
+ * ここではコースが持つ出口を一周に等間隔で置き、各出口の手前に
+ * 「予告（2km）」「案内（700m）」「出口」の3段で、実際の距離を出します。
+ */
 function buildSigns(track, scene) {
   const group = new THREE.Group();
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.6, metalness: 0.6 });
   const sm = {}, basis = new THREE.Matrix4(), q = new THREE.Quaternion();
   const back = new THREE.Vector3();
-  let k = 0;
-  for (let s = 400; s < track.length; s += 760) {
-    if (track.zoneAt(s) === 'tunnel') continue;
+  const L = track.length;
+  const exits = (track.course && track.course.exits && track.course.exits.length)
+    ? track.course.exits : [['出口', 'Exit']];
+  const n = exits.length;
+  const exitS = exits.map((_, i) => (L * (i + 0.5)) / n);
+  const dist = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 100) * 100} m`);
+
+  const board = (parent, rows, kind, w, h, y) => {
+    const tex = signTexture(rows, kind);   // 1枚を色と発光で使い回します
+    const b = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshStandardMaterial({
+        map: tex, emissiveMap: tex, emissive: 0xffffff,
+        emissiveIntensity: 0.34, roughness: 0.7,
+      })
+    );
+    b.position.set(-ROAD.halfRoad * 0.5 - 0.4, y, 0.22);
+    parent.add(b);
+    return b;
+  };
+
+  const gantry = (s, rows, kind) => {
+    if (track.zoneAt(s) === 'tunnel') return;
     track.sample(s, sm);
     basis.makeBasis(sm.lat, sm.up, back.copy(sm.tan).negate());
     q.setFromRotationMatrix(basis);
     const g = new THREE.Group();
     g.position.copy(sm.pos);
     g.quaternion.copy(q);
-
     const beam = new THREE.Mesh(new THREE.BoxGeometry(ROAD.halfRoad + 1.5, 0.35, 0.35), frameMat);
     beam.position.set(-ROAD.halfRoad / 2 - 0.5, 6.4, 0);
     g.add(beam);
@@ -4165,18 +4264,148 @@ function buildSigns(track, scene) {
       post.position.set(u, 3.2, 0);
       g.add(post);
     }
-    const [t1, t2] = SIGN_TEXTS[k % SIGN_TEXTS.length];
-    const board = new THREE.Mesh(
-      new THREE.PlaneGeometry(7.4, 1.85),
-      new THREE.MeshStandardMaterial({
-        map: signTexture(t1, t2), emissiveMap: signTexture(t1, t2),
-        emissive: 0xffffff, emissiveIntensity: 0.34, roughness: 0.7,
-      })
-    );
-    board.position.set(-6.6, 5.2, 0.22);   // 面は進行方向の手前を向く
-    g.add(board);
+    const h = rows.length > 1 ? 2.6 : 1.85;
+    board(g, rows, kind, 7.4, h, 5.2);
     group.add(g);
-    k++;
+  };
+
+  for (let i = 0; i < n; i++) {
+    const [jp, en] = exits[i];
+    const es = exitS[i];
+    const nxt = exits[(i + 1) % n];
+    const nxtS = exitS[(i + 1) % n];
+    const gap = (nxtS - es + L) % L;
+
+    // 予告：この先の行き先を2つ並べます
+    gantry((es - Math.min(2000, gap * 0.7) + L) % L, [
+      { jp, en, dist: dist(Math.min(2000, gap * 0.7)) },
+      { jp: nxt[0], en: nxt[1], dist: dist(Math.min(2000, gap * 0.7) + gap) },
+    ], 'dest');
+    // 案内：出口700m手前
+    gantry((es - 700 + L) % L, [{ jp: `${jp} 出口`, en: `${en} Exit`, dist: '700 m' }], 'exit');
+    // 出口地点
+    gantry(es, [{ jp: `${jp} 出口`, en: `${en} Exit`, dist: '' }], 'exit');
+  }
+  scene.add(group);
+  return group;
+}
+
+/**
+ * 出口のランプ。
+ *
+ * 「出口」の標識だけあって降りる道が無いのが、いちばん作り物に見えていました。
+ * ここでは本線の外側を並走してから、下って離れていくランプを作ります。
+ * 実際に降りられるわけではありません（そのためには道路を網として持つ必要が
+ * あり、物理・AI・交通・ミニマップまで作り直しになります）。
+ * ただし、料金所へ向かって落ちていく道が見えるだけで、
+ * 高速道路の上を走っている感じは大きく変わります。
+ */
+function buildRamps(track, scene) {
+  const group = new THREE.Group();
+  const course = track.course || {};
+  const exits = (course.exits && course.exits.length) ? course.exits : [];
+  if (!exits.length) { scene.add(group); return group; }
+  const L = track.length;
+  const road = new THREE.MeshStandardMaterial({
+    color: 0x2b2f36, roughness: 0.72, metalness: 0.0, envMapIntensity: 0.5,
+    side: THREE.DoubleSide,
+  });
+  const line = new THREE.MeshStandardMaterial({
+    color: 0xcfd3ca, roughness: 0.7, metalness: 0.0,
+    emissive: 0x2a2c28, emissiveIntensity: 0.4, side: THREE.DoubleSide,
+  });
+  const rail = new THREE.MeshStandardMaterial({
+    color: 0x9aa3b0, roughness: 0.35, metalness: 0.8, envMapIntensity: 1.2,
+    side: THREE.DoubleSide,
+  });
+  const sm = {};
+  const STEPS = 26, LEN = 210, HALF = 3.6;
+
+  for (let e = 0; e < exits.length; e++) {
+    const es = (L * (e + 0.5)) / exits.length;
+    if (track.zoneAt(es) === 'tunnel') continue;
+
+    // 中心線・左右の縁・ガードレール上端を、同じ進み方で並べます
+    const rows = [];
+    for (let i = 0; i <= STEPS; i++) {
+      const t = i / STEPS;
+      const s2 = es - 70 + LEN * t;
+      track.sample(s2, sm);
+      // 外へ離れながら、下っていきます
+      // 本線から離す量。以前は +2.6m から始めていたため、ランプの内側の縁が
+      // 本線側へ1mほど食い込んでいました（走行空間の検査で |u|=12.05m として
+      // 検出）。路肩の壁より確実に外側から始めます。
+      const off = -(ROAD.halfRoad + 5.2) - Math.pow(t, 1.7) * 44;
+      const drop = -Math.pow(t, 2.0) * 17;
+      const c = sm.pos.clone().addScaledVector(sm.lat, off).addScaledVector(sm.up, drop);
+      rows.push({ c, lat: sm.lat.clone(), up: sm.up.clone(), t });
+    }
+    const strip = (uFrom, uTo, yOff, mat) => {
+      const posA = new Float32Array((STEPS + 1) * 2 * 3);
+      const idx = [];
+      for (let i = 0; i <= STEPS; i++) {
+        const r = rows[i];
+        for (let qq = 0; qq < 2; qq++) {
+          const u = qq === 0 ? uFrom : uTo;
+          const o = (i * 2 + qq) * 3;
+          posA[o] = r.c.x + r.lat.x * u + r.up.x * yOff;
+          posA[o + 1] = r.c.y + r.lat.y * u + r.up.y * yOff;
+          posA[o + 2] = r.c.z + r.lat.z * u + r.up.z * yOff;
+        }
+      }
+      for (let i = 0; i < STEPS; i++) {
+        const a = i * 2, b = a + 1, cc = a + 2, d = a + 3;
+        idx.push(a, d, cc, a, b, d);
+      }
+      const g2 = new THREE.BufferGeometry();
+      g2.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3));
+      g2.setIndex(idx);
+      g2.computeVertexNormals();
+      g2.computeBoundingSphere();
+      group.add(new THREE.Mesh(g2, mat));
+    };
+    strip(-HALF, HALF, 0, road);                    // 路面
+    strip(-HALF, -HALF + 0.18, 0.01, line);         // 外側の白線
+    strip(HALF - 0.18, HALF, 0.01, line);           // 内側の白線
+    strip(-HALF - 0.35, -HALF - 0.35, 0.9, rail);   // 外側のガードレール（薄い帯）
+    strip(HALF + 0.35, HALF + 0.35, 0.9, rail);
+
+    // ランプの先の料金所。降りた先に何も無いと、道が途中で消えて見えます。
+    {
+      const end = rows[rows.length - 1];
+      const booth = new THREE.MeshStandardMaterial({ color: 0x3b4048, roughness: 0.8, metalness: 0.1 });
+      const roof = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.7, metalness: 0.3 });
+      const lampG = new THREE.MeshStandardMaterial({
+        color: 0x8fffc0, emissive: 0x2bd47a, emissiveIntensity: 3.2, roughness: 0.4,
+      });
+      const g3 = new THREE.Group();
+      g3.position.copy(end.c);
+      const bs = new THREE.Matrix4();
+      bs.makeBasis(end.lat, end.up, new THREE.Vector3().crossVectors(end.lat, end.up).negate());
+      g3.quaternion.setFromRotationMatrix(bs);
+      // 屋根
+      const rf = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 3.4, 0.45, 5.0), roof);
+      rf.position.set(0, 5.2, 0);
+      g3.add(rf);
+      // ブース（島）とレーンの表示灯
+      for (const u of [-HALF * 0.62, HALF * 0.62]) {
+        const b = new THREE.Mesh(new THREE.BoxGeometry(1.3, 2.9, 3.4), booth);
+        b.position.set(u, 1.45, 0);
+        g3.add(b);
+      }
+      for (const u of [-HALF * 0.3, HALF * 0.3]) {
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.16), lampG);
+        l.position.set(u, 4.3, 2.4);
+        g3.add(l);
+      }
+      // 支柱
+      for (const u of [-(HALF + 1.4), HALF + 1.4]) {
+        const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5.2, 0.4), roof);
+        p2.position.set(u, 2.6, 0);
+        g3.add(p2);
+      }
+      group.add(g3);
+    }
   }
   scene.add(group);
   return group;
@@ -5412,6 +5641,7 @@ class Game {
     this.city = buildCity(this.track, w, (course.seed ?? 1) + 99, course.cityDensity ?? 0.9);
     buildTunnels(this.track, w);
     buildSigns(this.track, w);
+    buildRamps(this.track, w);
     buildBridges(this.track, w);
     this.scene.add(w);
     this.world = w;

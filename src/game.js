@@ -6,7 +6,7 @@ import { OutputPass } from 'three/addons/OutputPass.js';
 import { clamp, lerp, damp, formatTime } from './util.js';
 import { createTrack, buildRoad, ROAD, LANE_U } from './track.js';
 import { COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
-import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
+import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildRamps, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
 import { slipstreamFactor } from './vehicle.js';
 import { RivalAI } from './ai.js';
 import { Traffic } from './traffic.js';
@@ -179,6 +179,7 @@ export class Game {
     this.city = buildCity(this.track, w, (course.seed ?? 1) + 99, course.cityDensity ?? 0.9);
     buildTunnels(this.track, w);
     buildSigns(this.track, w);
+    buildRamps(this.track, w);
     buildBridges(this.track, w);
     this.scene.add(w);
     this.world = w;

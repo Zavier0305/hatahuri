@@ -25,6 +25,8 @@ export const COURSES = [
     cycles: 3.4,
     cityDensity: 0.9,
     traffic: 1.0,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['大井', 'Oi'], ['空港中央', 'Airport Central'], ['湾岸環八', 'Kanpachi'], ['葛西', 'Kasai'], ['千鳥町', 'Chidoricho']],
   },
   {
     id: 'aqualine',
@@ -42,6 +44,8 @@ export const COURSES = [
     cycles: 1.2,
     cityDensity: 0.35,
     traffic: 0.75,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['浮島', 'Ukishima'], ['海ほたる', 'Umihotaru'], ['木更津金田', 'Kisarazu Kaneda'], ['袖ヶ浦', 'Sodegaura']],
   },
   {
     id: 'umihotaru',
@@ -59,6 +63,8 @@ export const COURSES = [
     cycles: 1.0,
     cityDensity: 0.55,
     traffic: 0.6,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['海ほたる', 'Umihotaru PA'], ['川崎方面', 'To Kawasaki'], ['木更津方面', 'To Kisarazu']],
   },
   {
     id: 'daikoku',
@@ -76,6 +82,8 @@ export const COURSES = [
     cycles: 2.2,
     cityDensity: 1.0,
     traffic: 1.15,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['大黒ふ頭', 'Daikoku Futo'], ['生麦', 'Namamugi'], ['新山下', 'Shin-Yamashita'], ['ベイブリッジ', 'Bay Bridge']],
   },
   {
     id: 'tatsumi',
@@ -93,6 +101,8 @@ export const COURSES = [
     cycles: 3.0,
     cityDensity: 0.95,
     traffic: 1.05,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['辰巳', 'Tatsumi'], ['有明', 'Ariake'], ['新木場', 'Shin-Kiba'], ['台場', 'Daiba']],
   },
   {
     id: 'haneda',
@@ -110,6 +120,8 @@ export const COURSES = [
     cycles: 1.6,
     cityDensity: 0.5,
     traffic: 0.85,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['空港中央', 'Airport Central'], ['羽田', 'Haneda'], ['浮島', 'Ukishima'], ['大師', 'Daishi']],
   },
   {
     id: 'minatomirai',
@@ -127,6 +139,8 @@ export const COURSES = [
     cycles: 2.6,
     cityDensity: 1.0,
     traffic: 1.2,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['みなとみらい', 'Minato Mirai'], ['新山下', 'Shin-Yamashita'], ['本牧ふ頭', 'Honmoku Futo'], ['大黒ふ頭', 'Daikoku Futo']],
   },
   {
     id: 'grandtour',
@@ -144,6 +158,8 @@ export const COURSES = [
     cycles: 3.2,
     cityDensity: 0.85,
     traffic: 1.0,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['大黒ふ頭', 'Daikoku Futo'], ['空港中央', 'Airport Central'], ['有明', 'Ariake'], ['葛西', 'Kasai'], ['市川', 'Ichikawa'], ['幕張', 'Makuhari']],
   },
   {
     id: 'rainbay',
@@ -162,6 +178,8 @@ export const COURSES = [
     cycles: 3.0,
     cityDensity: 0.85,
     traffic: 0.9,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['大井', 'Oi'], ['空港中央', 'Airport Central'], ['葛西', 'Kasai'], ['千鳥町', 'Chidoricho']],
   },
   {
     id: 'jam',
@@ -179,6 +197,8 @@ export const COURSES = [
     cycles: 2.4,
     cityDensity: 1.0,
     traffic: 2.6,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['辰巳', 'Tatsumi'], ['有明', 'Ariake'], ['新木場', 'Shin-Kiba'], ['台場', 'Daiba']],
   },
   {
     id: 'kawasaki',
@@ -196,6 +216,8 @@ export const COURSES = [
     cycles: 2.8,
     cityDensity: 1.0,
     traffic: 1.1,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['浮島', 'Ukishima'], ['大師', 'Daishi'], ['千鳥町', 'Chidoricho'], ['東扇島', 'Higashi-Ogishima']],
   },
   {
     id: 'makuhari',
@@ -213,6 +235,8 @@ export const COURSES = [
     cycles: 1.4,
     cityDensity: 0.45,
     traffic: 0.7,
+    // この道から降りられる出口（標識に出る行き先）。等間隔に並べます。
+    exits: [['幕張', 'Makuhari'], ['湾岸習志野', 'Narashino'], ['湾岸市川', 'Ichikawa'], ['千葉北', 'Chiba-Kita']],
   },
 ];
 
