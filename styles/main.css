@@ -94,22 +94,40 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .wt-note{margin-top:5px;font-size:11px;letter-spacing:.1em;color:var(--dim)}
 #hud-wanted.chase .wt-note{color:#ff8f8f}
 
+/* 受けている依頼 */
+#hud-job{
+  position:absolute;left:20px;top:96px;width:236px;
+  padding:9px 12px 10px;background:rgba(7,12,23,.8);
+  border:1px solid var(--line-strong);border-left:3px solid #5ff0ff
+}
+.jb-head{display:flex;justify-content:space-between;align-items:baseline}
+.jb-kind{font-size:12px;letter-spacing:.16em;color:#5ff0ff}
+.jb-time{font:800 19px/1 var(--f-display,monospace)}
+#hud-job.urgent{border-left-color:#ff4d4d}
+#hud-job.urgent .jb-time{color:#ff6a6a}
+#hud-job.urgent .jb-kind{color:#ff6a6a}
+.jb-to{margin-top:5px;font-size:15px;letter-spacing:.04em}
+.jb-meta{margin-top:3px;font-size:11px;color:var(--dim);letter-spacing:.08em}
+
 /* パーキングエリアでできること。ポインタも通すのでタッチでも押せます */
 #hud-prompt{
-  position:absolute;left:50%;bottom:19%;transform:translateX(-50%);
+  position:absolute;left:50%;bottom:17%;transform:translateX(-50%);
+  display:flex;flex-direction:column;gap:6px;align-items:stretch
+}
+#hud-prompt .pr-btn{
   display:flex;align-items:center;gap:11px;pointer-events:auto;cursor:pointer;
-  padding:11px 20px 11px 13px;color:var(--fg,#eef3fb);text-align:left;
-  background:rgba(7,12,23,.82);border:1px solid var(--line-strong);
+  padding:9px 18px 9px 11px;color:var(--fg,#eef3fb);text-align:left;
+  background:rgba(7,12,23,.85);border:1px solid var(--line-strong);
   border-left:3px solid #ff9a52;
   box-shadow:0 10px 30px rgba(0,0,0,.6)
 }
-#hud-prompt:hover{background:rgba(16,26,44,.92)}
+#hud-prompt .pr-btn:hover{background:rgba(16,26,44,.94)}
 #hud-prompt kbd{
   font:800 14px/1 var(--f-display,monospace);padding:6px 9px;
   background:#ff9a52;color:#101623;border:0
 }
-#hud-prompt b{display:block;font-size:16px;letter-spacing:.06em}
-#hud-prompt i{display:block;margin-top:3px;font-size:12px;font-style:normal;color:var(--dim);letter-spacing:.06em}
+#hud-prompt b{display:block;font-size:15px;letter-spacing:.06em}
+#hud-prompt i{display:block;margin-top:3px;font-size:11px;font-style:normal;color:var(--dim);letter-spacing:.06em}
 #hud-prompt.pop{animation:pop .28s cubic-bezier(.2,1.5,.4,1)}
 
 #hud-minimap{

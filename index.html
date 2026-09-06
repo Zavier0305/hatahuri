@@ -57,10 +57,15 @@
     <div class="wt-note"></div>
   </div>
 
+  <!-- 受けている依頼 -->
+  <div id="hud-job" style="display:none">
+    <div class="jb-head"><span class="jb-kind"></span><span class="jb-time"></span></div>
+    <div class="jb-to"></div>
+    <div class="jb-meta"></div>
+  </div>
+
   <!-- パーキングエリアでできること。タッチでも押せるようボタンにしています -->
-  <button id="hud-prompt" style="display:none">
-    <kbd>F</kbd><b></b><i></i>
-  </button>
+  <div id="hud-prompt" style="display:none"></div>
 
   <canvas id="hud-minimap"></canvas>
 
@@ -104,6 +109,7 @@
         <li>前車の40m以内はスリップストリームで伸びる</li>
         <li>出口から降りるとPA。停まって <kbd>F</kbd> で勝負／整備</li>
         <li>飛ばしすぎると高速隊が来る。PAへ逃げ込めば巻ける</li>
+        <li>PAで依頼を受けると、別のPAまでの配送で稼げる</li>
       </ul>
       <span class="fh-close">何かキーを押すと消えます</span>
     </div>
@@ -243,7 +249,7 @@
           <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
           <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
           <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
-          <tr><th>PAで話しかける</th><td><kbd>F</kbd> <span class="pad">画面のボタンでも可</span></td></tr>
+          <tr><th>PAでの行動</th><td><kbd>F</kbd> <kbd>G</kbd> <kbd>H</kbd> <span class="pad">画面のボタンでも可</span></td></tr>
           <tr><th>カメラ切替</th><td><kbd>C</kbd></td></tr>
           <tr><th>リスタート</th><td><kbd>R</kbd></td></tr>
           <tr><th>ポーズ</th><td><kbd>Esc</kbd></td></tr>
@@ -259,6 +265,11 @@
           <b>速度超過をやめない限り振り切れません。</b>
           速度を落とすか、インターで降りてPAへ逃げ込んでください（パトカーは本線から出られません）。
           真後ろに付かれて止まると連行され、罰金を取られます。</p>
+
+          <b>依頼</b>
+          <p>PAで停まると、そこで受けられる依頼が出ます。別のPAまで時間内に届けるだけですが、
+          <b>無傷回送</b>（一度もぶつけない）と<b>逃走</b>（手配度2から始まり、捕まらずに届ける）は
+          報酬が上がります。行き先はミニマップに水色の丸で出ます。</p>
 
           <b>インターで降りる</b>
           <p>出口の標識が出たら左へ寄る。ランプを下りた先はパーキングエリアで、自由に走り回れます。

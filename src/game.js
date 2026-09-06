@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/addons/EffectComposer.js';
 import { RenderPass } from 'three/addons/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/OutputPass.js';
-import { clamp, lerp, damp, formatTime } from './util.js';
+import { clamp, lerp, damp, formatTime, formatMoney } from './util.js';
 import { createTrack, buildRoad, ROAD, LANE_U, rampHeightAtU, PA, paBayZ, paSpots } from './track.js';
 import { COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildRamps, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
@@ -11,6 +11,7 @@ import { slipstreamFactor } from './vehicle.js';
 import { RivalAI } from './ai.js';
 import { Traffic } from './traffic.js';
 import { Police } from './police.js';
+import { Jobs } from './jobs.js';
 import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
@@ -129,7 +130,15 @@ export class Game {
     this.rival = null;
     this.rivalAI = null;
     // 高速隊。フリーラン中だけ有効にします
-    this.police = new Police(this.scene, null, { onEvent: (t, p) => this.onEvent(t, p) });
+    this.police = new Police(this.scene, null, {
+      onEvent: (t, p) => {
+        // 連行されたら、受けている依頼もそこで終わりです
+        if (t === 'busted' && this.jobs) this.jobs.busted();
+        this.onEvent(t, p);
+      },
+    });
+    // 依頼（ミッション）。パーキングエリアで受けて、別のPAまで届けます
+    this.jobs = new Jobs({ onEvent: (t, p) => this.onEvent(t, p) });
     this.demo = false;        // メニュー背景の自動走行
     this.autoAI = null;
     this.mode = 'idle';
@@ -380,51 +389,85 @@ export class Game {
   }
 
   /**
-   * いまパーキングエリアで何ができるか。
-   * 近くに走り屋がいれば勝負、いなければピットイン（整備）です。
+   * いまパーキングエリアでできることを並べます（最大3つ、F/G/H）。
+   * 1つしか出せないと「勝負」と「依頼」と「整備」が同じ場所で潰し合うので、
+   * 並べて出します。
    */
-  updatePaPrompt() {
-    const prev = this.paPrompt;
-    this.paPrompt = null;
+  updatePaActions() {
+    const list = [];
     const v = this.player && this.player.vehicle;
-    if (!v || this.state.finished || this.mode !== 'racing') return;
-    if (!v.onRamp || !this.track.rampAt) return;
-    const r = this.track.rampAt(v.s);
-    if (!r || r.pad < 0.35) return;
-    if (v.speedKmh > 20) return;
+    const r = (v && v.onRamp && this.track.rampAt && !this.state.finished && this.mode === 'racing')
+      ? this.track.rampAt(v.s) : null;
 
-    if (this.kind === 'battle') {
-      // 勝負の途中でもPAへ逃げ込めます。負けが決まるまで走らされるより、
-      // 自分で降りられるほうが自由です（そのかわり賞金も記録も付きません）。
-      this.paPrompt = {
-        kind: 'quit',
-        label: '勝負から降りる',
-        sub: `${r.name}PA に逃げ込む — 賞金も記録もなし`,
-      };
-    } else if (this.kind === 'free') {
-      let best = null, bd = 11;   // 相手の真横につけたときだけ（離れて停めれば整備）
-      for (const pr of this.paRacers || []) {
-        if (!pr.mesh.visible) continue;
-        const d = pr.pos.distanceTo(v.pos);
-        if (d < bd) { bd = d; best = pr; }
-      }
-      if (best) {
-        this.paPrompt = {
-          kind: 'battle', rival: best.def, exitIndex: best.spot.index,
-          label: '勝負を挑む',
-          sub: `${best.def.name}（${CAR_BY_ID[best.def.carId].name}）`,
-        };
-      } else if (v.speedKmh < 6) {
-        this.paPrompt = {
-          kind: 'pit',
-          label: 'ピットインする',
-          sub: `${r.name}PA — チューニング・車の乗り換え`,
-        };
+    if (r && r.pad >= 0.35 && v.speedKmh <= 20) {
+      if (this.kind === 'battle') {
+        // 勝負の途中でもPAへ逃げ込めます。負けが決まるまで走らされるより、
+        // 自分で降りられるほうが自由です（そのかわり賞金も記録も付きません）。
+        list.push({
+          kind: 'quit', label: '勝負から降りる',
+          sub: `${r.name}PA に逃げ込む — 賞金も記録もなし`,
+        });
+      } else if (this.kind === 'free') {
+        let best = null, bd = 11;   // 相手の真横につけたときだけ
+        for (const pr of this.paRacers || []) {
+          if (!pr.mesh.visible) continue;
+          const d = pr.pos.distanceTo(v.pos);
+          if (d < bd) { bd = d; best = pr; }
+        }
+        if (best) {
+          list.push({
+            kind: 'battle', rival: best.def, exitIndex: best.spot.index,
+            label: '勝負を挑む',
+            sub: `${best.def.name}（${CAR_BY_ID[best.def.carId].name}）`,
+          });
+        }
+        if (v.speedKmh < 6) {
+          if (this.jobs.active) {
+            const j = this.jobs.active;
+            list.push({
+              kind: 'job-cancel', label: '依頼をやめる',
+              sub: `${j.label}（${j.toName}行き）を降ろす`,
+            });
+          } else {
+            const job = this.offerAt(r.index);
+            if (job) {
+              list.push({
+                kind: 'job', job, label: `${job.label}を受ける`,
+                sub: `${job.toName}まで ${(job.dist / 1000).toFixed(1)}km ／ `
+                  + `${Math.round(job.limit)}秒 ／ ¥${formatMoney(job.reward)}`,
+              });
+            }
+          }
+          list.push({
+            kind: 'pit', label: 'ピットインする',
+            sub: `${r.name}PA — チューニング・車の乗り換え`,
+          });
+        }
       }
     }
-    if (this.paPrompt && (!prev || prev.kind !== this.paPrompt.kind || prev.sub !== this.paPrompt.sub)) {
-      this.onEvent('prompt', this.paPrompt);
+
+    const KEYS = ['F', 'G', 'H'];
+    for (let i = 0; i < list.length; i++) list[i].key = KEYS[i];
+    this.paActions = list.length ? list : null;
+    // 互換のため、先頭を paPrompt としても持っておきます
+    this.paPrompt = list[0] || null;
+
+    const sig = list.map((a2) => `${a2.kind}|${a2.sub}`).join('/');
+    if (sig && sig !== this._paSig) this.onEvent('prompt', list[0]);
+    this._paSig = sig;
+  }
+
+  /**
+   * その出口で受けられる依頼。
+   * 内容は「コースの種と出口番号」から決まるので毎回同じです。
+   * 毎フレーム作り直すと無駄なので、出口が変わったときだけ作ります。
+   */
+  offerAt(index) {
+    if (!this._offer || this._offer.index !== index) {
+      const spot = (this.paSpots || []).find((sp) => sp.index === index);
+      this._offer = { index, job: spot ? this.jobs.offer(this.track, this.paSpots, spot) : null };
     }
+    return this._offer.job;
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
@@ -453,11 +496,14 @@ export class Game {
     }
     this.traffic.density = opts.traffic ?? 1;
     this.paPrompt = null;
-    // 高速隊はフリーランだけ。バトルやタイムアタックに割り込ませると
+    this.paActions = null;
+    this._paSig = '';
+    this._offer = null;
+    // 高速隊と依頼はフリーランだけ。バトルやタイムアタックに割り込ませると
     // 勝負にならず、記録も意味がなくなります。
     this.police.clear();
     this.police.enabled = (kind === 'free');
-    this.paPrompt = null;
+    if (kind !== 'free') this.jobs.reset();
     this.mode = this.state.countdown > 0 ? 'countdown' : 'racing';
     if (opts.camMode !== undefined) this.userCamMode = opts.camMode;
     this.camMode = this.userCamMode;
@@ -764,6 +810,7 @@ export class Game {
     const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
     if (wallHit > 1.5) {
       this.police.scrape(dt, wallHit);
+      if (wallHit > 4) this.jobs.hit();
       this.emitSparks(pv, 14);
       this.shake = Math.max(this.shake, clamp(wallHit / 12, 0.1, 0.9));
       audio && audio.crash(clamp(wallHit / 14, 0.2, 1));
@@ -775,6 +822,7 @@ export class Game {
       this.onEvent('crash', crash);
       // 一般車にぶつければ、それだけで見咎められます
       this.police.impact(crash);
+      if (crash > 0.15) this.jobs.hit();
     }
 
     if (this.rival) {
@@ -854,8 +902,11 @@ export class Game {
       }
     }
 
+    // --- 依頼の進行
+    if (this.mode === 'racing') this.jobs.update(dt, pv, this.track);
+
     // --- パーキングエリアでできること
-    this.updatePaPrompt();
+    this.updatePaActions();
 
     // --- 演出
     this.updateCamera(dt);
@@ -1110,7 +1161,9 @@ export class Game {
       // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
       // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
       prompt: this.paPrompt,
+      actions: this.paActions,
       police: this.police.state(),
+      job: this.jobs.state(v, this.track.length),
       battle: this.kind === 'battle' && this.rival && !this.state.finished
         ? { life: this.state.life, rivalLife: this.state.rivalLife, gap: this.state.gap }
         : null,

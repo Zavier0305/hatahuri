@@ -1145,7 +1145,7 @@ export function buildRamps(track, scene) {
         // 売店のガラス面。真横に停めると画面の3分の1が白く飛ぶので、
         // ブルームに耐える程度まで落とします
         const win = new THREE.MeshStandardMaterial({
-          color: 0xffe6b0, emissive: 0xffd48a, emissiveIntensity: 1.3, roughness: 0.5,
+          color: 0xffe6b0, emissive: 0xffd48a, emissiveIntensity: 0.7, roughness: 0.5,
         });
         const paint = new THREE.MeshStandardMaterial({
           color: 0xcfd3ca, roughness: 0.75, emissive: 0x24261f, emissiveIntensity: 0.5,

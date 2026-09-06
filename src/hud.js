@@ -28,8 +28,11 @@ export class HUD {
       wantedFill: root.querySelector('#hud-wanted .wt-bar span'),
       wantedNote: root.querySelector('#hud-wanted .wt-note'),
       prompt: root.querySelector('#hud-prompt'),
-      promptLabel: root.querySelector('#hud-prompt b'),
-      promptSub: root.querySelector('#hud-prompt i'),
+      job: root.querySelector('#hud-job'),
+      jobKind: root.querySelector('#hud-job .jb-kind'),
+      jobTime: root.querySelector('#hud-job .jb-time'),
+      jobTo: root.querySelector('#hud-job .jb-to'),
+      jobMeta: root.querySelector('#hud-job .jb-meta'),
     };
     this.tctx = this.el.tacho.getContext('2d');
     this.mctx = this.el.minimap.getContext('2d');
@@ -215,6 +218,17 @@ export class HUD {
         g.beginPath(); g.rect(x - 3, y - 3, 6, 6); g.stroke(); g.fill();
       }
     }
+    // 依頼の行き先。どこへ向かえばいいのか分からないと依頼が成立しません
+    if (this.jobDest !== null && this.jobDest !== undefined) {
+      const sm = t.sample(this.jobDest, this._dotTmp || (this._dotTmp = {}));
+      const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
+      g.strokeStyle = 'rgba(0,0,0,0.85)'; g.lineWidth = 3;
+      g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.stroke();
+      g.strokeStyle = '#5ff0ff'; g.lineWidth = 2;
+      g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#5ff0ff';
+      g.beginPath(); g.arc(x, y, 2.6, 0, Math.PI * 2); g.fill();
+    }
     for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.6, true);
     dot(playerS, '#5ff0ff', 4.6, true);
   }
@@ -265,21 +279,53 @@ export class HUD {
     el.classList.toggle('chase', !!p.chasing);
   }
 
-  /** パーキングエリアでできること（近づいたときだけ出します） */
-  setPrompt(p) {
+  /**
+   * パーキングエリアでできること（近づいたときだけ出します）。
+   * 複数あるので、キーを振ったボタンを縦に並べます。
+   * onAction を差し込むと、押されたときに番号で返ってきます。
+   */
+  setPrompt(list) {
     const el = this.el.prompt;
     if (!el) return;
-    if (!p) { el.style.display = 'none'; this._promptKey = null; return; }
-    const key = `${p.kind}|${p.label}|${p.sub}`;
+    if (!list || !list.length) { el.style.display = 'none'; this._promptKey = null; return; }
+    const key = list.map((a) => `${a.key}|${a.label}|${a.sub}`).join('/');
     if (key !== this._promptKey) {
       this._promptKey = key;
-      this.el.promptLabel.textContent = p.label;
-      this.el.promptSub.textContent = p.sub || '';
+      el.innerHTML = list.map((a, i) => (
+        `<button class="pr-btn" data-i="${i}">`
+        + `<kbd>${a.key}</kbd><span><b></b><i></i></span></button>`
+      )).join('');
+      // ラベルは textContent で入れます（相手の名前などをそのまま埋め込まないため）
+      const btns = Array.from(el.querySelectorAll('.pr-btn'));
+      btns.forEach((b, i) => {
+        b.querySelector('b').textContent = list[i].label;
+        b.querySelector('i').textContent = list[i].sub || '';
+        b.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (this.onAction) this.onAction(i);
+        });
+      });
       el.classList.remove('pop');
       void el.offsetWidth;
       el.classList.add('pop');
     }
     el.style.display = '';
+  }
+
+  /** 受けている依頼 */
+  setJob(j) {
+    const el = this.el.job;
+    if (!el) return;
+    if (!j) { el.style.display = 'none'; this.jobDest = null; return; }
+    this.jobDest = j.destS;
+    el.style.display = '';
+    el.classList.toggle('urgent', !!j.urgent);
+    this.el.jobKind.textContent = j.label;
+    this.el.jobTime.textContent = `${j.time.toFixed(1)}s`;
+    this.el.jobTo.textContent = `${j.to} まで ${(j.dist / 1000).toFixed(1)} km`;
+    this.el.jobMeta.textContent = j.kind === 'clean' && !j.clean
+      ? '接触あり — 失敗'
+      : `報酬 ¥${formatMoney(j.reward)}`;
   }
 
   message(text, sub = '', ms = 1800) {
@@ -303,8 +349,9 @@ export class HUD {
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
     if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
-    this.setPrompt(st.prompt);
+    this.setPrompt(st.actions);
     this.setWanted(st.police);
+    this.setJob(st.job);
     if (this.el.money) this.el.money.textContent = `¥${formatMoney(st.money || 0)}`;
     if (this.msgTimer > 0) {
       this.msgTimer -= dt;

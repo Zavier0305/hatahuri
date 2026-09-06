@@ -558,9 +558,11 @@ let pitStop = null;   // ピットイン中に、戻り先を覚えておきま�
  * パーキングエリアでの行動を実行します（F キー／画面のボタン）。
  * 勝負なら、その出口のすぐ先の本線からバトルを始めます。
  */
-function doPaAction() {
-  const p = game && game.paPrompt;
-  if (!p || pitStop || paused) return;
+function doPaAction(i = 0) {
+  const list = game && game.paActions;
+  if (!list || pitStop || paused) return;
+  const p = list[i];
+  if (!p) return;
   audio.resume();
   if (p.kind === 'battle') {
     const ep = game.track.exitPoints[p.exitIndex];
@@ -573,7 +575,14 @@ function doPaAction() {
     return;
   }
   if (p.kind === 'pit') { openPit(); return; }
-  if (p.kind === 'quit') game.finish('abort');
+  if (p.kind === 'quit') { game.finish('abort'); return; }
+  if (p.kind === 'job') {
+    game.jobs.accept(p.job);
+    // 「逃走」は手配度2から始めます。依頼そのものが追跡になります
+    if (p.job.kind === 'heat') { game.police.heat = 2.4; game.police.fleet(game.player); }
+    return;
+  }
+  if (p.kind === 'job-cancel') game.jobs.abandon('取りやめ');
 }
 
 function openPit() {
@@ -753,7 +762,9 @@ input.onAction = (code) => {
     return;
   }
   if (current !== 'none') { menuKey(code); return; }
-  if (code === 'KeyF') { doPaAction(); return; }
+  if (code === 'KeyF') { doPaAction(0); return; }
+  if (code === 'KeyG') { doPaAction(1); return; }
+  if (code === 'KeyH') { doPaAction(2); return; }
   if (code === 'KeyC') {
     hud.message(game.cycleCamera(), '', 900);
     data.settings.cam = game.userCamMode;
@@ -762,7 +773,7 @@ input.onAction = (code) => {
   if (code === 'KeyR') restart();
 };
 
-$('#hud-prompt').addEventListener('click', (e) => { e.preventDefault(); doPaAction(); });
+// 画面のボタンは HUD 側が組み立てて、押された番号を返してきます
 
 function onGameEvent(type, payload) {
   if (type === 'count') hud.message(String(payload), '', 900);
@@ -795,6 +806,24 @@ function onGameEvent(type, payload) {
     } else {
       hud.message(`手配度 ${payload.level}`, '1台まいた', 1300);
     }
+  }
+  // --- 依頼
+  if (type === 'job-start') {
+    hud.message(payload.label, `${payload.toName}まで ${(payload.dist / 1000).toFixed(1)} km`, 2200);
+    audio.beep(980, 0.1, 0.12);
+  }
+  if (type === 'job-clear') {
+    const j = payload.job;
+    // 無傷の依頼を接触ありで持ち込んだ場合は減額します
+    const pay = (j.kind === 'clean' && !j.clean) ? Math.round(j.reward * 0.4) : j.reward;
+    data.money += pay;
+    save(data);
+    hud.message('DELIVERED', `¥${formatMoney(pay)} ／ 残り ${payload.left.toFixed(1)}秒`, 2800);
+    audio.beep(1320, 0.2, 0.16);
+  }
+  if (type === 'job-fail') {
+    hud.message('依頼失敗', payload.reason, 2200);
+    audio.beep(300, 0.24, 0.14);
   }
   if (type === 'busted') {
     data.money = Math.max(0, data.money - payload.fine);
@@ -854,6 +883,7 @@ async function boot() {
 
   hud = new HUD(document.getElementById('hud'), game.track);
   hud.setPaMarks(game.paSpots);
+  hud.onAction = (i) => doPaAction(i);
   input.bindTouch(document);
   if ('ontouchstart' in window) $('#touch').classList.remove('hidden');
 
