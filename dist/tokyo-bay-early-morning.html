@@ -84,6 +84,24 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 @keyframes pop{from{transform:scale(.68);opacity:0}to{transform:scale(1);opacity:1}}
 #hud-sub{margin-top:8px;font-size:15px;color:var(--dim);letter-spacing:.12em}
 
+/* パーキングエリアでできること。ポインタも通すのでタッチでも押せます */
+#hud-prompt{
+  position:absolute;left:50%;bottom:19%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:11px;pointer-events:auto;cursor:pointer;
+  padding:11px 20px 11px 13px;color:var(--fg,#eef3fb);text-align:left;
+  background:rgba(7,12,23,.82);border:1px solid var(--line-strong);
+  border-left:3px solid #ff9a52;
+  box-shadow:0 10px 30px rgba(0,0,0,.6)
+}
+#hud-prompt:hover{background:rgba(16,26,44,.92)}
+#hud-prompt kbd{
+  font:800 14px/1 var(--f-display,monospace);padding:6px 9px;
+  background:#ff9a52;color:#101623;border:0
+}
+#hud-prompt b{display:block;font-size:16px;letter-spacing:.06em}
+#hud-prompt i{display:block;margin-top:3px;font-size:12px;font-style:normal;color:var(--dim);letter-spacing:.06em}
+#hud-prompt.pop{animation:pop .28s cubic-bezier(.2,1.5,.4,1)}
+
 #hud-minimap{
   position:absolute;right:20px;top:98px;width:152px;height:152px;
   background:rgba(7,12,23,.74);border:1px solid var(--line-strong);
@@ -525,6 +543,11 @@ kbd{
     <div id="hud-sub"></div>
   </div>
 
+  <!-- パーキングエリアでできること。タッチでも押せるようボタンにしています -->
+  <button id="hud-prompt" style="display:none">
+    <kbd>F</kbd><b></b><i></i>
+  </button>
+
   <canvas id="hud-minimap"></canvas>
 
   <div id="hud-bottom">
@@ -565,6 +588,7 @@ kbd{
         <li><kbd>←</kbd><kbd>→</kbd> ハンドル</li>
         <li><kbd>C</kbd> カメラ切替　<kbd>Esc</kbd> ポーズ</li>
         <li>前車の40m以内はスリップストリームで伸びる</li>
+        <li>出口から降りるとPA。停まって <kbd>F</kbd> で勝負／整備</li>
       </ul>
       <span class="fh-close">何かキーを押すと消えます</span>
     </div>
@@ -704,6 +728,7 @@ kbd{
           <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
           <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
           <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
+          <tr><th>PAで話しかける</th><td><kbd>F</kbd> <span class="pad">画面のボタンでも可</span></td></tr>
           <tr><th>カメラ切替</th><td><kbd>C</kbd></td></tr>
           <tr><th>リスタート</th><td><kbd>R</kbd></td></tr>
           <tr><th>ポーズ</th><td><kbd>Esc</kbd></td></tr>
@@ -713,6 +738,10 @@ kbd{
           <p>レッドゾーン手前でシフトアップ。コーナーはブレーキで前に荷重をかけてから曲げる。
           前車の40m以内に入るとスリップストリームが効き、空気抵抗が約4割減ります。
           追越車線には一般車が出てこないので、全開で使えます。</p>
+          <b>インターで降りる</b>
+          <p>出口の標識が出たら左へ寄る。ランプを下りた先はパーキングエリアで、自由に走り回れます。
+          走り屋が停まっているので、真横につけて <kbd>F</kbd> でその場で勝負。
+          誰もいないところで停まって <kbd>F</kbd> を押すと、ピットイン＝そのままチューニングや乗り換えができます。</p>
         </div>
       </div>
     </div>
@@ -2333,6 +2362,45 @@ function rampPad(t) {
   if (t <= RAMP_RISE || t >= RAMP_RISE + RAMP_HOLD) return 0;
   return Math.sin(Math.PI * ((t - RAMP_RISE) / RAMP_HOLD));
 }
+
+/**
+ * パーキングエリアの配置。
+ * 設備（scenery.js）と、たむろしている車（game.js）が別々に位置を計算すると
+ * 必ずずれるので、寸法はここに一本化します。
+ *   bayU     … 外側の縁から何m内側に停めるか
+ *   bayPitch … 駐車ますの間隔（進行方向）
+ *   bays     … ます数
+ *   shopZ    … 売店の位置。0のままだと駐車ますの上に建ってしまいます
+ */
+const PA = {
+  bayU: 4.6,      // 外側の縁から、駐車ますの中心までの距離
+  bayDepth: 5.2,  // ますの奥行き
+  bayPitch: 2.9,  // ますの間隔（進行方向）
+  bays: 8,
+  shopZ: 26,      // 売店の位置。0のままだと駐車ますの上に建ってしまいます
+  poleZ: 20,      // 照明柱の位置
+};
+
+/** k番目（0..bays-1）の駐車ますの、広場中心からの進行方向オフセット[m]。 */
+function paBayZ(k) { return (k - (PA.bays - 1) / 2) * PA.bayPitch; }
+
+/**
+ * このコースのパーキングエリア一覧。
+ * 広場がいちばん広いのは台形の平らな区間のまんなか＝ t=0.5 の地点です。
+ */
+function paSpots(track) {
+  const out = [];
+  const ex = (track.course && track.course.exits) || [];
+  const eps = track.exitPoints || [];
+  for (let i = 0; i < ex.length; i++) {
+    if (!eps[i]) continue;
+    const s = eps[i].s - RAMP.lead + RAMP.span * 0.5;
+    const r = track.rampAt(s);
+    if (!r || r.index !== i || r.pad < 0.99) continue;
+    out.push({ index: i, name: r.name, s, outerU: r.outerU, innerU: r.innerU, h: r.h });
+  }
+  return out;
+}
 const smoothstep01 = (x) => {
   const k = x < 0 ? 0 : x > 1 ? 1 : x;
   return k * k * (3 - 2 * k);
@@ -3014,10 +3082,21 @@ class Vehicle {
     this.maxGear = this.spec.gears.length;
   }
 
-  placeOnTrack(track, s, u) {
+  /**
+   * コース上へ置き直します。
+   * opts.onRamp を渡すと、ランプ（パーキングエリア）の高さに合わせて置きます。
+   * これがないと本線の高さに現れて、路面まで落ちるあいだ座標が暴れます。
+   */
+  placeOnTrack(track, s, u, opts = {}) {
     const sm = track.sample(s, this._sm);
-    this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, 0.02);
-    this.heading = Math.atan2(sm.tan.x, sm.tan.z);
+    let hOff = 0;
+    this.onRamp = !!opts.onRamp;
+    if (this.onRamp && track.rampAt) {
+      const r = track.rampAt(s);
+      if (r) hOff = rampHeightAtU(r, u); else this.onRamp = false;
+    }
+    this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, hOff + 0.02);
+    this.heading = opts.heading !== undefined ? opts.heading : Math.atan2(sm.tan.x, sm.tan.z);
     this.s = s; this.u = u; this.trackIndex = sm.index;
     this.roadHeading = sm.heading; this.roadCurv = sm.curv;
     this.vx = 0; this.vy = 0; this.yawRate = 0;
@@ -4612,7 +4691,7 @@ function buildRamps(track, scene) {
       if (!r) continue;
       track.sample(s2, sm);
       rows.push({
-        pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(),
+        pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(), tan: sm.tan.clone(),
         outerU: r.outerU, innerU: r.innerU, h: r.h, f: r.f, pad: r.pad || 0, r,
         c: sm.pos.clone().addScaledVector(sm.lat, r.u).addScaledVector(sm.up, r.h),
       });
@@ -4686,7 +4765,11 @@ function buildRamps(track, scene) {
       const g3 = new THREE.Group();
       g3.position.copy(mid.c);
       const bs = new THREE.Matrix4();
-      bs.makeBasis(mid.lat, mid.up, new THREE.Vector3().crossVectors(mid.lat, mid.up).negate());
+      // makeBasis は右手系（X×Y=Z）でないと、setFromRotationMatrix が
+      // まるで別の回転を返します。lat×up は -tan なので、これを第3列に
+      // 置いた以前の式は左手系で、料金所は進行方向を無視した向き（ほぼ無回転）
+      // で建っていました。他の設備と同じ [lat, up, -tan] に揃えます。
+      bs.makeBasis(mid.lat, mid.up, new THREE.Vector3().copy(mid.tan).negate());
       g3.quaternion.setFromRotationMatrix(bs);
       const rf = new THREE.Mesh(new THREE.BoxGeometry(H * 2 + 3.4, 0.45, 5.0), roof);
       rf.position.set(0, 5.4, 0); g3.add(rf);
@@ -4706,52 +4789,112 @@ function buildRamps(track, scene) {
 
     // ---- パーキングエリアの設備
     // 広場だけだと「ただの広い舗装」なので、目印になるものを置きます。
+    // 寸法は track.js の PA に一本化してあります（たむろしている車を置くのは
+    // game.js 側なので、別々に計算するとますからずれます）。
+    //
+    // 広場は中央がいちばん広く、端へ行くほど細くなります。設備を1つの行の
+    // 座標系にまとめて置くと、離れた場所のものが舗装からはみ出します
+    // （売店が縁から2.9mせり出していました）。設備ごとに、その位置の行を
+    // 基準にします。
     {
-      let wide = rows[0], bestPad = -1;
-      for (const rr of rows) if (rr.pad > bestPad) { bestPad = rr.pad; wide = rr; }
-      if (bestPad > 0.5) {
+      let wideIdx = 0;
+      for (let i = 0; i < rows.length; i++) if (rows[i].pad > rows[wideIdx].pad) wideIdx = i;
+      const wide = rows[wideIdx];
+      if (wide.pad > 0.5) {
+        const step = RAMP.span / STEPS;
+        /** 広場の中心から進行方向へ dz[m] 離れた行 */
+        const rowAt = (dz) => rows[Math.max(0, Math.min(rows.length - 1, Math.round(wideIdx + dz / step)))];
+        /** その行を原点にした座標系。局所+Xは横位置u、局所+Zは進行方向の逆です */
+        const groupAt = (r) => {
+          const g5 = new THREE.Group();
+          g5.position.copy(r.pos);
+          const m = new THREE.Matrix4();
+          m.makeBasis(r.lat, r.up, new THREE.Vector3().copy(r.tan).negate());
+          g5.quaternion.setFromRotationMatrix(m);
+          group.add(g5);
+          return g5;
+        };
+        /** 進行方向のオフセット[m] → 局所z */
+        const AZ = (dz) => -dz;
+        const edgeOf = (r) => r.outerU;
+        const floorOf = (r) => rampHeightAtU(r.r, r.outerU);
+
         const wall = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.85, metalness: 0.05 });
+        // 売店のガラス面。真横に停めると画面の3分の1が白く飛ぶので、
+        // ブルームに耐える程度まで落とします
         const win = new THREE.MeshStandardMaterial({
-          color: 0xffe6b0, emissive: 0xffd48a, emissiveIntensity: 2.2, roughness: 0.5,
+          color: 0xffe6b0, emissive: 0xffd48a, emissiveIntensity: 1.3, roughness: 0.5,
         });
         const paint = new THREE.MeshStandardMaterial({
           color: 0xcfd3ca, roughness: 0.75, emissive: 0x24261f, emissiveIntensity: 0.5,
         });
-        const g4 = new THREE.Group();
-        g4.position.copy(wide.pos);
-        const bs2 = new THREE.Matrix4();
-        bs2.makeBasis(wide.lat, wide.up, new THREE.Vector3().crossVectors(wide.lat, wide.up).negate());
-        g4.quaternion.setFromRotationMatrix(bs2);
-        const outEdge = wide.outerU, inEdge = Math.min(wide.innerU, -(ROAD.halfRoad - 0.35));
-        const midU = (outEdge + inEdge) * 0.5;
-        const y0 = rampHeightAtU(wide.r, midU);
-        // 売店（奥側に置きます）
-        const b = new THREE.Mesh(new THREE.BoxGeometry(16, 4.4, 9), wall);
-        b.position.set(outEdge + 9, y0 + 2.2, 0);
-        g4.add(b);
-        for (const dz of [-2.6, 0, 2.6]) {
-          const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.6, 1.9), win);
-          w2.position.set(outEdge + 9 - 8.1, y0 + 2.3, dz);
-          g4.add(w2);
+
+        // 売店。以前は駐車ますと同じ位置に建てていて、白線9本のうち3本が
+        // 建物の下敷きになっていました。ますから離した行に置きます。
+        {
+          const r5 = rowAt(PA.shopZ);
+          const g5 = groupAt(r5);
+          // 建物の奥行きは「縁から、走り抜ける通路の外側まで」に収めます。
+          // ここを超えると、広場を通り抜ける道の上に建ってしまいます。
+          const x0 = edgeOf(r5) + 0.8;
+          const y0 = floorOf(r5);
+          const b = new THREE.Mesh(new THREE.BoxGeometry(7, 4.6, 11), wall);
+          b.position.set(x0 + 3.5, y0 + 2.3, 0);
+          g5.add(b);
+          for (const dz of [-3.2, 0, 3.2]) {
+            const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.8, 2.2), win);
+            w2.position.set(x0 + 7.1, y0 + 2.3, dz);
+            g5.add(w2);
+          }
+          // 庇と柱。これがあるだけで「建物」に見えます
+          const eave = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.25, 12), wall);
+          eave.position.set(x0 + 8.3, y0 + 4.0, 0);
+          g5.add(eave);
+          for (const dz of [-4.6, 4.6]) {
+            const pil = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.9, 0.22), wall);
+            pil.position.set(x0 + 9.4, y0 + 1.95, dz);
+            g5.add(pil);
+          }
+          // 「PA」の行灯。夜に遠くから見える目印です
+          const sign = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.5, 4.4),
+            new THREE.MeshStandardMaterial({
+              color: 0x2a6fd8, emissive: 0x2f7bea, emissiveIntensity: 3.0, roughness: 0.5,
+            }));
+          sign.position.set(x0 + 7.3, y0 + 5.2, 0);
+          g5.add(sign);
         }
-        // 駐車ますの白線
-        for (let k = -4; k <= 4; k++) {
-          const linem = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.02, 0.16), paint);
-          linem.position.set(outEdge + 3.0, y0 + 0.02, k * 2.6);
-          g4.add(linem);
+
+        // 駐車ます。ます数+1本の白線と、奥の車止め
+        {
+          const g5 = groupAt(wide);
+          const x0 = edgeOf(wide) + PA.bayU;
+          const y0 = floorOf(wide);
+          for (let k = 0; k <= PA.bays; k++) {
+            const linem = new THREE.Mesh(new THREE.BoxGeometry(PA.bayDepth, 0.02, 0.16), paint);
+            linem.position.set(x0, y0 + 0.02, AZ(paBayZ(k) - PA.bayPitch / 2));
+            g5.add(linem);
+          }
+          for (let k = 0; k < PA.bays; k++) {
+            const stop = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 1.6), paint);
+            stop.position.set(x0 - PA.bayDepth / 2 + 0.6, y0 + 0.08, AZ(paBayZ(k)));
+            g5.add(stop);
+          }
         }
-        // 照明柱
-        for (const dz of [-16, 16]) {
+
+        // 照明柱。走る場所の邪魔にならないよう、ますの並びの外側に立てます
+        for (const dz of [-PA.poleZ, PA.poleZ]) {
+          const r5 = rowAt(dz);
+          const g5 = groupAt(r5);
+          const x0 = edgeOf(r5) + 2.4;
+          const y0 = floorOf(r5);
           const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 8, 6), wall);
-          pole.position.set(midU - wide.pos.x * 0 , y0 + 4, dz);
-          pole.position.x = midU;
-          g4.add(pole);
+          pole.position.set(x0, y0 + 4, 0);
+          g5.add(pole);
           const head = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.6),
             new THREE.MeshStandardMaterial({ color: 0xffe7bb, emissive: 0xffd79a, emissiveIntensity: 4.0 }));
-          head.position.set(midU, y0 + 8, dz);
-          g4.add(head);
+          head.position.set(x0 + 0.6, y0 + 8, 0);
+          g5.add(head);
         }
-        group.add(g4);
       }
     }
   }
@@ -5464,6 +5607,9 @@ class HUD {
       sub: root.querySelector('#hud-sub'),
       zone: root.querySelector('#hud-zone'),
       money: root.querySelector('#hud-money'),
+      prompt: root.querySelector('#hud-prompt'),
+      promptLabel: root.querySelector('#hud-prompt b'),
+      promptSub: root.querySelector('#hud-prompt i'),
     };
     this.tctx = this.el.tacho.getContext('2d');
     this.mctx = this.el.minimap.getContext('2d');
@@ -5637,9 +5783,24 @@ class HUD {
       g.arc(x, y, r, 0, Math.PI * 2);
       g.fill();
     };
+    // パーキングエリアの位置。どこで降りられるか分からないと、
+    // 降りられること自体に気づけません
+    if (this.paMarks) {
+      for (const m of this.paMarks) {
+        const sm = t.sample(m.s, this._dotTmp || (this._dotTmp = {}));
+        const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
+        g.fillStyle = 'rgba(47,123,234,0.95)';
+        g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.lineWidth = 2.4;
+        g.beginPath(); g.rect(x - 3, y - 3, 6, 6); g.stroke(); g.fill();
+      }
+    }
     for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.6, true);
     dot(playerS, '#5ff0ff', 4.6, true);
   }
+
+  /** 地図に出すパーキングエリアの位置（コースを切り替えるたびに渡します） */
+  setPaMarks(list) { this.paMarks = list || null; }
 
   setBattle(on, meName, youName) {
     this.el.battle.style.display = on ? '' : 'none';
@@ -5655,6 +5816,23 @@ class HUD {
     const ahead = gap >= 0;
     this.el.gap.textContent = `${ahead ? '+' : '−'}${Math.abs(gap).toFixed(0)} m`;
     this.el.gap.className = ahead ? 'ahead' : 'behind';
+  }
+
+  /** パーキングエリアでできること（近づいたときだけ出します） */
+  setPrompt(p) {
+    const el = this.el.prompt;
+    if (!el) return;
+    if (!p) { el.style.display = 'none'; this._promptKey = null; return; }
+    const key = `${p.kind}|${p.label}|${p.sub}`;
+    if (key !== this._promptKey) {
+      this._promptKey = key;
+      this.el.promptLabel.textContent = p.label;
+      this.el.promptSub.textContent = p.sub || '';
+      el.classList.remove('pop');
+      void el.offsetWidth;
+      el.classList.add('pop');
+    }
+    el.style.display = '';
   }
 
   message(text, sub = '', ms = 1800) {
@@ -5678,6 +5856,7 @@ class HUD {
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
     if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
+    this.setPrompt(st.prompt);
     if (this.el.money) this.el.money.textContent = `¥${formatMoney(st.money || 0)}`;
     if (this.msgTimer > 0) {
       this.msgTimer -= dt;
@@ -5993,6 +6172,9 @@ class Game {
     buildBridges(this.track, w);
     this.scene.add(w);
     this.world = w;
+    // このコースのパーキングエリア。たむろしている車を置く場所です
+    this.setPaRacers(null);
+    this.paSpots = paSpots(this.track);
 
     // 天候。濡れた路面はグリップが落ち、映り込みが強くなります。
     // 海も高さ -2m 固定でした。路面がそれより低くなる区間では海が路面を
@@ -6102,6 +6284,132 @@ class Game {
     return this.rival;
   }
 
+  // ---------------------------------------------------------------- パーキングエリア
+
+  /**
+   * パーキングエリアにたむろしている走り屋を置きます。
+   * メニューへ戻らなくても、走っている世界の中で相手を選べるようにするための
+   * 仕掛けです。ランプの平らな区間は「本線の s に対する横位置と高さ」で
+   * 表せるので、置き場所も (s, u) で決められます。
+   *
+   * list … 挑戦できる相手（story.js の定義）。null で片付けます。
+   */
+  setPaRacers(list) {
+    if (this.paGroup) {
+      this.scene.remove(this.paGroup);
+      disposeTree(this.paGroup);
+      this.paGroup = null;
+    }
+    this.paRacers = [];
+    const spots = this.paSpots || [];
+    if (!list || !list.length || !spots.length) return;
+
+    const g = new THREE.Group();
+    g.name = 'paRacers';
+    const sm = {};
+    const basis = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const turn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const left = new THREE.Vector3();
+    // 全部のますを埋めると通り抜けられなくなるので、間を空けて停めます
+    const BAYS = [1, 3, 5, 7];
+    let n = 0;
+
+    const put = (spot, k, spec, color, def) => {
+      const sb = spot.s + paBayZ(k);
+      const r = this.track.rampAt(sb);
+      if (!r || r.index !== spot.index) return;
+      const u = spot.outerU + PA.bayU;
+      this.track.sample(sb, sm);
+      const built = buildCar(spec, { color });
+      const root = built.root;
+      root.position.copy(sm.pos)
+        .addScaledVector(sm.lat, u)
+        .addScaledVector(sm.up, rampHeightAtU(r, u) + 0.02);
+      // 車の回転行列は右手系（X×Y=Z）＝ [左, 上, 進行方向]。
+      // そこから Y まわりに +90 度で、ますへ頭から入れた向きになります。
+      basis.makeBasis(left.copy(sm.lat).negate(), sm.up, sm.tan);
+      q.setFromRotationMatrix(basis).multiply(turn);
+      root.quaternion.copy(q);
+      g.add(root);
+      // 接地感（自車と同じ、輪郭の出ない影）
+      const sh = new THREE.Mesh(
+        new THREE.PlaneGeometry(spec.dims.W * 1.9, spec.dims.L * 1.35),
+        new THREE.MeshBasicMaterial({
+          color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false,
+          map: softDot(0.42), fog: true,
+        })
+      );
+      sh.rotation.x = -Math.PI / 2;
+      sh.position.copy(root.position).addScaledVector(sm.up, -0.01);
+      sh.quaternion.premultiply(q);
+      sh.renderOrder = 1;
+      g.add(sh);
+      if (def) this.paRacers.push({ def, spot, mesh: root, pos: root.position.clone() });
+    };
+
+    for (const spot of spots) {
+      // 1か所につき、挑戦できる相手が1台と、ただ停まっている車が数台
+      const def = list[n % list.length]; n++;
+      const spec = CAR_BY_ID[def.carId];
+      if (spec) put(spot, BAYS[0], spec, def.color, def);
+      for (let i = 1; i < BAYS.length; i++) {
+        const c = CARS[(spot.index * 7 + i * 3 + (this.course.seed ?? 1)) % CARS.length];
+        put(spot, BAYS[i], c, c.color, null);
+      }
+    }
+    this.scene.add(g);
+    this.paGroup = g;
+  }
+
+  /**
+   * いまパーキングエリアで何ができるか。
+   * 近くに走り屋がいれば勝負、いなければピットイン（整備）です。
+   */
+  updatePaPrompt() {
+    const prev = this.paPrompt;
+    this.paPrompt = null;
+    const v = this.player && this.player.vehicle;
+    if (!v || this.state.finished || this.mode !== 'racing') return;
+    if (!v.onRamp || !this.track.rampAt) return;
+    const r = this.track.rampAt(v.s);
+    if (!r || r.pad < 0.35) return;
+    if (v.speedKmh > 20) return;
+
+    if (this.kind === 'battle') {
+      // 勝負の途中でもPAへ逃げ込めます。負けが決まるまで走らされるより、
+      // 自分で降りられるほうが自由です（そのかわり賞金も記録も付きません）。
+      this.paPrompt = {
+        kind: 'quit',
+        label: '勝負から降りる',
+        sub: `${r.name}PA に逃げ込む — 賞金も記録もなし`,
+      };
+    } else if (this.kind === 'free') {
+      let best = null, bd = 11;   // 相手の真横につけたときだけ（離れて停めれば整備）
+      for (const pr of this.paRacers || []) {
+        if (!pr.mesh.visible) continue;
+        const d = pr.pos.distanceTo(v.pos);
+        if (d < bd) { bd = d; best = pr; }
+      }
+      if (best) {
+        this.paPrompt = {
+          kind: 'battle', rival: best.def, exitIndex: best.spot.index,
+          label: '勝負を挑む',
+          sub: `${best.def.name}（${CAR_BY_ID[best.def.carId].name}）`,
+        };
+      } else if (v.speedKmh < 6) {
+        this.paPrompt = {
+          kind: 'pit',
+          label: 'ピットインする',
+          sub: `${r.name}PA — チューニング・車の乗り換え`,
+        };
+      }
+    }
+    if (this.paPrompt && (!prev || prev.kind !== this.paPrompt.kind || prev.sub !== this.paPrompt.sub)) {
+      this.onEvent('prompt', this.paPrompt);
+    }
+  }
+
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
   start(kind, opts = {}) {
     const startS = opts.startS ?? 0;
@@ -6127,6 +6435,7 @@ class Game {
       if (this.rival) { this.rival.vehicle.vx = v0; this.rival.vehicle.gear = 4; }
     }
     this.traffic.density = opts.traffic ?? 1;
+    this.paPrompt = null;
     this.mode = this.state.countdown > 0 ? 'countdown' : 'racing';
     if (opts.camMode !== undefined) this.userCamMode = opts.camMode;
     this.camMode = this.userCamMode;
@@ -6490,18 +6799,28 @@ class Game {
       }
       st._prevGap = gap;
       st.gap = gap;
-      const drain = (g) => (0.018 + Math.pow(clamp(g / 220, 0, 1), 1.25) * 0.34) * dt;
-      if (gap > 2) st.rivalLife -= drain(gap);
-      else if (gap < -2) st.life -= drain(-gap);
-      else { st.life = Math.min(1, st.life + dt * 0.012); st.rivalLife = Math.min(1, st.rivalLife + dt * 0.012); }
+      // 出口ランプへ降りているあいだは勝負を止めます。
+      // ランプは560mあり、下る速度では40秒以上かかります。止めないと
+      // パーキングエリアへ着く前に必ず体力が尽きるので、「逃げ込む」という
+      // 選択そのものが成立しませんでした（実際にそうなりました）。
+      // 本線へ戻れば、開いた車間ぶんの不利を背負って続きが始まります。
+      if (!pv.onRamp) {
+        const drain = (g) => (0.018 + Math.pow(clamp(g / 220, 0, 1), 1.25) * 0.34) * dt;
+        if (gap > 2) st.rivalLife -= drain(gap);
+        else if (gap < -2) st.life -= drain(-gap);
+        else { st.life = Math.min(1, st.life + dt * 0.012); st.rivalLife = Math.min(1, st.rivalLife + dt * 0.012); }
 
-      // 残りが少なくなったら警告（HUD側で赤く点滅させます）
-      const danger = st.life < 0.28;
-      if (danger !== st._danger) { st._danger = danger; this.onEvent('danger', danger); }
+        // 残りが少なくなったら警告（HUD側で赤く点滅させます）
+        const danger = st.life < 0.28;
+        if (danger !== st._danger) { st._danger = danger; this.onEvent('danger', danger); }
 
-      if (st.rivalLife <= 0 || gap > 420) this.finish('win');
-      else if (st.life <= 0 || gap < -420) this.finish('lose');
+        if (st.rivalLife <= 0 || gap > 420) this.finish('win');
+        else if (st.life <= 0 || gap < -420) this.finish('lose');
+      }
     }
+
+    // --- パーキングエリアでできること
+    this.updatePaPrompt();
 
     // --- 演出
     this.updateCamera(dt);
@@ -6754,6 +7073,7 @@ class Game {
       // バトル中の体力・車間。これを渡していなかったため、HUD の
       // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
       // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
+      prompt: this.paPrompt,
       battle: this.kind === 'battle' && this.rival && !this.state.finished
         ? { life: this.state.life, rivalLife: this.state.rivalLife, gap: this.state.gap }
         : null,
@@ -6813,8 +7133,11 @@ function show(id) {
   const inGame = id === 'none' || id === 'pause';
   $('#hud').classList.toggle('hidden', !inGame);
   if (game) {
+    // ピットイン中のガレージは「走行の続き」なので、デモ走行に切り替えません。
+    // 切り替えると、整備しているあいだに自車が勝手に走り出してしまいます。
+    if (pitStop) { /* そのまま止めておきます */ }
     // メニュー中は自動走行のデモに切り替え
-    if (!inGame && id !== 'result') { game.setRival(null); game.setDemo(true); }
+    else if (!inGame && id !== 'result') { game.setRival(null); game.setDemo(true); }
     else if (inGame) game.setDemo(false);
   }
   input.enabled = true;
@@ -7183,7 +7506,7 @@ function renderCourses() {
 function applyCourse(id) {
   if (!game) return;
   game.setCourse(id);
-  if (hud) hud.setTrack(game.track);
+  if (hud) { hud.setTrack(game.track); hud.setPaMarks(game.paSpots); }
   data.courseId = id;
   save(data);
 }
@@ -7244,6 +7567,7 @@ $('#brief-start').addEventListener('click', () => startBattle(currentRival));
 // ---------------------------------------------------------------- モード開始
 
 let mode = null;
+let battleOpts = {};      // パーキングエリアから挑んだときの開始位置など
 
 function playerTune() { return tuneOf(data.carId); }
 
@@ -7251,12 +7575,18 @@ function preparePlayer() {
   game.setPlayerCar(data.carId, playerTune(), colorOf(data.carId));
 }
 
-function startBattle(rival) {
+/**
+ * バトル開始。
+ * opts.here を渡すと、コースを変えずにいまいる場所の近くから始めます
+ * （パーキングエリアで挑んだとき用）。
+ */
+function startBattle(rival, opts = {}) {
   mode = 'battle';
-  applyCourse(rival.courseId || DEFAULT_COURSE);
+  battleOpts = opts;
+  if (!opts.here) applyCourse(rival.courseId || DEFAULT_COURSE);
   preparePlayer();
   game.setRival(rival);
-  const startS = game.track.length * 0.12;
+  const startS = opts.startS ?? game.track.length * 0.12;
   game.start('battle', { startS, rollingStart: true });
   hud.setBattle(true, 'YOU', rival.name);
   hud.message('READY', rival.intro, 2400);
@@ -7265,13 +7595,24 @@ function startBattle(rival) {
   audio.resume();
 }
 
+/** いま挑戦できる相手。倒した相手にも再戦できます。 */
+function unlockedRivals() {
+  return RIVALS.slice(0, clamp(data.storyStage + 1, 1, RIVALS.length));
+}
+
 function startFree() {
   mode = 'free';
   preparePlayer();
   game.setRival(null);
+  // パーキングエリアに走り屋をたむろさせます。
+  // メニューへ戻らずに、走っている世界の中で相手を選べるようにするためです。
+  game.setPaRacers(unlockedRivals());
   game.start('free', { startS: 0, rollingStart: true });
   hud.setBattle(false);
-  hud.message(game.course.name, `一周 ${(game.track.length / 1000).toFixed(1)} km`, 2400);
+  const pa = (game.paSpots || []).length;
+  hud.message(game.course.name,
+    pa ? `一周 ${(game.track.length / 1000).toFixed(1)} km ／ PA ${pa}か所`
+       : `一周 ${(game.track.length / 1000).toFixed(1)} km`, 2400);
   hideAll();
   showFirstHint();
   audio.resume();
@@ -7291,8 +7632,59 @@ function startTA() {
   audio.resume();
 }
 
+// ---------------------------------------------------------------- パーキングエリア
+
+let pitStop = null;   // ピットイン中に、戻り先を覚えておきます
+
+/**
+ * パーキングエリアでの行動を実行します（F キー／画面のボタン）。
+ * 勝負なら、その出口のすぐ先の本線からバトルを始めます。
+ */
+function doPaAction() {
+  const p = game && game.paPrompt;
+  if (!p || pitStop || paused) return;
+  audio.resume();
+  if (p.kind === 'battle') {
+    const ep = game.track.exitPoints[p.exitIndex];
+    // ランプが本線へ戻りきったところ＝インターを出た直後の本線から
+    const startS = ep ? ep.s + RAMP.span - RAMP.lead + 60 : game.track.length * 0.12;
+    currentRival = p.rival;
+    // 挑んだ相手はもう広場にはいません
+    for (const r of game.paRacers || []) if (r.def === p.rival) r.mesh.visible = false;
+    startBattle(p.rival, { here: true, startS });
+    return;
+  }
+  if (p.kind === 'pit') { openPit(); return; }
+  if (p.kind === 'quit') game.finish('abort');
+}
+
+function openPit() {
+  const v = game.player.vehicle;
+  pitStop = { s: v.s, u: v.u, heading: v.heading };
+  paused = true;
+  selCarId = data.carId;
+  $('#scr-garage .back').textContent = '走行に戻る';
+  show('garage');   // ここで renderGarage() が呼ばれます
+}
+
+/** ピットインを終えて走行へ戻します。整備した内容を車に反映します。 */
+function closePit() {
+  const st = pitStop;
+  pitStop = null;
+  $('#scr-garage .back').textContent = '戻る';
+  if (!st) return false;
+  // チューンや車の乗り換えを反映するため、組み直してから同じ場所へ戻します
+  preparePlayer();
+  game.player.vehicle.placeOnTrack(game.track, st.s, st.u, { onRamp: true, heading: st.heading });
+  game.player.syncMesh(game.track);
+  paused = false;
+  hideAll();
+  hud.message('PIT OUT', '整備完了', 1400);
+  return true;
+}
+
 function restart() {
-  if (mode === 'battle') startBattle(currentRival);
+  if (mode === 'battle') startBattle(currentRival, battleOpts);
   else if (mode === 'free') startFree();
   else if (mode === 'ta') startTA();
 }
@@ -7301,12 +7693,16 @@ function restart() {
 
 function showResult(result, state) {
   const win = result === 'win';
-  $('#res-head').textContent = win ? 'WIN' : 'LOSE';
+  // PAへ逃げ込んで自分から降りた場合。負けとは分けて扱います
+  const abort = result === 'abort';
+  $('#res-head').textContent = abort ? 'GIVE UP' : win ? 'WIN' : 'LOSE';
   $('#res-head').className = `res-head ${win ? 'win' : 'lose'}`;
 
   let reward = 0;
   let quote = '';
-  if (mode === 'battle' && currentRival) {
+  if (abort) {
+    quote = currentRival ? `${currentRival.name} から降りた。賞金はなし。` : '走行をやめた';
+  } else if (mode === 'battle' && currentRival) {
     quote = win ? currentRival.win : currentRival.lose;
     if (win) {
       reward = currentRival.reward;
@@ -7422,12 +7818,15 @@ $('#btn-reset').addEventListener('click', () => {
 $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   const go = b.dataset.go;
   audio.resume();
+  // ピットイン中のガレージから「戻る」を押したら、タイトルではなく走行へ
+  if (pitStop && current === 'garage') { closePit(); return; }
   if (go === 'free' || go === 'ta') { coursePurpose = go; show('course'); return; }
   show(go);
 }));
 
 input.onAction = (code) => {
   if (code === 'Escape') {
+    if (pitStop && current === 'garage') { closePit(); return; }
     if (current !== 'none' && current !== 'pause' && current !== 'title' && current !== 'loading') {
       const back = $(`#scr-${current} .back`);
       if (back) { back.click(); return; }
@@ -7436,6 +7835,7 @@ input.onAction = (code) => {
     return;
   }
   if (current !== 'none') { menuKey(code); return; }
+  if (code === 'KeyF') { doPaAction(); return; }
   if (code === 'KeyC') {
     hud.message(game.cycleCamera(), '', 900);
     data.settings.cam = game.userCamMode;
@@ -7443,6 +7843,8 @@ input.onAction = (code) => {
   }
   if (code === 'KeyR') restart();
 };
+
+$('#hud-prompt').addEventListener('click', (e) => { e.preventDefault(); doPaAction(); });
 
 function onGameEvent(type, payload) {
   if (type === 'count') hud.message(String(payload), '', 900);
@@ -7457,6 +7859,8 @@ function onGameEvent(type, payload) {
     }
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
+  // 何かできる場所に来たことを、音でも知らせます
+  if (type === 'prompt') audio.beep(payload.kind === 'battle' ? 980 : 660, 0.07, 0.09);
   if (type === 'overtake') {
     hud.message(payload.by === 'player' ? 'OVERTAKE' : 'PASSED', '', 1100);
     audio.beep(payload.by === 'player' ? 1180 : 420, 0.12, 0.12);
@@ -7464,7 +7868,7 @@ function onGameEvent(type, payload) {
   if (type === 'danger') document.getElementById('hud').classList.toggle('danger', payload);
   if (type === 'finish') {
     setTimeout(() => showResult(payload.result, payload.state), 900);
-    hud.message(payload.result === 'win' ? 'WIN' : 'LOSE', '', 2000);
+    hud.message(payload.result === 'win' ? 'WIN' : payload.result === 'abort' ? 'GIVE UP' : 'LOSE', '', 2000);
   }
 }
 
@@ -7513,6 +7917,7 @@ async function boot() {
   game.start('free', { startS: game.track.length * 0.62, rollingStart: true });
 
   hud = new HUD(document.getElementById('hud'), game.track);
+  hud.setPaMarks(game.paSpots);
   input.bindTouch(document);
   if ('ontouchstart' in window) $('#touch').classList.remove('hidden');
 

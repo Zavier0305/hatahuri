@@ -22,6 +22,9 @@ export class HUD {
       sub: root.querySelector('#hud-sub'),
       zone: root.querySelector('#hud-zone'),
       money: root.querySelector('#hud-money'),
+      prompt: root.querySelector('#hud-prompt'),
+      promptLabel: root.querySelector('#hud-prompt b'),
+      promptSub: root.querySelector('#hud-prompt i'),
     };
     this.tctx = this.el.tacho.getContext('2d');
     this.mctx = this.el.minimap.getContext('2d');
@@ -195,9 +198,24 @@ export class HUD {
       g.arc(x, y, r, 0, Math.PI * 2);
       g.fill();
     };
+    // パーキングエリアの位置。どこで降りられるか分からないと、
+    // 降りられること自体に気づけません
+    if (this.paMarks) {
+      for (const m of this.paMarks) {
+        const sm = t.sample(m.s, this._dotTmp || (this._dotTmp = {}));
+        const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
+        g.fillStyle = 'rgba(47,123,234,0.95)';
+        g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.lineWidth = 2.4;
+        g.beginPath(); g.rect(x - 3, y - 3, 6, 6); g.stroke(); g.fill();
+      }
+    }
     for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.6, true);
     dot(playerS, '#5ff0ff', 4.6, true);
   }
+
+  /** 地図に出すパーキングエリアの位置（コースを切り替えるたびに渡します） */
+  setPaMarks(list) { this.paMarks = list || null; }
 
   setBattle(on, meName, youName) {
     this.el.battle.style.display = on ? '' : 'none';
@@ -213,6 +231,23 @@ export class HUD {
     const ahead = gap >= 0;
     this.el.gap.textContent = `${ahead ? '+' : '−'}${Math.abs(gap).toFixed(0)} m`;
     this.el.gap.className = ahead ? 'ahead' : 'behind';
+  }
+
+  /** パーキングエリアでできること（近づいたときだけ出します） */
+  setPrompt(p) {
+    const el = this.el.prompt;
+    if (!el) return;
+    if (!p) { el.style.display = 'none'; this._promptKey = null; return; }
+    const key = `${p.kind}|${p.label}|${p.sub}`;
+    if (key !== this._promptKey) {
+      this._promptKey = key;
+      this.el.promptLabel.textContent = p.label;
+      this.el.promptSub.textContent = p.sub || '';
+      el.classList.remove('pop');
+      void el.offsetWidth;
+      el.classList.add('pop');
+    }
+    el.style.display = '';
   }
 
   message(text, sub = '', ms = 1800) {
@@ -236,6 +271,7 @@ export class HUD {
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
     if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
+    this.setPrompt(st.prompt);
     if (this.el.money) this.el.money.textContent = `¥${formatMoney(st.money || 0)}`;
     if (this.msgTimer > 0) {
       this.msgTimer -= dt;

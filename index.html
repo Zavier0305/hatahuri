@@ -50,6 +50,11 @@
     <div id="hud-sub"></div>
   </div>
 
+  <!-- パーキングエリアでできること。タッチでも押せるようボタンにしています -->
+  <button id="hud-prompt" style="display:none">
+    <kbd>F</kbd><b></b><i></i>
+  </button>
+
   <canvas id="hud-minimap"></canvas>
 
   <div id="hud-bottom">
@@ -90,6 +95,7 @@
         <li><kbd>←</kbd><kbd>→</kbd> ハンドル</li>
         <li><kbd>C</kbd> カメラ切替　<kbd>Esc</kbd> ポーズ</li>
         <li>前車の40m以内はスリップストリームで伸びる</li>
+        <li>出口から降りるとPA。停まって <kbd>F</kbd> で勝負／整備</li>
       </ul>
       <span class="fh-close">何かキーを押すと消えます</span>
     </div>
@@ -229,6 +235,7 @@
           <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
           <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
           <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
+          <tr><th>PAで話しかける</th><td><kbd>F</kbd> <span class="pad">画面のボタンでも可</span></td></tr>
           <tr><th>カメラ切替</th><td><kbd>C</kbd></td></tr>
           <tr><th>リスタート</th><td><kbd>R</kbd></td></tr>
           <tr><th>ポーズ</th><td><kbd>Esc</kbd></td></tr>
@@ -238,6 +245,10 @@
           <p>レッドゾーン手前でシフトアップ。コーナーはブレーキで前に荷重をかけてから曲げる。
           前車の40m以内に入るとスリップストリームが効き、空気抵抗が約4割減ります。
           追越車線には一般車が出てこないので、全開で使えます。</p>
+          <b>インターで降りる</b>
+          <p>出口の標識が出たら左へ寄る。ランプを下りた先はパーキングエリアで、自由に走り回れます。
+          走り屋が停まっているので、真横につけて <kbd>F</kbd> でその場で勝負。
+          誰もいないところで停まって <kbd>F</kbd> を押すと、ピットイン＝そのままチューニングや乗り換えができます。</p>
         </div>
       </div>
     </div>

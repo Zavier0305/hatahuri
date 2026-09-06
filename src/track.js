@@ -73,6 +73,45 @@ export function rampPad(t) {
   if (t <= RAMP_RISE || t >= RAMP_RISE + RAMP_HOLD) return 0;
   return Math.sin(Math.PI * ((t - RAMP_RISE) / RAMP_HOLD));
 }
+
+/**
+ * パーキングエリアの配置。
+ * 設備（scenery.js）と、たむろしている車（game.js）が別々に位置を計算すると
+ * 必ずずれるので、寸法はここに一本化します。
+ *   bayU     … 外側の縁から何m内側に停めるか
+ *   bayPitch … 駐車ますの間隔（進行方向）
+ *   bays     … ます数
+ *   shopZ    … 売店の位置。0のままだと駐車ますの上に建ってしまいます
+ */
+export const PA = {
+  bayU: 4.6,      // 外側の縁から、駐車ますの中心までの距離
+  bayDepth: 5.2,  // ますの奥行き
+  bayPitch: 2.9,  // ますの間隔（進行方向）
+  bays: 8,
+  shopZ: 26,      // 売店の位置。0のままだと駐車ますの上に建ってしまいます
+  poleZ: 20,      // 照明柱の位置
+};
+
+/** k番目（0..bays-1）の駐車ますの、広場中心からの進行方向オフセット[m]。 */
+export function paBayZ(k) { return (k - (PA.bays - 1) / 2) * PA.bayPitch; }
+
+/**
+ * このコースのパーキングエリア一覧。
+ * 広場がいちばん広いのは台形の平らな区間のまんなか＝ t=0.5 の地点です。
+ */
+export function paSpots(track) {
+  const out = [];
+  const ex = (track.course && track.course.exits) || [];
+  const eps = track.exitPoints || [];
+  for (let i = 0; i < ex.length; i++) {
+    if (!eps[i]) continue;
+    const s = eps[i].s - RAMP.lead + RAMP.span * 0.5;
+    const r = track.rampAt(s);
+    if (!r || r.index !== i || r.pad < 0.99) continue;
+    out.push({ index: i, name: r.name, s, outerU: r.outerU, innerU: r.innerU, h: r.h });
+  }
+  return out;
+}
 const smoothstep01 = (x) => {
   const k = x < 0 ? 0 : x > 1 ? 1 : x;
   return k * k * (3 - 2 * k);

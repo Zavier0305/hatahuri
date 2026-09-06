@@ -88,10 +88,21 @@ export class Vehicle {
     this.maxGear = this.spec.gears.length;
   }
 
-  placeOnTrack(track, s, u) {
+  /**
+   * コース上へ置き直します。
+   * opts.onRamp を渡すと、ランプ（パーキングエリア）の高さに合わせて置きます。
+   * これがないと本線の高さに現れて、路面まで落ちるあいだ座標が暴れます。
+   */
+  placeOnTrack(track, s, u, opts = {}) {
     const sm = track.sample(s, this._sm);
-    this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, 0.02);
-    this.heading = Math.atan2(sm.tan.x, sm.tan.z);
+    let hOff = 0;
+    this.onRamp = !!opts.onRamp;
+    if (this.onRamp && track.rampAt) {
+      const r = track.rampAt(s);
+      if (r) hOff = rampHeightAtU(r, u); else this.onRamp = false;
+    }
+    this.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, hOff + 0.02);
+    this.heading = opts.heading !== undefined ? opts.heading : Math.atan2(sm.tan.x, sm.tan.z);
     this.s = s; this.u = u; this.trackIndex = sm.index;
     this.roadHeading = sm.heading; this.roadCurv = sm.curv;
     this.vx = 0; this.vy = 0; this.yawRate = 0;

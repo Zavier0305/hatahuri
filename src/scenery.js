@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rng, clamp, lerp, TAU } from './util.js';
-import { ROAD, RAMP, rampHeightAtU } from './track.js';
+import { ROAD, RAMP, rampHeightAtU, PA, paBayZ } from './track.js';
 
 // ---------------------------------------------------------------- 空と海
 
@@ -1013,7 +1013,7 @@ export function buildRamps(track, scene) {
       if (!r) continue;
       track.sample(s2, sm);
       rows.push({
-        pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(),
+        pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(), tan: sm.tan.clone(),
         outerU: r.outerU, innerU: r.innerU, h: r.h, f: r.f, pad: r.pad || 0, r,
         c: sm.pos.clone().addScaledVector(sm.lat, r.u).addScaledVector(sm.up, r.h),
       });
@@ -1087,7 +1087,11 @@ export function buildRamps(track, scene) {
       const g3 = new THREE.Group();
       g3.position.copy(mid.c);
       const bs = new THREE.Matrix4();
-      bs.makeBasis(mid.lat, mid.up, new THREE.Vector3().crossVectors(mid.lat, mid.up).negate());
+      // makeBasis は右手系（X×Y=Z）でないと、setFromRotationMatrix が
+      // まるで別の回転を返します。lat×up は -tan なので、これを第3列に
+      // 置いた以前の式は左手系で、料金所は進行方向を無視した向き（ほぼ無回転）
+      // で建っていました。他の設備と同じ [lat, up, -tan] に揃えます。
+      bs.makeBasis(mid.lat, mid.up, new THREE.Vector3().copy(mid.tan).negate());
       g3.quaternion.setFromRotationMatrix(bs);
       const rf = new THREE.Mesh(new THREE.BoxGeometry(H * 2 + 3.4, 0.45, 5.0), roof);
       rf.position.set(0, 5.4, 0); g3.add(rf);
@@ -1107,52 +1111,112 @@ export function buildRamps(track, scene) {
 
     // ---- パーキングエリアの設備
     // 広場だけだと「ただの広い舗装」なので、目印になるものを置きます。
+    // 寸法は track.js の PA に一本化してあります（たむろしている車を置くのは
+    // game.js 側なので、別々に計算するとますからずれます）。
+    //
+    // 広場は中央がいちばん広く、端へ行くほど細くなります。設備を1つの行の
+    // 座標系にまとめて置くと、離れた場所のものが舗装からはみ出します
+    // （売店が縁から2.9mせり出していました）。設備ごとに、その位置の行を
+    // 基準にします。
     {
-      let wide = rows[0], bestPad = -1;
-      for (const rr of rows) if (rr.pad > bestPad) { bestPad = rr.pad; wide = rr; }
-      if (bestPad > 0.5) {
+      let wideIdx = 0;
+      for (let i = 0; i < rows.length; i++) if (rows[i].pad > rows[wideIdx].pad) wideIdx = i;
+      const wide = rows[wideIdx];
+      if (wide.pad > 0.5) {
+        const step = RAMP.span / STEPS;
+        /** 広場の中心から進行方向へ dz[m] 離れた行 */
+        const rowAt = (dz) => rows[Math.max(0, Math.min(rows.length - 1, Math.round(wideIdx + dz / step)))];
+        /** その行を原点にした座標系。局所+Xは横位置u、局所+Zは進行方向の逆です */
+        const groupAt = (r) => {
+          const g5 = new THREE.Group();
+          g5.position.copy(r.pos);
+          const m = new THREE.Matrix4();
+          m.makeBasis(r.lat, r.up, new THREE.Vector3().copy(r.tan).negate());
+          g5.quaternion.setFromRotationMatrix(m);
+          group.add(g5);
+          return g5;
+        };
+        /** 進行方向のオフセット[m] → 局所z */
+        const AZ = (dz) => -dz;
+        const edgeOf = (r) => r.outerU;
+        const floorOf = (r) => rampHeightAtU(r.r, r.outerU);
+
         const wall = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.85, metalness: 0.05 });
+        // 売店のガラス面。真横に停めると画面の3分の1が白く飛ぶので、
+        // ブルームに耐える程度まで落とします
         const win = new THREE.MeshStandardMaterial({
-          color: 0xffe6b0, emissive: 0xffd48a, emissiveIntensity: 2.2, roughness: 0.5,
+          color: 0xffe6b0, emissive: 0xffd48a, emissiveIntensity: 1.3, roughness: 0.5,
         });
         const paint = new THREE.MeshStandardMaterial({
           color: 0xcfd3ca, roughness: 0.75, emissive: 0x24261f, emissiveIntensity: 0.5,
         });
-        const g4 = new THREE.Group();
-        g4.position.copy(wide.pos);
-        const bs2 = new THREE.Matrix4();
-        bs2.makeBasis(wide.lat, wide.up, new THREE.Vector3().crossVectors(wide.lat, wide.up).negate());
-        g4.quaternion.setFromRotationMatrix(bs2);
-        const outEdge = wide.outerU, inEdge = Math.min(wide.innerU, -(ROAD.halfRoad - 0.35));
-        const midU = (outEdge + inEdge) * 0.5;
-        const y0 = rampHeightAtU(wide.r, midU);
-        // 売店（奥側に置きます）
-        const b = new THREE.Mesh(new THREE.BoxGeometry(16, 4.4, 9), wall);
-        b.position.set(outEdge + 9, y0 + 2.2, 0);
-        g4.add(b);
-        for (const dz of [-2.6, 0, 2.6]) {
-          const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.6, 1.9), win);
-          w2.position.set(outEdge + 9 - 8.1, y0 + 2.3, dz);
-          g4.add(w2);
+
+        // 売店。以前は駐車ますと同じ位置に建てていて、白線9本のうち3本が
+        // 建物の下敷きになっていました。ますから離した行に置きます。
+        {
+          const r5 = rowAt(PA.shopZ);
+          const g5 = groupAt(r5);
+          // 建物の奥行きは「縁から、走り抜ける通路の外側まで」に収めます。
+          // ここを超えると、広場を通り抜ける道の上に建ってしまいます。
+          const x0 = edgeOf(r5) + 0.8;
+          const y0 = floorOf(r5);
+          const b = new THREE.Mesh(new THREE.BoxGeometry(7, 4.6, 11), wall);
+          b.position.set(x0 + 3.5, y0 + 2.3, 0);
+          g5.add(b);
+          for (const dz of [-3.2, 0, 3.2]) {
+            const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.8, 2.2), win);
+            w2.position.set(x0 + 7.1, y0 + 2.3, dz);
+            g5.add(w2);
+          }
+          // 庇と柱。これがあるだけで「建物」に見えます
+          const eave = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.25, 12), wall);
+          eave.position.set(x0 + 8.3, y0 + 4.0, 0);
+          g5.add(eave);
+          for (const dz of [-4.6, 4.6]) {
+            const pil = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.9, 0.22), wall);
+            pil.position.set(x0 + 9.4, y0 + 1.95, dz);
+            g5.add(pil);
+          }
+          // 「PA」の行灯。夜に遠くから見える目印です
+          const sign = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.5, 4.4),
+            new THREE.MeshStandardMaterial({
+              color: 0x2a6fd8, emissive: 0x2f7bea, emissiveIntensity: 3.0, roughness: 0.5,
+            }));
+          sign.position.set(x0 + 7.3, y0 + 5.2, 0);
+          g5.add(sign);
         }
-        // 駐車ますの白線
-        for (let k = -4; k <= 4; k++) {
-          const linem = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.02, 0.16), paint);
-          linem.position.set(outEdge + 3.0, y0 + 0.02, k * 2.6);
-          g4.add(linem);
+
+        // 駐車ます。ます数+1本の白線と、奥の車止め
+        {
+          const g5 = groupAt(wide);
+          const x0 = edgeOf(wide) + PA.bayU;
+          const y0 = floorOf(wide);
+          for (let k = 0; k <= PA.bays; k++) {
+            const linem = new THREE.Mesh(new THREE.BoxGeometry(PA.bayDepth, 0.02, 0.16), paint);
+            linem.position.set(x0, y0 + 0.02, AZ(paBayZ(k) - PA.bayPitch / 2));
+            g5.add(linem);
+          }
+          for (let k = 0; k < PA.bays; k++) {
+            const stop = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 1.6), paint);
+            stop.position.set(x0 - PA.bayDepth / 2 + 0.6, y0 + 0.08, AZ(paBayZ(k)));
+            g5.add(stop);
+          }
         }
-        // 照明柱
-        for (const dz of [-16, 16]) {
+
+        // 照明柱。走る場所の邪魔にならないよう、ますの並びの外側に立てます
+        for (const dz of [-PA.poleZ, PA.poleZ]) {
+          const r5 = rowAt(dz);
+          const g5 = groupAt(r5);
+          const x0 = edgeOf(r5) + 2.4;
+          const y0 = floorOf(r5);
           const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 8, 6), wall);
-          pole.position.set(midU - wide.pos.x * 0 , y0 + 4, dz);
-          pole.position.x = midU;
-          g4.add(pole);
+          pole.position.set(x0, y0 + 4, 0);
+          g5.add(pole);
           const head = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.6),
             new THREE.MeshStandardMaterial({ color: 0xffe7bb, emissive: 0xffd79a, emissiveIntensity: 4.0 }));
-          head.position.set(midU, y0 + 8, dz);
-          g4.add(head);
+          head.position.set(x0 + 0.6, y0 + 8, 0);
+          g5.add(head);
         }
-        group.add(g4);
       }
     }
   }

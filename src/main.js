@@ -6,6 +6,7 @@ import { AudioEngine } from './audio.js';
 import { CARS, CAR_BY_ID } from './cars.js';
 import { RIVALS } from './story.js';
 import { COURSES, COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
+import { RAMP } from './track.js';
 import { load, save, resetSave, emptyTune } from './save.js';
 import { applyTune } from './vehicle.js';
 import { buildCar } from './carModel.js';
@@ -50,8 +51,11 @@ function show(id) {
   const inGame = id === 'none' || id === 'pause';
   $('#hud').classList.toggle('hidden', !inGame);
   if (game) {
+    // ピットイン中のガレージは「走行の続き」なので、デモ走行に切り替えません。
+    // 切り替えると、整備しているあいだに自車が勝手に走り出してしまいます。
+    if (pitStop) { /* そのまま止めておきます */ }
     // メニュー中は自動走行のデモに切り替え
-    if (!inGame && id !== 'result') { game.setRival(null); game.setDemo(true); }
+    else if (!inGame && id !== 'result') { game.setRival(null); game.setDemo(true); }
     else if (inGame) game.setDemo(false);
   }
   input.enabled = true;
@@ -420,7 +424,7 @@ function renderCourses() {
 function applyCourse(id) {
   if (!game) return;
   game.setCourse(id);
-  if (hud) hud.setTrack(game.track);
+  if (hud) { hud.setTrack(game.track); hud.setPaMarks(game.paSpots); }
   data.courseId = id;
   save(data);
 }
@@ -481,6 +485,7 @@ $('#brief-start').addEventListener('click', () => startBattle(currentRival));
 // ---------------------------------------------------------------- モード開始
 
 let mode = null;
+let battleOpts = {};      // パーキングエリアから挑んだときの開始位置など
 
 function playerTune() { return tuneOf(data.carId); }
 
@@ -488,12 +493,18 @@ function preparePlayer() {
   game.setPlayerCar(data.carId, playerTune(), colorOf(data.carId));
 }
 
-function startBattle(rival) {
+/**
+ * バトル開始。
+ * opts.here を渡すと、コースを変えずにいまいる場所の近くから始めます
+ * （パーキングエリアで挑んだとき用）。
+ */
+function startBattle(rival, opts = {}) {
   mode = 'battle';
-  applyCourse(rival.courseId || DEFAULT_COURSE);
+  battleOpts = opts;
+  if (!opts.here) applyCourse(rival.courseId || DEFAULT_COURSE);
   preparePlayer();
   game.setRival(rival);
-  const startS = game.track.length * 0.12;
+  const startS = opts.startS ?? game.track.length * 0.12;
   game.start('battle', { startS, rollingStart: true });
   hud.setBattle(true, 'YOU', rival.name);
   hud.message('READY', rival.intro, 2400);
@@ -502,13 +513,24 @@ function startBattle(rival) {
   audio.resume();
 }
 
+/** いま挑戦できる相手。倒した相手にも再戦できます。 */
+function unlockedRivals() {
+  return RIVALS.slice(0, clamp(data.storyStage + 1, 1, RIVALS.length));
+}
+
 function startFree() {
   mode = 'free';
   preparePlayer();
   game.setRival(null);
+  // パーキングエリアに走り屋をたむろさせます。
+  // メニューへ戻らずに、走っている世界の中で相手を選べるようにするためです。
+  game.setPaRacers(unlockedRivals());
   game.start('free', { startS: 0, rollingStart: true });
   hud.setBattle(false);
-  hud.message(game.course.name, `一周 ${(game.track.length / 1000).toFixed(1)} km`, 2400);
+  const pa = (game.paSpots || []).length;
+  hud.message(game.course.name,
+    pa ? `一周 ${(game.track.length / 1000).toFixed(1)} km ／ PA ${pa}か所`
+       : `一周 ${(game.track.length / 1000).toFixed(1)} km`, 2400);
   hideAll();
   showFirstHint();
   audio.resume();
@@ -528,8 +550,59 @@ function startTA() {
   audio.resume();
 }
 
+// ---------------------------------------------------------------- パーキングエリア
+
+let pitStop = null;   // ピットイン中に、戻り先を覚えておきます
+
+/**
+ * パーキングエリアでの行動を実行します（F キー／画面のボタン）。
+ * 勝負なら、その出口のすぐ先の本線からバトルを始めます。
+ */
+function doPaAction() {
+  const p = game && game.paPrompt;
+  if (!p || pitStop || paused) return;
+  audio.resume();
+  if (p.kind === 'battle') {
+    const ep = game.track.exitPoints[p.exitIndex];
+    // ランプが本線へ戻りきったところ＝インターを出た直後の本線から
+    const startS = ep ? ep.s + RAMP.span - RAMP.lead + 60 : game.track.length * 0.12;
+    currentRival = p.rival;
+    // 挑んだ相手はもう広場にはいません
+    for (const r of game.paRacers || []) if (r.def === p.rival) r.mesh.visible = false;
+    startBattle(p.rival, { here: true, startS });
+    return;
+  }
+  if (p.kind === 'pit') { openPit(); return; }
+  if (p.kind === 'quit') game.finish('abort');
+}
+
+function openPit() {
+  const v = game.player.vehicle;
+  pitStop = { s: v.s, u: v.u, heading: v.heading };
+  paused = true;
+  selCarId = data.carId;
+  $('#scr-garage .back').textContent = '走行に戻る';
+  show('garage');   // ここで renderGarage() が呼ばれます
+}
+
+/** ピットインを終えて走行へ戻します。整備した内容を車に反映します。 */
+function closePit() {
+  const st = pitStop;
+  pitStop = null;
+  $('#scr-garage .back').textContent = '戻る';
+  if (!st) return false;
+  // チューンや車の乗り換えを反映するため、組み直してから同じ場所へ戻します
+  preparePlayer();
+  game.player.vehicle.placeOnTrack(game.track, st.s, st.u, { onRamp: true, heading: st.heading });
+  game.player.syncMesh(game.track);
+  paused = false;
+  hideAll();
+  hud.message('PIT OUT', '整備完了', 1400);
+  return true;
+}
+
 function restart() {
-  if (mode === 'battle') startBattle(currentRival);
+  if (mode === 'battle') startBattle(currentRival, battleOpts);
   else if (mode === 'free') startFree();
   else if (mode === 'ta') startTA();
 }
@@ -538,12 +611,16 @@ function restart() {
 
 function showResult(result, state) {
   const win = result === 'win';
-  $('#res-head').textContent = win ? 'WIN' : 'LOSE';
+  // PAへ逃げ込んで自分から降りた場合。負けとは分けて扱います
+  const abort = result === 'abort';
+  $('#res-head').textContent = abort ? 'GIVE UP' : win ? 'WIN' : 'LOSE';
   $('#res-head').className = `res-head ${win ? 'win' : 'lose'}`;
 
   let reward = 0;
   let quote = '';
-  if (mode === 'battle' && currentRival) {
+  if (abort) {
+    quote = currentRival ? `${currentRival.name} から降りた。賞金はなし。` : '走行をやめた';
+  } else if (mode === 'battle' && currentRival) {
     quote = win ? currentRival.win : currentRival.lose;
     if (win) {
       reward = currentRival.reward;
@@ -659,12 +736,15 @@ $('#btn-reset').addEventListener('click', () => {
 $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   const go = b.dataset.go;
   audio.resume();
+  // ピットイン中のガレージから「戻る」を押したら、タイトルではなく走行へ
+  if (pitStop && current === 'garage') { closePit(); return; }
   if (go === 'free' || go === 'ta') { coursePurpose = go; show('course'); return; }
   show(go);
 }));
 
 input.onAction = (code) => {
   if (code === 'Escape') {
+    if (pitStop && current === 'garage') { closePit(); return; }
     if (current !== 'none' && current !== 'pause' && current !== 'title' && current !== 'loading') {
       const back = $(`#scr-${current} .back`);
       if (back) { back.click(); return; }
@@ -673,6 +753,7 @@ input.onAction = (code) => {
     return;
   }
   if (current !== 'none') { menuKey(code); return; }
+  if (code === 'KeyF') { doPaAction(); return; }
   if (code === 'KeyC') {
     hud.message(game.cycleCamera(), '', 900);
     data.settings.cam = game.userCamMode;
@@ -680,6 +761,8 @@ input.onAction = (code) => {
   }
   if (code === 'KeyR') restart();
 };
+
+$('#hud-prompt').addEventListener('click', (e) => { e.preventDefault(); doPaAction(); });
 
 function onGameEvent(type, payload) {
   if (type === 'count') hud.message(String(payload), '', 900);
@@ -694,6 +777,8 @@ function onGameEvent(type, payload) {
     }
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
+  // 何かできる場所に来たことを、音でも知らせます
+  if (type === 'prompt') audio.beep(payload.kind === 'battle' ? 980 : 660, 0.07, 0.09);
   if (type === 'overtake') {
     hud.message(payload.by === 'player' ? 'OVERTAKE' : 'PASSED', '', 1100);
     audio.beep(payload.by === 'player' ? 1180 : 420, 0.12, 0.12);
@@ -701,7 +786,7 @@ function onGameEvent(type, payload) {
   if (type === 'danger') document.getElementById('hud').classList.toggle('danger', payload);
   if (type === 'finish') {
     setTimeout(() => showResult(payload.result, payload.state), 900);
-    hud.message(payload.result === 'win' ? 'WIN' : 'LOSE', '', 2000);
+    hud.message(payload.result === 'win' ? 'WIN' : payload.result === 'abort' ? 'GIVE UP' : 'LOSE', '', 2000);
   }
 }
 
@@ -750,6 +835,7 @@ async function boot() {
   game.start('free', { startS: game.track.length * 0.62, rollingStart: true });
 
   hud = new HUD(document.getElementById('hud'), game.track);
+  hud.setPaMarks(game.paSpots);
   input.bindTouch(document);
   if ('ontouchstart' in window) $('#touch').classList.remove('hidden');
 

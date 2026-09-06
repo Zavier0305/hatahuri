@@ -4,14 +4,16 @@ import { RenderPass } from 'three/addons/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/OutputPass.js';
 import { clamp, lerp, damp, formatTime } from './util.js';
-import { createTrack, buildRoad, ROAD, LANE_U, rampHeightAtU } from './track.js';
+import { createTrack, buildRoad, ROAD, LANE_U, rampHeightAtU, PA, paBayZ, paSpots } from './track.js';
 import { COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildRamps, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
 import { slipstreamFactor } from './vehicle.js';
 import { RivalAI } from './ai.js';
 import { Traffic } from './traffic.js';
 import { CAR_BY_ID } from './cars.js';
-import { Actor, Particles, disposeTree } from './actors.js';
+import { Actor, Particles, disposeTree, softDot } from './actors.js';
+import { buildCar } from './carModel.js';
+import { CARS } from './cars.js';
 const CAM_MODES = [
   { id: 'chase', label: '追走', dist: 6.6, height: 2.15, fov: 62, look: 9 },
   { id: 'far', label: 'ロング', dist: 10.5, height: 3.4, fov: 58, look: 12 },
@@ -183,6 +185,9 @@ export class Game {
     buildBridges(this.track, w);
     this.scene.add(w);
     this.world = w;
+    // このコースのパーキングエリア。たむろしている車を置く場所です
+    this.setPaRacers(null);
+    this.paSpots = paSpots(this.track);
 
     // 天候。濡れた路面はグリップが落ち、映り込みが強くなります。
     // 海も高さ -2m 固定でした。路面がそれより低くなる区間では海が路面を
@@ -292,6 +297,132 @@ export class Game {
     return this.rival;
   }
 
+  // ---------------------------------------------------------------- パーキングエリア
+
+  /**
+   * パーキングエリアにたむろしている走り屋を置きます。
+   * メニューへ戻らなくても、走っている世界の中で相手を選べるようにするための
+   * 仕掛けです。ランプの平らな区間は「本線の s に対する横位置と高さ」で
+   * 表せるので、置き場所も (s, u) で決められます。
+   *
+   * list … 挑戦できる相手（story.js の定義）。null で片付けます。
+   */
+  setPaRacers(list) {
+    if (this.paGroup) {
+      this.scene.remove(this.paGroup);
+      disposeTree(this.paGroup);
+      this.paGroup = null;
+    }
+    this.paRacers = [];
+    const spots = this.paSpots || [];
+    if (!list || !list.length || !spots.length) return;
+
+    const g = new THREE.Group();
+    g.name = 'paRacers';
+    const sm = {};
+    const basis = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const turn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const left = new THREE.Vector3();
+    // 全部のますを埋めると通り抜けられなくなるので、間を空けて停めます
+    const BAYS = [1, 3, 5, 7];
+    let n = 0;
+
+    const put = (spot, k, spec, color, def) => {
+      const sb = spot.s + paBayZ(k);
+      const r = this.track.rampAt(sb);
+      if (!r || r.index !== spot.index) return;
+      const u = spot.outerU + PA.bayU;
+      this.track.sample(sb, sm);
+      const built = buildCar(spec, { color });
+      const root = built.root;
+      root.position.copy(sm.pos)
+        .addScaledVector(sm.lat, u)
+        .addScaledVector(sm.up, rampHeightAtU(r, u) + 0.02);
+      // 車の回転行列は右手系（X×Y=Z）＝ [左, 上, 進行方向]。
+      // そこから Y まわりに +90 度で、ますへ頭から入れた向きになります。
+      basis.makeBasis(left.copy(sm.lat).negate(), sm.up, sm.tan);
+      q.setFromRotationMatrix(basis).multiply(turn);
+      root.quaternion.copy(q);
+      g.add(root);
+      // 接地感（自車と同じ、輪郭の出ない影）
+      const sh = new THREE.Mesh(
+        new THREE.PlaneGeometry(spec.dims.W * 1.9, spec.dims.L * 1.35),
+        new THREE.MeshBasicMaterial({
+          color: 0x000000, transparent: true, opacity: 0.45, depthWrite: false,
+          map: softDot(0.42), fog: true,
+        })
+      );
+      sh.rotation.x = -Math.PI / 2;
+      sh.position.copy(root.position).addScaledVector(sm.up, -0.01);
+      sh.quaternion.premultiply(q);
+      sh.renderOrder = 1;
+      g.add(sh);
+      if (def) this.paRacers.push({ def, spot, mesh: root, pos: root.position.clone() });
+    };
+
+    for (const spot of spots) {
+      // 1か所につき、挑戦できる相手が1台と、ただ停まっている車が数台
+      const def = list[n % list.length]; n++;
+      const spec = CAR_BY_ID[def.carId];
+      if (spec) put(spot, BAYS[0], spec, def.color, def);
+      for (let i = 1; i < BAYS.length; i++) {
+        const c = CARS[(spot.index * 7 + i * 3 + (this.course.seed ?? 1)) % CARS.length];
+        put(spot, BAYS[i], c, c.color, null);
+      }
+    }
+    this.scene.add(g);
+    this.paGroup = g;
+  }
+
+  /**
+   * いまパーキングエリアで何ができるか。
+   * 近くに走り屋がいれば勝負、いなければピットイン（整備）です。
+   */
+  updatePaPrompt() {
+    const prev = this.paPrompt;
+    this.paPrompt = null;
+    const v = this.player && this.player.vehicle;
+    if (!v || this.state.finished || this.mode !== 'racing') return;
+    if (!v.onRamp || !this.track.rampAt) return;
+    const r = this.track.rampAt(v.s);
+    if (!r || r.pad < 0.35) return;
+    if (v.speedKmh > 20) return;
+
+    if (this.kind === 'battle') {
+      // 勝負の途中でもPAへ逃げ込めます。負けが決まるまで走らされるより、
+      // 自分で降りられるほうが自由です（そのかわり賞金も記録も付きません）。
+      this.paPrompt = {
+        kind: 'quit',
+        label: '勝負から降りる',
+        sub: `${r.name}PA に逃げ込む — 賞金も記録もなし`,
+      };
+    } else if (this.kind === 'free') {
+      let best = null, bd = 11;   // 相手の真横につけたときだけ（離れて停めれば整備）
+      for (const pr of this.paRacers || []) {
+        if (!pr.mesh.visible) continue;
+        const d = pr.pos.distanceTo(v.pos);
+        if (d < bd) { bd = d; best = pr; }
+      }
+      if (best) {
+        this.paPrompt = {
+          kind: 'battle', rival: best.def, exitIndex: best.spot.index,
+          label: '勝負を挑む',
+          sub: `${best.def.name}（${CAR_BY_ID[best.def.carId].name}）`,
+        };
+      } else if (v.speedKmh < 6) {
+        this.paPrompt = {
+          kind: 'pit',
+          label: 'ピットインする',
+          sub: `${r.name}PA — チューニング・車の乗り換え`,
+        };
+      }
+    }
+    if (this.paPrompt && (!prev || prev.kind !== this.paPrompt.kind || prev.sub !== this.paPrompt.sub)) {
+      this.onEvent('prompt', this.paPrompt);
+    }
+  }
+
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
   start(kind, opts = {}) {
     const startS = opts.startS ?? 0;
@@ -317,6 +448,7 @@ export class Game {
       if (this.rival) { this.rival.vehicle.vx = v0; this.rival.vehicle.gear = 4; }
     }
     this.traffic.density = opts.traffic ?? 1;
+    this.paPrompt = null;
     this.mode = this.state.countdown > 0 ? 'countdown' : 'racing';
     if (opts.camMode !== undefined) this.userCamMode = opts.camMode;
     this.camMode = this.userCamMode;
@@ -680,18 +812,28 @@ export class Game {
       }
       st._prevGap = gap;
       st.gap = gap;
-      const drain = (g) => (0.018 + Math.pow(clamp(g / 220, 0, 1), 1.25) * 0.34) * dt;
-      if (gap > 2) st.rivalLife -= drain(gap);
-      else if (gap < -2) st.life -= drain(-gap);
-      else { st.life = Math.min(1, st.life + dt * 0.012); st.rivalLife = Math.min(1, st.rivalLife + dt * 0.012); }
+      // 出口ランプへ降りているあいだは勝負を止めます。
+      // ランプは560mあり、下る速度では40秒以上かかります。止めないと
+      // パーキングエリアへ着く前に必ず体力が尽きるので、「逃げ込む」という
+      // 選択そのものが成立しませんでした（実際にそうなりました）。
+      // 本線へ戻れば、開いた車間ぶんの不利を背負って続きが始まります。
+      if (!pv.onRamp) {
+        const drain = (g) => (0.018 + Math.pow(clamp(g / 220, 0, 1), 1.25) * 0.34) * dt;
+        if (gap > 2) st.rivalLife -= drain(gap);
+        else if (gap < -2) st.life -= drain(-gap);
+        else { st.life = Math.min(1, st.life + dt * 0.012); st.rivalLife = Math.min(1, st.rivalLife + dt * 0.012); }
 
-      // 残りが少なくなったら警告（HUD側で赤く点滅させます）
-      const danger = st.life < 0.28;
-      if (danger !== st._danger) { st._danger = danger; this.onEvent('danger', danger); }
+        // 残りが少なくなったら警告（HUD側で赤く点滅させます）
+        const danger = st.life < 0.28;
+        if (danger !== st._danger) { st._danger = danger; this.onEvent('danger', danger); }
 
-      if (st.rivalLife <= 0 || gap > 420) this.finish('win');
-      else if (st.life <= 0 || gap < -420) this.finish('lose');
+        if (st.rivalLife <= 0 || gap > 420) this.finish('win');
+        else if (st.life <= 0 || gap < -420) this.finish('lose');
+      }
     }
+
+    // --- パーキングエリアでできること
+    this.updatePaPrompt();
 
     // --- 演出
     this.updateCamera(dt);
@@ -944,6 +1086,7 @@ export class Game {
       // バトル中の体力・車間。これを渡していなかったため、HUD の
       // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
       // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
+      prompt: this.paPrompt,
       battle: this.kind === 'battle' && this.rival && !this.state.finished
         ? { life: this.state.life, rivalLife: this.state.rivalLife, gap: this.state.gap }
         : null,
