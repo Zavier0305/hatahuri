@@ -80,9 +80,12 @@ export class Actor {
       }
     }
     if (this.built.reflections) {
+      // 濡れた路面では、光は点ではなく長い尾を引きます。乾いた路面と
+      // 同じ長さのままでは「雨なのに乾いて見える」原因になります。
+      const wet = this.wet;
       for (const g of this.built.reflections) {
-        g.material.opacity = on ? 0.20 : 0.075;
-        g.scale.y = on ? 1.5 : 1;
+        g.material.opacity = wet ? (on ? 0.34 : 0.17) : (on ? 0.20 : 0.075);
+        g.scale.y = wet ? (on ? 4.5 : 3.2) : (on ? 1.5 : 1);
       }
     }
     // 影の位置は game.js が灯りの向きから決めます（真下固定だとシールに見える）

@@ -394,7 +394,11 @@ export function buildLand(track, scene) {
     color: 0x14171e, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.25,
   });
   const HALF = 460;
-  const Y = -1.4;
+  // 地面の高さを -1.4m 固定にしていました。ところが路面の高さはコースにより
+  // -33m〜+50m と大きく上下するため、路面が沈む区間では地面が路面を覆い、
+  // 画面の半分が真っ黒になっていました（12コース中7コースで発生）。
+  // 高架下の地面として、路面から一定の深さを保って追従させます。
+  const BELOW = 11;
   const sm = {};
   for (const z of track.zones) {
     if (z.kind !== 'city') continue;
@@ -405,11 +409,12 @@ export function buildLand(track, scene) {
     for (let r = 0; r <= rows; r++) {
       const s2 = lerp(from, to, r / rows);
       track.sample(s2, sm);
+      const y = sm.pos.y - BELOW;
       for (let q = 0; q < 2; q++) {
         const u = q === 0 ? -HALF : HALF;
         const o = (r * 2 + q) * 3;
         posA[o] = sm.pos.x + sm.lat.x * u;
-        posA[o + 1] = Y;
+        posA[o + 1] = y;
         posA[o + 2] = sm.pos.z + sm.lat.z * u;
       }
     }
@@ -557,13 +562,18 @@ export function buildCity(track, scene, seed = 99, density = 0.9) {
       const w = 11 + r() * 24;
       const d = 11 + r() * 24;
       const p = sm.pos.clone().addScaledVector(sm.lat, side * dist);
-      p.y = -3;
+      // 土台も -3m 固定でした。路面が沈む区間ではビルの足元が路面より
+      // 上に来てしまい、道が建物の下をくぐるような絵になっていました。
+      p.y = sm.pos.y - 11;
       // コース本体（他の区間も含む）に被る位置には建てない
       if (!isClear(p.x, p.z, ROAD.halfRoad + 10 + Math.hypot(w, d) * 0.5)) continue;
       near.push({ p, w, h, d, rot: r() * TAU });
     }
   }
-  // 遠景（水平線に並ぶ高層ビル）
+  // 遠景（水平線に並ぶ高層ビル）。コース全体の平均の高さに合わせます。
+  let avgY = 0;
+  for (let i = 0; i < track.n; i++) avgY += track.pos[i * 3 + 1];
+  const groundY = avgY / track.n - 11;
   for (let i = 0; i < 620 && far.length < 420; i++) {
     const a = r() * TAU;
     const rad = 2600 + r() * 3400;
@@ -572,7 +582,7 @@ export function buildCity(track, scene, seed = 99, density = 0.9) {
     const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
     // 遠景のビルもコースの真上に来ることがあるので同じ判定を通す
     if (!isClear(x, z, ROAD.halfRoad + 14 + Math.hypot(w, d) * 0.5)) continue;
-    far.push({ p: new THREE.Vector3(x, -3, z), w, h, d, rot: r() * TAU });
+    far.push({ p: new THREE.Vector3(x, groundY, z), w, h, d, rot: r() * TAU });
   }
 
   // 窓1枚を約4.2m×3.4mに保ちます。

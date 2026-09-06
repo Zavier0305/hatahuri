@@ -184,6 +184,14 @@ export class Game {
     this.world = w;
 
     // 天候。濡れた路面はグリップが落ち、映り込みが強くなります。
+    // 海も高さ -2m 固定でした。路面がそれより低くなる区間では海が路面を
+    // 覆ってしまうので、そのコースのいちばん低い路面より下へ沈めます。
+    {
+      let minY = Infinity;
+      for (let i = 0; i < this.track.n; i++) minY = Math.min(minY, this.track.pos[i * 3 + 1]);
+      this.sea.position.y = Math.min(-2, minY - 6);
+    }
+
     this.wet = !!course.wet;
     this.rain.lines.visible = this.wet;
     const roadMat = w.children[0] && w.children[0].userData.roadMat;
@@ -205,6 +213,17 @@ export class Game {
     const base = this.settings.quality === 'low' ? 26 : 44;
     const count = clamp(Math.round(base * (course.traffic ?? 1)), 12, 96);
     this.traffic = new Traffic(this.track, this.scene, count, (course.seed ?? 1) + 4242);
+    // 一般車が路面に落とす光も、濡れているときは長く伸ばします。
+    // 天候はコースごとに固定なので、ここで一度だけ調整します。
+    if (this.wet) {
+      // 伸ばすのは尾を引く側（テール）だけです。前方への照射まで3倍にすると、
+      // 対向車のヘッドライトが巨大な光の塊になって画面を潰します（実際になりました）。
+      this.traffic.group.traverse((o) => {
+        if (!o.userData || o.userData.roadGlow !== 'tail') return;
+        o.scale.y = 3.0;
+        o.material.opacity = Math.min(0.9, o.material.opacity * 1.9);
+      });
+    }
 
     // 走行中の参照をコースに合わせて作り直します
     if (this.player) {
@@ -677,8 +696,9 @@ export class Game {
     this.updateCamera(dt);
     this.updateRain(dt);
     this.updateEffects(dt);
+    this.player.wet = this.wet;
     this.player.syncMesh(this.track);
-    if (this.rival) this.rival.syncMesh(this.track);
+    if (this.rival) { this.rival.wet = this.wet; this.rival.syncMesh(this.track); }
     audio && audio.update(pv, dt, {
       inside: CAM_MODES[this.camMode].id === 'hood',
       tunnel: this.track.isTunnel(pv.s),
@@ -789,6 +809,7 @@ export class Game {
       }
     }
     this.rimLight.position.copy(v.pos).addScaledVector(carDir, -4.0).addScaledVector(sm.up, 3.2);
+
 
     // 車の下の影を、いちばん強い灯りの反対側へずらします。
     // 真下に固定した黒い楕円のままだと、街灯の下を通っても影が動かず、

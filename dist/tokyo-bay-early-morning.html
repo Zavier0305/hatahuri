@@ -2063,7 +2063,7 @@ function buildCar(spec, opts = {}) {
  * 自車にはこれがあったのに一般車には無く、周囲に何台いても路面を照らすのは
  * 自車のライトだけ、という状態でした（ボンネット視点で明白）。
  */
-function roadGlow(color, w, len, opacity, z) {
+function roadGlow(color, w, len, opacity, z, kind) {
   const m = new THREE.Mesh(
     new THREE.PlaneGeometry(w, len),
     new THREE.MeshBasicMaterial({
@@ -2074,6 +2074,7 @@ function roadGlow(color, w, len, opacity, z) {
   m.rotation.x = -Math.PI / 2;
   m.position.set(0, 0.013, z);
   m.renderOrder = 2;
+  m.userData.roadGlow = kind;   // 'tail' のみ、濡れた路面で game 側が伸ばします
   return m;
 }
 
@@ -2181,8 +2182,8 @@ function buildTrafficCar(kind, color, rand) {
         wheels.push(w);
       }
     }
-    root.add(roadGlow(0xff2a16, W * 1.4, 4.4, 0.075, -L * 0.5 - 2.2));
-    root.add(roadGlow(0xfff0cc, W * 1.7, 3.6, 0.055, L * 0.5 + 2.0));
+    root.add(roadGlow(0xff2a16, W * 1.4, 4.4, 0.075, -L * 0.5 - 2.2, 'tail'));
+    root.add(roadGlow(0xfff0cc, W * 1.7, 3.6, 0.055, L * 0.5 + 2.0, 'head'));
     return { root, wheels, length: L, width: W };
   }
 
@@ -2226,8 +2227,8 @@ function buildTrafficCar(kind, color, rand) {
       wheels.push(w);
     }
   }
-  root.add(roadGlow(0xff2a16, W * 1.2, 3.6, 0.075, -L * 0.5 - 1.7));
-  root.add(roadGlow(0xfff0cc, W * 1.5, 3.2, 0.055, L * 0.5 + 1.8));
+  root.add(roadGlow(0xff2a16, W * 1.2, 3.6, 0.075, -L * 0.5 - 1.7, 'tail'));
+  root.add(roadGlow(0xfff0cc, W * 1.5, 3.2, 0.055, L * 0.5 + 1.8, 'head'));
   return { root, wheels, length: L, width: W };
 }
 
@@ -2759,9 +2760,12 @@ class Actor {
       }
     }
     if (this.built.reflections) {
+      // 濡れた路面では、光は点ではなく長い尾を引きます。乾いた路面と
+      // 同じ長さのままでは「雨なのに乾いて見える」原因になります。
+      const wet = this.wet;
       for (const g of this.built.reflections) {
-        g.material.opacity = on ? 0.20 : 0.075;
-        g.scale.y = on ? 1.5 : 1;
+        g.material.opacity = wet ? (on ? 0.34 : 0.17) : (on ? 0.20 : 0.075);
+        g.scale.y = wet ? (on ? 4.5 : 3.2) : (on ? 1.5 : 1);
       }
     }
     // 影の位置は game.js が灯りの向きから決めます（真下固定だとシールに見える）
@@ -3728,7 +3732,11 @@ function buildLand(track, scene) {
     color: 0x14171e, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.25,
   });
   const HALF = 460;
-  const Y = -1.4;
+  // 地面の高さを -1.4m 固定にしていました。ところが路面の高さはコースにより
+  // -33m〜+50m と大きく上下するため、路面が沈む区間では地面が路面を覆い、
+  // 画面の半分が真っ黒になっていました（12コース中7コースで発生）。
+  // 高架下の地面として、路面から一定の深さを保って追従させます。
+  const BELOW = 11;
   const sm = {};
   for (const z of track.zones) {
     if (z.kind !== 'city') continue;
@@ -3739,11 +3747,12 @@ function buildLand(track, scene) {
     for (let r = 0; r <= rows; r++) {
       const s2 = lerp(from, to, r / rows);
       track.sample(s2, sm);
+      const y = sm.pos.y - BELOW;
       for (let q = 0; q < 2; q++) {
         const u = q === 0 ? -HALF : HALF;
         const o = (r * 2 + q) * 3;
         posA[o] = sm.pos.x + sm.lat.x * u;
-        posA[o + 1] = Y;
+        posA[o + 1] = y;
         posA[o + 2] = sm.pos.z + sm.lat.z * u;
       }
     }
@@ -3891,13 +3900,18 @@ function buildCity(track, scene, seed = 99, density = 0.9) {
       const w = 11 + r() * 24;
       const d = 11 + r() * 24;
       const p = sm.pos.clone().addScaledVector(sm.lat, side * dist);
-      p.y = -3;
+      // 土台も -3m 固定でした。路面が沈む区間ではビルの足元が路面より
+      // 上に来てしまい、道が建物の下をくぐるような絵になっていました。
+      p.y = sm.pos.y - 11;
       // コース本体（他の区間も含む）に被る位置には建てない
       if (!isClear(p.x, p.z, ROAD.halfRoad + 10 + Math.hypot(w, d) * 0.5)) continue;
       near.push({ p, w, h, d, rot: r() * TAU });
     }
   }
-  // 遠景（水平線に並ぶ高層ビル）
+  // 遠景（水平線に並ぶ高層ビル）。コース全体の平均の高さに合わせます。
+  let avgY = 0;
+  for (let i = 0; i < track.n; i++) avgY += track.pos[i * 3 + 1];
+  const groundY = avgY / track.n - 11;
   for (let i = 0; i < 620 && far.length < 420; i++) {
     const a = r() * TAU;
     const rad = 2600 + r() * 3400;
@@ -3906,7 +3920,7 @@ function buildCity(track, scene, seed = 99, density = 0.9) {
     const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
     // 遠景のビルもコースの真上に来ることがあるので同じ判定を通す
     if (!isClear(x, z, ROAD.halfRoad + 14 + Math.hypot(w, d) * 0.5)) continue;
-    far.push({ p: new THREE.Vector3(x, -3, z), w, h, d, rot: r() * TAU });
+    far.push({ p: new THREE.Vector3(x, groundY, z), w, h, d, rot: r() * TAU });
   }
 
   // 窓1枚を約4.2m×3.4mに保ちます。
@@ -5403,6 +5417,14 @@ class Game {
     this.world = w;
 
     // 天候。濡れた路面はグリップが落ち、映り込みが強くなります。
+    // 海も高さ -2m 固定でした。路面がそれより低くなる区間では海が路面を
+    // 覆ってしまうので、そのコースのいちばん低い路面より下へ沈めます。
+    {
+      let minY = Infinity;
+      for (let i = 0; i < this.track.n; i++) minY = Math.min(minY, this.track.pos[i * 3 + 1]);
+      this.sea.position.y = Math.min(-2, minY - 6);
+    }
+
     this.wet = !!course.wet;
     this.rain.lines.visible = this.wet;
     const roadMat = w.children[0] && w.children[0].userData.roadMat;
@@ -5424,6 +5446,17 @@ class Game {
     const base = this.settings.quality === 'low' ? 26 : 44;
     const count = clamp(Math.round(base * (course.traffic ?? 1)), 12, 96);
     this.traffic = new Traffic(this.track, this.scene, count, (course.seed ?? 1) + 4242);
+    // 一般車が路面に落とす光も、濡れているときは長く伸ばします。
+    // 天候はコースごとに固定なので、ここで一度だけ調整します。
+    if (this.wet) {
+      // 伸ばすのは尾を引く側（テール）だけです。前方への照射まで3倍にすると、
+      // 対向車のヘッドライトが巨大な光の塊になって画面を潰します（実際になりました）。
+      this.traffic.group.traverse((o) => {
+        if (!o.userData || o.userData.roadGlow !== 'tail') return;
+        o.scale.y = 3.0;
+        o.material.opacity = Math.min(0.9, o.material.opacity * 1.9);
+      });
+    }
 
     // 走行中の参照をコースに合わせて作り直します
     if (this.player) {
@@ -5896,8 +5929,9 @@ class Game {
     this.updateCamera(dt);
     this.updateRain(dt);
     this.updateEffects(dt);
+    this.player.wet = this.wet;
     this.player.syncMesh(this.track);
-    if (this.rival) this.rival.syncMesh(this.track);
+    if (this.rival) { this.rival.wet = this.wet; this.rival.syncMesh(this.track); }
     audio && audio.update(pv, dt, {
       inside: CAM_MODES[this.camMode].id === 'hood',
       tunnel: this.track.isTunnel(pv.s),
@@ -6008,6 +6042,7 @@ class Game {
       }
     }
     this.rimLight.position.copy(v.pos).addScaledVector(carDir, -4.0).addScaledVector(sm.up, 3.2);
+
 
     // 車の下の影を、いちばん強い灯りの反対側へずらします。
     // 真下に固定した黒い楕円のままだと、街灯の下を通っても影が動かず、
