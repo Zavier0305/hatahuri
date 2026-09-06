@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rng, clamp, lerp, TAU } from './util.js';
-import { ROAD, RAMP, rampHeightAtU, PA, paBayZ } from './track.js';
+import { ROAD, RAMP, rampHeightAtU, PA, paBayZ, SURF, signalPoints } from './track.js';
 
 // ---------------------------------------------------------------- 空と海
 
@@ -1083,7 +1083,8 @@ export function buildRamps(track, scene) {
       const lampG = new THREE.MeshStandardMaterial({
         color: 0x8fffc0, emissive: 0x2bd47a, emissiveIntensity: 3.2, roughness: 0.4,
       });
-      const H = RAMP.half;
+      // ブースの間隔。ここを広げると、広場を通る一般道の車線に立ってしまいます
+      const H = RAMP.half - 0.5;
       const g3 = new THREE.Group();
       g3.position.copy(mid.c);
       const bs = new THREE.Matrix4();
@@ -1160,21 +1161,21 @@ export function buildRamps(track, scene) {
           // ここを超えると、広場を通り抜ける道の上に建ってしまいます。
           const x0 = edgeOf(r5) + 0.8;
           const y0 = floorOf(r5);
-          const b = new THREE.Mesh(new THREE.BoxGeometry(7, 4.6, 11), wall);
-          b.position.set(x0 + 3.5, y0 + 2.3, 0);
+          const b = new THREE.Mesh(new THREE.BoxGeometry(4.4, 4.6, 12), wall);
+          b.position.set(x0 + 2.2, y0 + 2.3, 0);
           g5.add(b);
-          for (const dz of [-3.2, 0, 3.2]) {
-            const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.8, 2.2), win);
-            w2.position.set(x0 + 7.1, y0 + 2.3, dz);
+          for (const dz of [-3.4, 0, 3.4]) {
+            const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.8, 2.3), win);
+            w2.position.set(x0 + 4.5, y0 + 2.3, dz);
             g5.add(w2);
           }
           // 庇と柱。これがあるだけで「建物」に見えます
-          const eave = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.25, 12), wall);
-          eave.position.set(x0 + 8.3, y0 + 4.0, 0);
+          const eave = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.25, 13), wall);
+          eave.position.set(x0 + 5.4, y0 + 4.0, 0);
           g5.add(eave);
-          for (const dz of [-4.6, 4.6]) {
+          for (const dz of [-5.0, 5.0]) {
             const pil = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.9, 0.22), wall);
-            pil.position.set(x0 + 9.4, y0 + 1.95, dz);
+            pil.position.set(x0 + 6.2, y0 + 1.95, dz);
             g5.add(pil);
           }
           // 「PA」の行灯。夜に遠くから見える目印です
@@ -1182,7 +1183,7 @@ export function buildRamps(track, scene) {
             new THREE.MeshStandardMaterial({
               color: 0x2a6fd8, emissive: 0x2f7bea, emissiveIntensity: 3.0, roughness: 0.5,
             }));
-          sign.position.set(x0 + 7.3, y0 + 5.2, 0);
+          sign.position.set(x0 + 4.7, y0 + 5.2, 0);
           g5.add(sign);
         }
 
@@ -1220,6 +1221,137 @@ export function buildRamps(track, scene) {
       }
     }
   }
+  scene.add(group);
+  return group;
+}
+
+/**
+ * 一般道（側道）。高速の外側・下を一周しています。
+ * 走れる範囲（track.surfaceAt）とまったく同じ式で面を張るので、
+ * 「見えている道」と「走れる道」がずれません。
+ */
+export function buildSurfaceRoad(track, scene) {
+  const group = new THREE.Group();
+  group.name = 'surface';
+  if (!track.surfaceAt || !track.surfaceNodes) { scene.add(group); return group; }
+
+  const road = new THREE.MeshStandardMaterial({
+    color: 0x30343b, roughness: 0.78, metalness: 0.0, envMapIntensity: 0.45,
+    side: THREE.DoubleSide,
+  });
+  const line = new THREE.MeshStandardMaterial({
+    color: 0xcfd3ca, roughness: 0.7, metalness: 0.0,
+    emissive: 0x24261f, emissiveIntensity: 0.5, side: THREE.DoubleSide,
+  });
+  const kerb = new THREE.MeshStandardMaterial({
+    color: 0x6a7078, roughness: 0.85, metalness: 0.05, side: THREE.DoubleSide,
+  });
+
+  const STEP = 12;
+  const N = Math.max(8, Math.round(track.length / STEP));
+  const sm = {};
+  const rows = [];
+  for (let i = 0; i <= N; i++) {
+    const s2 = (i / N) * track.length;
+    const sf = track.surfaceAt(s2);
+    if (!sf) { rows.length = 0; break; }
+    track.sample(s2, sm);
+    rows.push({ pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(), tan: sm.tan.clone(), sf, s: s2 });
+  }
+  if (!rows.length) { scene.add(group); return group; }
+
+  /** 帯を張ります。uA/uB は「その地点での横位置」を返す関数です。 */
+  const strip = (uA, uB, yOff, mat) => {
+    const pos = [], idx = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      for (let q = 0; q < 2; q++) {
+        const u = q === 0 ? uA(r) : uB(r);
+        const y = r.sf.h + yOff;
+        pos.push(
+          r.pos.x + r.lat.x * u + r.up.x * y,
+          r.pos.y + r.lat.y * u + r.up.y * y,
+          r.pos.z + r.lat.z * u + r.up.z * y
+        );
+      }
+    }
+    for (let i = 0; i < rows.length - 1; i++) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      idx.push(a, d, c, a, b, d);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, mat));
+  };
+
+  const OUT = (r) => r.sf.u - r.sf.half;
+  const IN = (r) => r.sf.u + r.sf.half;
+  strip(OUT, IN, 0, road);
+  strip(OUT, (r) => OUT(r) + 0.5, 0.10, kerb);            // 外側の縁石
+  strip((r) => IN(r) - 0.5, IN, 0.10, kerb);              // 内側の縁石
+  strip((r) => r.sf.u - 0.09, (r) => r.sf.u + 0.09, 0.012, line);   // センターライン
+
+  // ---- 信号と交差点
+  // 色は game 側が毎フレーム決めます（近くの数個だけ）。
+  {
+    const pole = new THREE.MeshStandardMaterial({ color: 0x4a4f57, roughness: 0.7, metalness: 0.3 });
+    const hood = new THREE.MeshStandardMaterial({ color: 0x23272d, roughness: 0.8, metalness: 0.1 });
+    const cross = new THREE.MeshStandardMaterial({
+      color: 0xcfd3ca, roughness: 0.75, emissive: 0x24261f, emissiveIntensity: 0.5, side: THREE.DoubleSide,
+    });
+    const lights = [];
+    const basis = new THREE.Matrix4(), back = new THREE.Vector3();
+    for (const s2 of signalPoints(track)) {
+      const sf = track.surfaceAt(s2);
+      if (!sf) continue;
+      track.sample(s2, sm);
+      const g6 = new THREE.Group();
+      g6.position.copy(sm.pos);
+      basis.makeBasis(sm.lat, sm.up, back.copy(sm.tan).negate());
+      g6.quaternion.setFromRotationMatrix(basis);
+      const inner = sf.u + sf.half;
+
+      // 横断歩道（ゼブラ）。信号の手前が交差点だと分かるように
+      for (let k = -3; k <= 3; k++) {
+        const z = new THREE.Mesh(new THREE.BoxGeometry(sf.half * 2 - 1.0, 0.02, 0.55), cross);
+        z.position.set(sf.u, sf.h + 0.02, k * 1.35);
+        g6.add(z);
+      }
+      // 停止線
+      const stop = new THREE.Mesh(new THREE.BoxGeometry(sf.half - 0.4, 0.02, 0.35), cross);
+      stop.position.set(sf.u - sf.half / 2 + 0.2, sf.h + 0.02, 6.0);
+      g6.add(stop);
+
+      // 柱とアーム
+      const p2 = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 6.2, 6), pole);
+      p2.position.set(inner + 0.6, sf.h + 3.1, 5.4);
+      g6.add(p2);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(sf.half + 1.2, 0.16, 0.16), pole);
+      arm.position.set(inner + 0.6 - (sf.half + 1.2) / 2, sf.h + 6.0, 5.4);
+      g6.add(arm);
+      const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 0.30), hood);
+      box.position.set(sf.u + 1.0, sf.h + 5.7, 5.4);
+      g6.add(box);
+
+      const lamps = [];
+      for (const [dx, col] of [[-0.5, 0x22d15a], [0, 0xf0c020], [0.5, 0xff3020]]) {
+        const m = new THREE.MeshStandardMaterial({
+          color: col, emissive: col, emissiveIntensity: 0.08, roughness: 0.4,
+        });
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.10), m);
+        l.position.set(sf.u + 1.0 + dx, sf.h + 5.7, 5.28);
+        g6.add(l);
+        lamps.push(m);
+      }
+      group.add(g6);
+      lights.push({ s: s2, lamps });
+    }
+    group.userData.signals = lights;
+  }
+
   scene.add(group);
   return group;
 }

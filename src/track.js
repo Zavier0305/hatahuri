@@ -92,6 +92,60 @@ export const PA = {
   poleZ: 20,      // 照明柱の位置
 };
 
+/**
+ * 一般道（側道）。
+ * 高速の外側・下を、コースに沿って一周しています。
+ *
+ * 横位置と高さは「両隣のパーキングエリアの値をなめらかにつないだもの」です。
+ * こうしておけば、どのPAからも段差なく出入りできます（PAごとに落差が
+ * ちがうコースがあるため、一定の深さにすると出られないPAが生まれます）。
+ * 道路をグラフとして持たなくても、ランプと同じ「本線の s に対する横位置と
+ * 高さ」で書けます。
+ */
+// 半幅3.4m＝片側1車線ずつ。広場の設備（駐車ます・料金所・売店）の
+// あいだを通す必要があるので、幅と通す位置は勝手に決められません。
+export const SURF = { half: 3.4, lanes: 2, offset: 11.0 };
+
+/**
+ * 一般道の信号。
+ * 位置と周期だけを決めておき、状態は「時刻と位置から計算する」ようにします。
+ * 一つずつ状態を持たせて更新すると、遠くの信号まで毎フレーム面倒を見ることに
+ * なります。計算で出せば、近くの数個だけ見た目を更新すれば済みます。
+ */
+export const SIGNAL = { every: 640, green: 19, yellow: 3, red: 14, near: 260 };
+
+/** その信号が、いま何色か。 */
+export function signalPhase(s, time) {
+  const cycle = SIGNAL.green + SIGNAL.yellow + SIGNAL.red;
+  // 場所ごとに位相をずらして、全部が一斉に変わらないようにします
+  const t = (((time + s * 0.037) % cycle) + cycle) % cycle;
+  if (t < SIGNAL.green) return 'green';
+  if (t < SIGNAL.green + SIGNAL.yellow) return 'yellow';
+  return 'red';
+}
+
+/** そのコースの信号の位置。パーキングエリアの中には置きません。 */
+export function signalPoints(track) {
+  if (!track.surfaceNodes) return [];
+  const out = [];
+  const n = Math.max(2, Math.round(track.length / SIGNAL.every));
+  for (let i = 0; i < n; i++) {
+    const s = (i / n) * track.length;
+    // 交差点をインターの中に作ると、合流と重なって分かりにくくなります
+    const r = track.rampAt ? track.rampAt(s) : null;
+    if (r && r.f > 0.25) continue;
+    if (!track.surfaceAt(s)) continue;
+    out.push(s);
+  }
+  return out;
+}
+
+/** 節点のあいだの、つなぎ方。両端は平ら（PAの周りを水平に保つため）。 */
+function surfBlend(k) {
+  const x = Math.min(1, Math.max(0, (k - 0.2) / 0.6));
+  return x * x * (3 - 2 * x);
+}
+
 /** k番目（0..bays-1）の駐車ますの、広場中心からの進行方向オフセット[m]。 */
 export function paBayZ(k) { return (k - (PA.bays - 1) / 2) * PA.bayPitch; }
 
@@ -370,6 +424,7 @@ export function createTrack(course) {
 
   const track = {
     curve, length, n, spacing, course, exitPoints,
+    surfaceNodes: null,
     pos, tan, lat, up, curvature, bank, heading, zones, seed: course.seed,
 
     /** 距離 s（m, 0..length）における位置・方向を返します。 */
@@ -476,7 +531,46 @@ export function createTrack(course) {
     },
 
     isTunnel(s) { return this.zoneAt(s) === 'tunnel'; },
+
+    /**
+     * その地点の一般道（側道）。横位置・高さ・半幅を返します。
+     * 節点（＝各パーキングエリアの中心）のあいだを、両端が平らになる
+     * つなぎ方で補間します。PAの周りが水平でないと、出入りで段差ができます。
+     * 節点が2つ未満のコースには側道を作りません（つなぐ先がないため）。
+     */
+    surfaceAt(s) {
+      const nodes = this.surfaceNodes;
+      if (!nodes || nodes.length < 2) return null;
+      const x = ((s % length) + length) % length;
+      for (let i = 0; i < nodes.length; i++) {
+        const a2 = nodes[i], b2 = nodes[(i + 1) % nodes.length];
+        let d = x - a2.s;
+        if (d < 0) d += length;
+        let span = b2.s - a2.s;
+        if (span <= 0) span += length;
+        if (d > span) continue;
+        const k = surfBlend(d / span);
+        return {
+          u: a2.u + (b2.u - a2.u) * k,
+          h: a2.h + (b2.h - a2.h) * k,
+          half: SURF.half,
+        };
+      }
+      return null;
+    },
   };
+
+  // 側道の節点＝各パーキングエリアの中心。
+  // paSpots は track.rampAt を使うので、track を作ったあとで求めます。
+  {
+    const sp = paSpots(track);
+    // 広場を通す位置は「外の縁から SURF.offset」。駐車ますより内側、
+    // 料金所より外側の空き帯です（中央に通すと料金所を突き抜けます）。
+    track.surfaceNodes = sp.length >= 2
+      ? sp.map((n) => ({ s: n.s, u: n.outerU + SURF.offset, h: n.h }))
+        .sort((a2, b2) => a2.s - b2.s)
+      : null;
+  }
   return track;
 }
 

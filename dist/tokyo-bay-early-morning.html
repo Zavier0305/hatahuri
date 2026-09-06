@@ -2441,6 +2441,60 @@ const PA = {
   poleZ: 20,      // 照明柱の位置
 };
 
+/**
+ * 一般道（側道）。
+ * 高速の外側・下を、コースに沿って一周しています。
+ *
+ * 横位置と高さは「両隣のパーキングエリアの値をなめらかにつないだもの」です。
+ * こうしておけば、どのPAからも段差なく出入りできます（PAごとに落差が
+ * ちがうコースがあるため、一定の深さにすると出られないPAが生まれます）。
+ * 道路をグラフとして持たなくても、ランプと同じ「本線の s に対する横位置と
+ * 高さ」で書けます。
+ */
+// 半幅3.4m＝片側1車線ずつ。広場の設備（駐車ます・料金所・売店）の
+// あいだを通す必要があるので、幅と通す位置は勝手に決められません。
+const SURF = { half: 3.4, lanes: 2, offset: 11.0 };
+
+/**
+ * 一般道の信号。
+ * 位置と周期だけを決めておき、状態は「時刻と位置から計算する」ようにします。
+ * 一つずつ状態を持たせて更新すると、遠くの信号まで毎フレーム面倒を見ることに
+ * なります。計算で出せば、近くの数個だけ見た目を更新すれば済みます。
+ */
+const SIGNAL = { every: 640, green: 19, yellow: 3, red: 14, near: 260 };
+
+/** その信号が、いま何色か。 */
+function signalPhase(s, time) {
+  const cycle = SIGNAL.green + SIGNAL.yellow + SIGNAL.red;
+  // 場所ごとに位相をずらして、全部が一斉に変わらないようにします
+  const t = (((time + s * 0.037) % cycle) + cycle) % cycle;
+  if (t < SIGNAL.green) return 'green';
+  if (t < SIGNAL.green + SIGNAL.yellow) return 'yellow';
+  return 'red';
+}
+
+/** そのコースの信号の位置。パーキングエリアの中には置きません。 */
+function signalPoints(track) {
+  if (!track.surfaceNodes) return [];
+  const out = [];
+  const n = Math.max(2, Math.round(track.length / SIGNAL.every));
+  for (let i = 0; i < n; i++) {
+    const s = (i / n) * track.length;
+    // 交差点をインターの中に作ると、合流と重なって分かりにくくなります
+    const r = track.rampAt ? track.rampAt(s) : null;
+    if (r && r.f > 0.25) continue;
+    if (!track.surfaceAt(s)) continue;
+    out.push(s);
+  }
+  return out;
+}
+
+/** 節点のあいだの、つなぎ方。両端は平ら（PAの周りを水平に保つため）。 */
+function surfBlend(k) {
+  const x = Math.min(1, Math.max(0, (k - 0.2) / 0.6));
+  return x * x * (3 - 2 * x);
+}
+
 /** k番目（0..bays-1）の駐車ますの、広場中心からの進行方向オフセット[m]。 */
 function paBayZ(k) { return (k - (PA.bays - 1) / 2) * PA.bayPitch; }
 
@@ -2719,6 +2773,7 @@ function createTrack(course) {
 
   const track = {
     curve, length, n, spacing, course, exitPoints,
+    surfaceNodes: null,
     pos, tan, lat, up, curvature, bank, heading, zones, seed: course.seed,
 
     /** 距離 s（m, 0..length）における位置・方向を返します。 */
@@ -2825,7 +2880,46 @@ function createTrack(course) {
     },
 
     isTunnel(s) { return this.zoneAt(s) === 'tunnel'; },
+
+    /**
+     * その地点の一般道（側道）。横位置・高さ・半幅を返します。
+     * 節点（＝各パーキングエリアの中心）のあいだを、両端が平らになる
+     * つなぎ方で補間します。PAの周りが水平でないと、出入りで段差ができます。
+     * 節点が2つ未満のコースには側道を作りません（つなぐ先がないため）。
+     */
+    surfaceAt(s) {
+      const nodes = this.surfaceNodes;
+      if (!nodes || nodes.length < 2) return null;
+      const x = ((s % length) + length) % length;
+      for (let i = 0; i < nodes.length; i++) {
+        const a2 = nodes[i], b2 = nodes[(i + 1) % nodes.length];
+        let d = x - a2.s;
+        if (d < 0) d += length;
+        let span = b2.s - a2.s;
+        if (span <= 0) span += length;
+        if (d > span) continue;
+        const k = surfBlend(d / span);
+        return {
+          u: a2.u + (b2.u - a2.u) * k,
+          h: a2.h + (b2.h - a2.h) * k,
+          half: SURF.half,
+        };
+      }
+      return null;
+    },
   };
+
+  // 側道の節点＝各パーキングエリアの中心。
+  // paSpots は track.rampAt を使うので、track を作ったあとで求めます。
+  {
+    const sp = paSpots(track);
+    // 広場を通す位置は「外の縁から SURF.offset」。駐車ますより内側、
+    // 料金所より外側の空き帯です（中央に通すと料金所を突き抜けます）。
+    track.surfaceNodes = sp.length >= 2
+      ? sp.map((n) => ({ s: n.s, u: n.outerU + SURF.offset, h: n.h }))
+        .sort((a2, b2) => a2.s - b2.s)
+      : null;
+  }
   return track;
 }
 
@@ -3128,7 +3222,9 @@ class Vehicle {
     this.roadHeading = undefined;  // いま走っている場所の道の向き
     this.roadCurv = 0;             // そこの曲率（直進復帰補助の減衰項が使います）
     this.laneU = undefined;        // 戻る先の車線中心（game.js が毎フレーム入れます）
-    this.onRamp = false;           // いま出口ランプの上にいるか
+    this.onRamp = false;           // いま出口ランプ（＝パーキングエリア）の上にいるか
+    this.onSurface = false;        // いま一般道（側道）にいるか
+    this.zone = 'road';            // 'road' | 'ramp' | 'surf'
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -3151,6 +3247,12 @@ class Vehicle {
     const sm = track.sample(s, this._sm);
     let hOff = 0;
     this.onRamp = !!opts.onRamp;
+    this.onSurface = !!opts.onSurface;
+    this.zone = this.onRamp ? 'ramp' : this.onSurface ? 'surf' : 'road';
+    if (this.onSurface && track.surfaceAt) {
+      const sf = track.surfaceAt(s);
+      if (sf) hOff = sf.h; else { this.onSurface = false; this.zone = 'road'; }
+    }
     if (this.onRamp && track.rampAt) {
       const r = track.rampAt(s);
       if (r) hOff = rampHeightAtU(r, u); else this.onRamp = false;
@@ -3463,27 +3565,61 @@ class Vehicle {
     // 分岐の直後は本線とランプの範囲が重なるので、そこでは今の状態を保ちます
     // （毎フレーム判定し直すと、境目で本線とランプを往復してしまいます）。
     // AI とデモ走行は本線から出しません。
-    const ramp = (this.isAI || this.autoSteer || !track.rampAt) ? null : track.rampAt(pr.s);
+    // 走れる場所は3つ：本線・ランプ（＝パーキングエリア）・一般道（側道）。
+    // どれも「本線の s に対する横位置と高さ」で書けるので、道路をグラフとして
+    // 持たなくても、走れる範囲を切り替えるだけで行き来できます。
+    //
+    //   本線 → ランプ … 分岐のゴアから外へ出る
+    //   ランプ → 側道 … ランプの外側の縁から外れる（広場の端で、上らずに直進）
+    //   側道 → ランプ … 広場の幅に入る
+    //
+    // AI とデモ走行は本線から出しません。
+    const canLeave = !(this.isAI || this.autoSteer) && !!track.rampAt;
+    const ramp = canLeave ? track.rampAt(pr.s) : null;
+    const surf = canLeave && track.surfaceAt ? track.surfaceAt(pr.s) : null;
     let rampH = 0;
-    if (ramp) {
-      const roadLo = lo;
-      const rLo = ramp.outerU + half;
-      const rHi = ramp.innerU - half;
-      // 路肩より外へ出ていて、かつランプの幅に収まっていれば「ランプにいる」。
-      // 路肩の内側へ戻れば本線に戻ります。
-      if (pr.u < roadLo && pr.u >= rLo) this.onRamp = true;
-      else if (pr.u >= roadLo) this.onRamp = false;
-      if (this.onRamp) {
-        lo = rLo;
-        hi = Math.min(hi, rHi);
-        rampH = rampHeightAtU(ramp, pr.u);
-      } else {
-        // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
-        lo = Math.min(lo, rLo);
-      }
+    const roadLo = lo;
+    if (!canLeave) {
+      this.zone = 'road';
+    } else if (this.zone === 'surf') {
+      // 戻る条件を出る条件より 2m 内側にしています。同じ境目で判定すると、
+      // 縁に沿って走っているあいだ毎フレーム行き来して車が暴れます
+      // （実際に、広場の端で前後不覚になりました）。
+      if (!surf) this.zone = 'road';
+      else if (ramp && ramp.pad > 0.75) this.zone = 'ramp';
+    } else if (this.zone === 'ramp') {
+      if (!ramp) this.zone = 'road';
+      else if (pr.u >= roadLo) this.zone = 'road';
+      // 広場の端で、一般道の車線に乗っていればそのまま一般道へ出ます。
+      // 内側（本線へ上る側）にいれば、そのままランプを上ります。
+      //
+      // 「ランプの縁から外れたか」で見てはいけません。縁から外れそうになると
+      // 当たり判定が車を内側へ押し戻すので、その条件は永久に成立せず、
+      // 一般道へ出られないままランプの終わりまで運ばれ、そこで本線の高さへ
+      // 瞬間移動していました。いまいる場所が一般道の車線と高さに
+      // 合っているか、で見ます。
+      else if (surf && ramp.pad < 0.6
+        && pr.u <= surf.u + surf.half - half && pr.u >= surf.u - surf.half + half
+        && Math.abs(rampHeightAtU(ramp, pr.u) - surf.h) < 1.2) this.zone = 'surf';
     } else {
-      this.onRamp = false;
+      this.zone = 'road';
+      if (ramp && pr.u < roadLo && pr.u >= ramp.outerU + half) this.zone = 'ramp';
     }
+
+    if (this.zone === 'ramp' && ramp) {
+      lo = ramp.outerU + half;
+      hi = Math.min(hi, ramp.innerU - half);
+      rampH = rampHeightAtU(ramp, pr.u);
+    } else if (this.zone === 'surf' && surf) {
+      lo = surf.u - surf.half + half;
+      hi = surf.u + surf.half - half;
+      rampH = surf.h;
+    } else if (ramp) {
+      // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
+      lo = Math.min(lo, ramp.outerU + half);
+    }
+    this.onRamp = this.zone === 'ramp';
+    this.onSurface = this.zone === 'surf';
     this.rampHeight = rampH;
 
     let hit = 0;
@@ -3525,6 +3661,9 @@ class Vehicle {
     if (this.onRamp && track.rampAt) {
       const r = track.rampAt(this.s);
       if (r) hOff = rampHeightAtU(r, this.u);
+    } else if (this.onSurface && track.surfaceAt) {
+      const sf = track.surfaceAt(this.s);
+      if (sf) hOff = sf.h;
     }
     const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u).addScaledVector(sm.up, hOff);
     this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);
@@ -4821,7 +4960,8 @@ function buildRamps(track, scene) {
       const lampG = new THREE.MeshStandardMaterial({
         color: 0x8fffc0, emissive: 0x2bd47a, emissiveIntensity: 3.2, roughness: 0.4,
       });
-      const H = RAMP.half;
+      // ブースの間隔。ここを広げると、広場を通る一般道の車線に立ってしまいます
+      const H = RAMP.half - 0.5;
       const g3 = new THREE.Group();
       g3.position.copy(mid.c);
       const bs = new THREE.Matrix4();
@@ -4898,21 +5038,21 @@ function buildRamps(track, scene) {
           // ここを超えると、広場を通り抜ける道の上に建ってしまいます。
           const x0 = edgeOf(r5) + 0.8;
           const y0 = floorOf(r5);
-          const b = new THREE.Mesh(new THREE.BoxGeometry(7, 4.6, 11), wall);
-          b.position.set(x0 + 3.5, y0 + 2.3, 0);
+          const b = new THREE.Mesh(new THREE.BoxGeometry(4.4, 4.6, 12), wall);
+          b.position.set(x0 + 2.2, y0 + 2.3, 0);
           g5.add(b);
-          for (const dz of [-3.2, 0, 3.2]) {
-            const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.8, 2.2), win);
-            w2.position.set(x0 + 7.1, y0 + 2.3, dz);
+          for (const dz of [-3.4, 0, 3.4]) {
+            const w2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.8, 2.3), win);
+            w2.position.set(x0 + 4.5, y0 + 2.3, dz);
             g5.add(w2);
           }
           // 庇と柱。これがあるだけで「建物」に見えます
-          const eave = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.25, 12), wall);
-          eave.position.set(x0 + 8.3, y0 + 4.0, 0);
+          const eave = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.25, 13), wall);
+          eave.position.set(x0 + 5.4, y0 + 4.0, 0);
           g5.add(eave);
-          for (const dz of [-4.6, 4.6]) {
+          for (const dz of [-5.0, 5.0]) {
             const pil = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.9, 0.22), wall);
-            pil.position.set(x0 + 9.4, y0 + 1.95, dz);
+            pil.position.set(x0 + 6.2, y0 + 1.95, dz);
             g5.add(pil);
           }
           // 「PA」の行灯。夜に遠くから見える目印です
@@ -4920,7 +5060,7 @@ function buildRamps(track, scene) {
             new THREE.MeshStandardMaterial({
               color: 0x2a6fd8, emissive: 0x2f7bea, emissiveIntensity: 3.0, roughness: 0.5,
             }));
-          sign.position.set(x0 + 7.3, y0 + 5.2, 0);
+          sign.position.set(x0 + 4.7, y0 + 5.2, 0);
           g5.add(sign);
         }
 
@@ -4958,6 +5098,137 @@ function buildRamps(track, scene) {
       }
     }
   }
+  scene.add(group);
+  return group;
+}
+
+/**
+ * 一般道（側道）。高速の外側・下を一周しています。
+ * 走れる範囲（track.surfaceAt）とまったく同じ式で面を張るので、
+ * 「見えている道」と「走れる道」がずれません。
+ */
+function buildSurfaceRoad(track, scene) {
+  const group = new THREE.Group();
+  group.name = 'surface';
+  if (!track.surfaceAt || !track.surfaceNodes) { scene.add(group); return group; }
+
+  const road = new THREE.MeshStandardMaterial({
+    color: 0x30343b, roughness: 0.78, metalness: 0.0, envMapIntensity: 0.45,
+    side: THREE.DoubleSide,
+  });
+  const line = new THREE.MeshStandardMaterial({
+    color: 0xcfd3ca, roughness: 0.7, metalness: 0.0,
+    emissive: 0x24261f, emissiveIntensity: 0.5, side: THREE.DoubleSide,
+  });
+  const kerb = new THREE.MeshStandardMaterial({
+    color: 0x6a7078, roughness: 0.85, metalness: 0.05, side: THREE.DoubleSide,
+  });
+
+  const STEP = 12;
+  const N = Math.max(8, Math.round(track.length / STEP));
+  const sm = {};
+  const rows = [];
+  for (let i = 0; i <= N; i++) {
+    const s2 = (i / N) * track.length;
+    const sf = track.surfaceAt(s2);
+    if (!sf) { rows.length = 0; break; }
+    track.sample(s2, sm);
+    rows.push({ pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(), tan: sm.tan.clone(), sf, s: s2 });
+  }
+  if (!rows.length) { scene.add(group); return group; }
+
+  /** 帯を張ります。uA/uB は「その地点での横位置」を返す関数です。 */
+  const strip = (uA, uB, yOff, mat) => {
+    const pos = [], idx = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      for (let q = 0; q < 2; q++) {
+        const u = q === 0 ? uA(r) : uB(r);
+        const y = r.sf.h + yOff;
+        pos.push(
+          r.pos.x + r.lat.x * u + r.up.x * y,
+          r.pos.y + r.lat.y * u + r.up.y * y,
+          r.pos.z + r.lat.z * u + r.up.z * y
+        );
+      }
+    }
+    for (let i = 0; i < rows.length - 1; i++) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      idx.push(a, d, c, a, b, d);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+    group.add(new THREE.Mesh(g, mat));
+  };
+
+  const OUT = (r) => r.sf.u - r.sf.half;
+  const IN = (r) => r.sf.u + r.sf.half;
+  strip(OUT, IN, 0, road);
+  strip(OUT, (r) => OUT(r) + 0.5, 0.10, kerb);            // 外側の縁石
+  strip((r) => IN(r) - 0.5, IN, 0.10, kerb);              // 内側の縁石
+  strip((r) => r.sf.u - 0.09, (r) => r.sf.u + 0.09, 0.012, line);   // センターライン
+
+  // ---- 信号と交差点
+  // 色は game 側が毎フレーム決めます（近くの数個だけ）。
+  {
+    const pole = new THREE.MeshStandardMaterial({ color: 0x4a4f57, roughness: 0.7, metalness: 0.3 });
+    const hood = new THREE.MeshStandardMaterial({ color: 0x23272d, roughness: 0.8, metalness: 0.1 });
+    const cross = new THREE.MeshStandardMaterial({
+      color: 0xcfd3ca, roughness: 0.75, emissive: 0x24261f, emissiveIntensity: 0.5, side: THREE.DoubleSide,
+    });
+    const lights = [];
+    const basis = new THREE.Matrix4(), back = new THREE.Vector3();
+    for (const s2 of signalPoints(track)) {
+      const sf = track.surfaceAt(s2);
+      if (!sf) continue;
+      track.sample(s2, sm);
+      const g6 = new THREE.Group();
+      g6.position.copy(sm.pos);
+      basis.makeBasis(sm.lat, sm.up, back.copy(sm.tan).negate());
+      g6.quaternion.setFromRotationMatrix(basis);
+      const inner = sf.u + sf.half;
+
+      // 横断歩道（ゼブラ）。信号の手前が交差点だと分かるように
+      for (let k = -3; k <= 3; k++) {
+        const z = new THREE.Mesh(new THREE.BoxGeometry(sf.half * 2 - 1.0, 0.02, 0.55), cross);
+        z.position.set(sf.u, sf.h + 0.02, k * 1.35);
+        g6.add(z);
+      }
+      // 停止線
+      const stop = new THREE.Mesh(new THREE.BoxGeometry(sf.half - 0.4, 0.02, 0.35), cross);
+      stop.position.set(sf.u - sf.half / 2 + 0.2, sf.h + 0.02, 6.0);
+      g6.add(stop);
+
+      // 柱とアーム
+      const p2 = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 6.2, 6), pole);
+      p2.position.set(inner + 0.6, sf.h + 3.1, 5.4);
+      g6.add(p2);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(sf.half + 1.2, 0.16, 0.16), pole);
+      arm.position.set(inner + 0.6 - (sf.half + 1.2) / 2, sf.h + 6.0, 5.4);
+      g6.add(arm);
+      const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 0.30), hood);
+      box.position.set(sf.u + 1.0, sf.h + 5.7, 5.4);
+      g6.add(box);
+
+      const lamps = [];
+      for (const [dx, col] of [[-0.5, 0x22d15a], [0, 0xf0c020], [0.5, 0xff3020]]) {
+        const m = new THREE.MeshStandardMaterial({
+          color: col, emissive: col, emissiveIntensity: 0.08, roughness: 0.4,
+        });
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.10), m);
+        l.position.set(sf.u + 1.0 + dx, sf.h + 5.7, 5.28);
+        g6.add(l);
+        lamps.push(m);
+      }
+      group.add(g6);
+      lights.push({ s: s2, lamps });
+    }
+    group.userData.signals = lights;
+  }
+
   scene.add(group);
   return group;
 }
@@ -5188,6 +5459,8 @@ class RivalAI {
 
 /** これを超えた速度で走りつづけると手配度が上がります[km/h] */
 const LIMIT_KMH = 140;
+/** 一般道での制限。高速と同じ基準では、街中を200km/hで走ってもお咎めなしになります。 */
+const SURF_LIMIT_KMH = 80;
 const MAX_LEVEL = 3;
 
 /** 手配度ごとのパトカーの仕様。上の階級ほど速い個体が出ます。 */
@@ -5268,6 +5541,7 @@ class Police {
     this.bust = 0;        // 捕まりかけている時間[s]
     this.blink = 0;
     this.crashCd = 0;     // 追突で手配度を上げたあとの待ち時間[s]
+    this.redCd = 0;       // 信号無視を数えたあとの待ち時間[s]
     this._sm = {};
   }
 
@@ -5356,6 +5630,14 @@ class Police {
     return best;
   }
 
+  /** 信号無視。1回ぶん（続けて何度も数えないよう間隔を空けます）。 */
+  runRed() {
+    if (!this.enabled || this.redCd > 0) return false;
+    this.redCd = 3;
+    this.heat = clamp(this.heat + 0.30, 0, MAX_LEVEL + 0.999);
+    return true;
+  }
+
   /**
    * 壁ずりで手配度を上げます。接触しているあいだ毎フレーム呼ばれるので、
    * 「時間あたり」で積みます。1回ぶんとして積むと、壁に沿って数秒こするだけで
@@ -5389,10 +5671,12 @@ class Police {
     }
     const before = this.level;
     this.crashCd = Math.max(0, this.crashCd - dt);
+    this.redCd = Math.max(0, this.redCd - dt);
 
     // --- 手配度の増減
     // 速度超過は「超えているあいだ、超えたぶんだけ」積み上がります。
-    const over = clamp((v.speedKmh - LIMIT_KMH) / 140, 0, 1);
+    const limit = v.onSurface ? SURF_LIMIT_KMH : LIMIT_KMH;
+    const over = clamp((v.speedKmh - limit) / 140, 0, 1);
     if (over > 0) this.heat = Math.min(MAX_LEVEL + 0.999, this.heat + over * 0.085 * dt);
 
     // 振り切り判定。
@@ -5403,9 +5687,11 @@ class Police {
     // ランプへ降りればパトカーは付いてこられません（AIは本線から出ないため）。
     const near = this.nearest(v);
     this._near = near;
-    const away = over <= 0.001 && (near > 300 || v.onRamp);
+    // 一般道もランプと同じで、パトカーは降りてこられません
+    const hidden = v.onRamp || v.onSurface;
+    const away = over <= 0.001 && (near > 300 || hidden);
     if (this.level > 0 && away) {
-      this.evade += dt * (v.onRamp ? 2.4 : 1);
+      this.evade += dt * (hidden ? 2.4 : 1);
       if (this.evade > 9) {
         this.evade = 0;
         this.heat = Math.max(0, Math.floor(this.heat) - 1 + 0.99);
@@ -6814,6 +7100,11 @@ class Game {
     buildTunnels(this.track, w);
     buildSigns(this.track, w);
     buildRamps(this.track, w);
+    const surface = buildSurfaceRoad(this.track, w);
+    // 信号は「近くの数個だけ」見た目を更新するので、一覧を持っておきます
+    this.signals = (surface.userData && surface.userData.signals) || [];
+    this.signalTime = 0;
+    this._prevSurfS = undefined;
     buildBridges(this.track, w);
     this.scene.add(w);
     this.world = w;
@@ -7522,6 +7813,9 @@ class Game {
       }
     }
 
+    // --- 一般道の信号
+    if (this.mode === 'racing') this.updateSignals(dt, pv);
+
     // --- 依頼の進行
     if (this.mode === 'racing') this.jobs.update(dt, pv, this.track);
 
@@ -7579,7 +7873,7 @@ class Game {
     // カメラが壁やビルにめり込まないよう、道路の内側・路面より上に押し戻します
     // ランプに降りているあいだは、カメラを本線の枠に押し戻してはいけません
     // （押し戻すと、車だけ下のランプにいてカメラが上の本線に残ります）。
-    if (cm.id !== 'hood' && !v.onRamp) {
+    if (cm.id !== 'hood' && !v.onRamp && !v.onSurface) {
       const pr = this.track.project(this.camPos, v.trackIndex);
       const maxU = ROAD.halfRoad - 1.0;
       const cu = clamp(pr.u, -maxU, maxU);
@@ -7630,7 +7924,23 @@ class Game {
     // ランプと広場は本線の街灯から40m以上離れて11m下にあるため、真っ暗でした
     // （実際に、降りると車も白線も見えませんでした）。灯りをランプ沿いに
     // 置き直します。置いた照明柱は自己発光しているだけで周りを照らしません。
-    if (v.onRamp && this.track.rampAt) {
+    if (v.onSurface && this.track.surfaceAt) {
+      // 一般道も本線から離れているので、街灯を沿道へ移します
+      const RSTEP = 40;
+      const rb = Math.round(v.s / RSTEP);
+      for (let k = 0; k < this.lampLights.length; k++) {
+        const light = this.lampLights[k];
+        const ls = (rb + k - 1) * RSTEP;
+        const sf = this.track.surfaceAt(ls);
+        if (!sf) { light.intensity = 0; continue; }
+        const lsm = this.track.sample(ls, this._tmpB);
+        light.position.copy(lsm.pos).addScaledVector(lsm.lat, sf.u)
+          .addScaledVector(lsm.up, sf.h + 8.0);
+        const d = Math.abs(ls - v.s);
+        light.intensity = clamp(1 - d / 55, 0, 1) * 150;
+        light.color.setHex(0xffe2b4);
+      }
+    } else if (v.onRamp && this.track.rampAt) {
       const RSTEP = 40;
       const rb = Math.round(v.s / RSTEP);
       for (let k = 0; k < this.lampLights.length; k++) {
@@ -7769,6 +8079,46 @@ class Game {
     this.settings.bloom = on;
   }
 
+  /**
+   * 一般道の信号。
+   * 色は「時刻と位置」から計算できるので、近くの信号だけ見た目を更新します。
+   * 赤で停止線を越えたら手配度が上がります。
+   */
+  updateSignals(dt, v) {
+    this.signalTime = (this.signalTime || 0) + dt;
+    const list = this.signals;
+    const prev = this._prevSurfS;
+    this._prevSurfS = v.s;
+    if (!list || !list.length) return;
+    const L = this.track.length;
+    const wrap = (d) => (d > L / 2 ? d - L : d < -L / 2 ? d + L : d);
+
+    for (const sg of list) {
+      const d = wrap(sg.s - v.s);
+      if (Math.abs(d) > SIGNAL.near) {
+        if (sg.lit !== 'off') { sg.lit = 'off'; for (const m of sg.lamps) m.emissiveIntensity = 0.08; }
+        continue;
+      }
+      const ph = signalPhase(sg.s, this.signalTime);
+      if (sg.lit !== ph) {
+        sg.lit = ph;
+        sg.lamps[0].emissiveIntensity = ph === 'green' ? 5.5 : 0.08;
+        sg.lamps[1].emissiveIntensity = ph === 'yellow' ? 5.5 : 0.08;
+        sg.lamps[2].emissiveIntensity = ph === 'red' ? 5.5 : 0.08;
+      }
+    }
+
+    if (!v.onSurface || prev === undefined) return;
+    const ds = wrap(v.s - prev);
+    if (ds <= 0 || ds > 120) return;    // 停止・後退・置き直しは数えません
+    for (const sg of list) {
+      const d1 = wrap(sg.s - prev);
+      if (d1 <= 0 || d1 > ds) continue;
+      if (signalPhase(sg.s, this.signalTime) !== 'red') continue;
+      if (this.police.runRed()) this.onEvent('runred', {});
+    }
+  }
+
   hudState(money) {
     const v = this.player.vehicle;
     const others = this.rival ? [{ s: this.rival.vehicle.s, color: '#ff5a4d' }] : [];
@@ -7792,7 +8142,9 @@ class Game {
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
       wet: this.wet,
-      zoneText: v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
+      zoneText: v.onSurface
+        ? `${this.course.name}  一般道  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
+        : v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
         ? `${this.course.name}  ${this.track.rampAt(v.s).name} ${this.track.rampAt(v.s).pad > 0.35 ? 'パーキングエリア' : '出口ランプ'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
         : `${this.course.name}${this.wet ? '（雨）' : ''}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
     };
@@ -8616,6 +8968,10 @@ function onGameEvent(type, payload) {
   if (type === 'job-fail') {
     hud.message('依頼失敗', payload.reason, 2200);
     audio.beep(300, 0.24, 0.14);
+  }
+  if (type === 'runred') {
+    hud.message('信号無視', '手配度が上がった', 1600);
+    audio.beep(360, 0.16, 0.13);
   }
   if (type === 'busted') {
     data.money = Math.max(0, data.money - payload.fine);

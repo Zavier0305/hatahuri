@@ -74,7 +74,9 @@ export class Vehicle {
     this.roadHeading = undefined;  // いま走っている場所の道の向き
     this.roadCurv = 0;             // そこの曲率（直進復帰補助の減衰項が使います）
     this.laneU = undefined;        // 戻る先の車線中心（game.js が毎フレーム入れます）
-    this.onRamp = false;           // いま出口ランプの上にいるか
+    this.onRamp = false;           // いま出口ランプ（＝パーキングエリア）の上にいるか
+    this.onSurface = false;        // いま一般道（側道）にいるか
+    this.zone = 'road';            // 'road' | 'ramp' | 'surf'
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -97,6 +99,12 @@ export class Vehicle {
     const sm = track.sample(s, this._sm);
     let hOff = 0;
     this.onRamp = !!opts.onRamp;
+    this.onSurface = !!opts.onSurface;
+    this.zone = this.onRamp ? 'ramp' : this.onSurface ? 'surf' : 'road';
+    if (this.onSurface && track.surfaceAt) {
+      const sf = track.surfaceAt(s);
+      if (sf) hOff = sf.h; else { this.onSurface = false; this.zone = 'road'; }
+    }
     if (this.onRamp && track.rampAt) {
       const r = track.rampAt(s);
       if (r) hOff = rampHeightAtU(r, u); else this.onRamp = false;
@@ -409,27 +417,61 @@ export class Vehicle {
     // 分岐の直後は本線とランプの範囲が重なるので、そこでは今の状態を保ちます
     // （毎フレーム判定し直すと、境目で本線とランプを往復してしまいます）。
     // AI とデモ走行は本線から出しません。
-    const ramp = (this.isAI || this.autoSteer || !track.rampAt) ? null : track.rampAt(pr.s);
+    // 走れる場所は3つ：本線・ランプ（＝パーキングエリア）・一般道（側道）。
+    // どれも「本線の s に対する横位置と高さ」で書けるので、道路をグラフとして
+    // 持たなくても、走れる範囲を切り替えるだけで行き来できます。
+    //
+    //   本線 → ランプ … 分岐のゴアから外へ出る
+    //   ランプ → 側道 … ランプの外側の縁から外れる（広場の端で、上らずに直進）
+    //   側道 → ランプ … 広場の幅に入る
+    //
+    // AI とデモ走行は本線から出しません。
+    const canLeave = !(this.isAI || this.autoSteer) && !!track.rampAt;
+    const ramp = canLeave ? track.rampAt(pr.s) : null;
+    const surf = canLeave && track.surfaceAt ? track.surfaceAt(pr.s) : null;
     let rampH = 0;
-    if (ramp) {
-      const roadLo = lo;
-      const rLo = ramp.outerU + half;
-      const rHi = ramp.innerU - half;
-      // 路肩より外へ出ていて、かつランプの幅に収まっていれば「ランプにいる」。
-      // 路肩の内側へ戻れば本線に戻ります。
-      if (pr.u < roadLo && pr.u >= rLo) this.onRamp = true;
-      else if (pr.u >= roadLo) this.onRamp = false;
-      if (this.onRamp) {
-        lo = rLo;
-        hi = Math.min(hi, rHi);
-        rampH = rampHeightAtU(ramp, pr.u);
-      } else {
-        // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
-        lo = Math.min(lo, rLo);
-      }
+    const roadLo = lo;
+    if (!canLeave) {
+      this.zone = 'road';
+    } else if (this.zone === 'surf') {
+      // 戻る条件を出る条件より 2m 内側にしています。同じ境目で判定すると、
+      // 縁に沿って走っているあいだ毎フレーム行き来して車が暴れます
+      // （実際に、広場の端で前後不覚になりました）。
+      if (!surf) this.zone = 'road';
+      else if (ramp && ramp.pad > 0.75) this.zone = 'ramp';
+    } else if (this.zone === 'ramp') {
+      if (!ramp) this.zone = 'road';
+      else if (pr.u >= roadLo) this.zone = 'road';
+      // 広場の端で、一般道の車線に乗っていればそのまま一般道へ出ます。
+      // 内側（本線へ上る側）にいれば、そのままランプを上ります。
+      //
+      // 「ランプの縁から外れたか」で見てはいけません。縁から外れそうになると
+      // 当たり判定が車を内側へ押し戻すので、その条件は永久に成立せず、
+      // 一般道へ出られないままランプの終わりまで運ばれ、そこで本線の高さへ
+      // 瞬間移動していました。いまいる場所が一般道の車線と高さに
+      // 合っているか、で見ます。
+      else if (surf && ramp.pad < 0.6
+        && pr.u <= surf.u + surf.half - half && pr.u >= surf.u - surf.half + half
+        && Math.abs(rampHeightAtU(ramp, pr.u) - surf.h) < 1.2) this.zone = 'surf';
     } else {
-      this.onRamp = false;
+      this.zone = 'road';
+      if (ramp && pr.u < roadLo && pr.u >= ramp.outerU + half) this.zone = 'ramp';
     }
+
+    if (this.zone === 'ramp' && ramp) {
+      lo = ramp.outerU + half;
+      hi = Math.min(hi, ramp.innerU - half);
+      rampH = rampHeightAtU(ramp, pr.u);
+    } else if (this.zone === 'surf' && surf) {
+      lo = surf.u - surf.half + half;
+      hi = surf.u + surf.half - half;
+      rampH = surf.h;
+    } else if (ramp) {
+      // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
+      lo = Math.min(lo, ramp.outerU + half);
+    }
+    this.onRamp = this.zone === 'ramp';
+    this.onSurface = this.zone === 'surf';
     this.rampHeight = rampH;
 
     let hit = 0;
@@ -471,6 +513,9 @@ export class Vehicle {
     if (this.onRamp && track.rampAt) {
       const r = track.rampAt(this.s);
       if (r) hOff = rampHeightAtU(r, this.u);
+    } else if (this.onSurface && track.surfaceAt) {
+      const sf = track.surfaceAt(this.s);
+      if (sf) hOff = sf.h;
     }
     const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u).addScaledVector(sm.up, hOff);
     this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);

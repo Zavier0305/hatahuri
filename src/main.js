@@ -825,6 +825,10 @@ function onGameEvent(type, payload) {
     hud.message('依頼失敗', payload.reason, 2200);
     audio.beep(300, 0.24, 0.14);
   }
+  if (type === 'runred') {
+    hud.message('信号無視', '手配度が上がった', 1600);
+    audio.beep(360, 0.16, 0.13);
+  }
   if (type === 'busted') {
     data.money = Math.max(0, data.money - payload.fine);
     save(data);

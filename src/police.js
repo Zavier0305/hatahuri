@@ -19,6 +19,8 @@ import { RivalAI } from './ai.js';
 
 /** これを超えた速度で走りつづけると手配度が上がります[km/h] */
 const LIMIT_KMH = 140;
+/** 一般道での制限。高速と同じ基準では、街中を200km/hで走ってもお咎めなしになります。 */
+const SURF_LIMIT_KMH = 80;
 export const MAX_LEVEL = 3;
 
 /** 手配度ごとのパトカーの仕様。上の階級ほど速い個体が出ます。 */
@@ -99,6 +101,7 @@ export class Police {
     this.bust = 0;        // 捕まりかけている時間[s]
     this.blink = 0;
     this.crashCd = 0;     // 追突で手配度を上げたあとの待ち時間[s]
+    this.redCd = 0;       // 信号無視を数えたあとの待ち時間[s]
     this._sm = {};
   }
 
@@ -187,6 +190,14 @@ export class Police {
     return best;
   }
 
+  /** 信号無視。1回ぶん（続けて何度も数えないよう間隔を空けます）。 */
+  runRed() {
+    if (!this.enabled || this.redCd > 0) return false;
+    this.redCd = 3;
+    this.heat = clamp(this.heat + 0.30, 0, MAX_LEVEL + 0.999);
+    return true;
+  }
+
   /**
    * 壁ずりで手配度を上げます。接触しているあいだ毎フレーム呼ばれるので、
    * 「時間あたり」で積みます。1回ぶんとして積むと、壁に沿って数秒こするだけで
@@ -220,10 +231,12 @@ export class Police {
     }
     const before = this.level;
     this.crashCd = Math.max(0, this.crashCd - dt);
+    this.redCd = Math.max(0, this.redCd - dt);
 
     // --- 手配度の増減
     // 速度超過は「超えているあいだ、超えたぶんだけ」積み上がります。
-    const over = clamp((v.speedKmh - LIMIT_KMH) / 140, 0, 1);
+    const limit = v.onSurface ? SURF_LIMIT_KMH : LIMIT_KMH;
+    const over = clamp((v.speedKmh - limit) / 140, 0, 1);
     if (over > 0) this.heat = Math.min(MAX_LEVEL + 0.999, this.heat + over * 0.085 * dt);
 
     // 振り切り判定。
@@ -234,9 +247,11 @@ export class Police {
     // ランプへ降りればパトカーは付いてこられません（AIは本線から出ないため）。
     const near = this.nearest(v);
     this._near = near;
-    const away = over <= 0.001 && (near > 300 || v.onRamp);
+    // 一般道もランプと同じで、パトカーは降りてこられません
+    const hidden = v.onRamp || v.onSurface;
+    const away = over <= 0.001 && (near > 300 || hidden);
     if (this.level > 0 && away) {
-      this.evade += dt * (v.onRamp ? 2.4 : 1);
+      this.evade += dt * (hidden ? 2.4 : 1);
       if (this.evade > 9) {
         this.evade = 0;
         this.heat = Math.max(0, Math.floor(this.heat) - 1 + 0.99);

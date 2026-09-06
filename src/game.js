@@ -4,9 +4,9 @@ import { RenderPass } from 'three/addons/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/OutputPass.js';
 import { clamp, lerp, damp, formatTime, formatMoney } from './util.js';
-import { createTrack, buildRoad, ROAD, LANE_U, rampHeightAtU, PA, paBayZ, paSpots } from './track.js';
+import { createTrack, buildRoad, ROAD, LANE_U, rampHeightAtU, PA, paBayZ, paSpots, SIGNAL, signalPhase } from './track.js';
 import { COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
-import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildRamps, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
+import { buildSky, buildSea, buildStreetLights, buildCity, buildTunnels, buildSigns, buildRamps, buildSurfaceRoad, buildBridges, buildPiers, buildRoadside, buildEnvironment, buildLand } from './scenery.js';
 import { slipstreamFactor } from './vehicle.js';
 import { RivalAI } from './ai.js';
 import { Traffic } from './traffic.js';
@@ -194,6 +194,11 @@ export class Game {
     buildTunnels(this.track, w);
     buildSigns(this.track, w);
     buildRamps(this.track, w);
+    const surface = buildSurfaceRoad(this.track, w);
+    // 信号は「近くの数個だけ」見た目を更新するので、一覧を持っておきます
+    this.signals = (surface.userData && surface.userData.signals) || [];
+    this.signalTime = 0;
+    this._prevSurfS = undefined;
     buildBridges(this.track, w);
     this.scene.add(w);
     this.world = w;
@@ -902,6 +907,9 @@ export class Game {
       }
     }
 
+    // --- 一般道の信号
+    if (this.mode === 'racing') this.updateSignals(dt, pv);
+
     // --- 依頼の進行
     if (this.mode === 'racing') this.jobs.update(dt, pv, this.track);
 
@@ -959,7 +967,7 @@ export class Game {
     // カメラが壁やビルにめり込まないよう、道路の内側・路面より上に押し戻します
     // ランプに降りているあいだは、カメラを本線の枠に押し戻してはいけません
     // （押し戻すと、車だけ下のランプにいてカメラが上の本線に残ります）。
-    if (cm.id !== 'hood' && !v.onRamp) {
+    if (cm.id !== 'hood' && !v.onRamp && !v.onSurface) {
       const pr = this.track.project(this.camPos, v.trackIndex);
       const maxU = ROAD.halfRoad - 1.0;
       const cu = clamp(pr.u, -maxU, maxU);
@@ -1010,7 +1018,23 @@ export class Game {
     // ランプと広場は本線の街灯から40m以上離れて11m下にあるため、真っ暗でした
     // （実際に、降りると車も白線も見えませんでした）。灯りをランプ沿いに
     // 置き直します。置いた照明柱は自己発光しているだけで周りを照らしません。
-    if (v.onRamp && this.track.rampAt) {
+    if (v.onSurface && this.track.surfaceAt) {
+      // 一般道も本線から離れているので、街灯を沿道へ移します
+      const RSTEP = 40;
+      const rb = Math.round(v.s / RSTEP);
+      for (let k = 0; k < this.lampLights.length; k++) {
+        const light = this.lampLights[k];
+        const ls = (rb + k - 1) * RSTEP;
+        const sf = this.track.surfaceAt(ls);
+        if (!sf) { light.intensity = 0; continue; }
+        const lsm = this.track.sample(ls, this._tmpB);
+        light.position.copy(lsm.pos).addScaledVector(lsm.lat, sf.u)
+          .addScaledVector(lsm.up, sf.h + 8.0);
+        const d = Math.abs(ls - v.s);
+        light.intensity = clamp(1 - d / 55, 0, 1) * 150;
+        light.color.setHex(0xffe2b4);
+      }
+    } else if (v.onRamp && this.track.rampAt) {
       const RSTEP = 40;
       const rb = Math.round(v.s / RSTEP);
       for (let k = 0; k < this.lampLights.length; k++) {
@@ -1149,6 +1173,46 @@ export class Game {
     this.settings.bloom = on;
   }
 
+  /**
+   * 一般道の信号。
+   * 色は「時刻と位置」から計算できるので、近くの信号だけ見た目を更新します。
+   * 赤で停止線を越えたら手配度が上がります。
+   */
+  updateSignals(dt, v) {
+    this.signalTime = (this.signalTime || 0) + dt;
+    const list = this.signals;
+    const prev = this._prevSurfS;
+    this._prevSurfS = v.s;
+    if (!list || !list.length) return;
+    const L = this.track.length;
+    const wrap = (d) => (d > L / 2 ? d - L : d < -L / 2 ? d + L : d);
+
+    for (const sg of list) {
+      const d = wrap(sg.s - v.s);
+      if (Math.abs(d) > SIGNAL.near) {
+        if (sg.lit !== 'off') { sg.lit = 'off'; for (const m of sg.lamps) m.emissiveIntensity = 0.08; }
+        continue;
+      }
+      const ph = signalPhase(sg.s, this.signalTime);
+      if (sg.lit !== ph) {
+        sg.lit = ph;
+        sg.lamps[0].emissiveIntensity = ph === 'green' ? 5.5 : 0.08;
+        sg.lamps[1].emissiveIntensity = ph === 'yellow' ? 5.5 : 0.08;
+        sg.lamps[2].emissiveIntensity = ph === 'red' ? 5.5 : 0.08;
+      }
+    }
+
+    if (!v.onSurface || prev === undefined) return;
+    const ds = wrap(v.s - prev);
+    if (ds <= 0 || ds > 120) return;    // 停止・後退・置き直しは数えません
+    for (const sg of list) {
+      const d1 = wrap(sg.s - prev);
+      if (d1 <= 0 || d1 > ds) continue;
+      if (signalPhase(sg.s, this.signalTime) !== 'red') continue;
+      if (this.police.runRed()) this.onEvent('runred', {});
+    }
+  }
+
   hudState(money) {
     const v = this.player.vehicle;
     const others = this.rival ? [{ s: this.rival.vehicle.s, color: '#ff5a4d' }] : [];
@@ -1172,7 +1236,9 @@ export class Game {
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
       wet: this.wet,
-      zoneText: v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
+      zoneText: v.onSurface
+        ? `${this.course.name}  一般道  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
+        : v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
         ? `${this.course.name}  ${this.track.rampAt(v.s).name} ${this.track.rampAt(v.s).pad > 0.35 ? 'パーキングエリア' : '出口ランプ'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
         : `${this.course.name}${this.wet ? '（雨）' : ''}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
     };
