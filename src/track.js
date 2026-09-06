@@ -280,15 +280,19 @@ function makeRoadTexture() {
   }
   g.globalAlpha = 1;
 
-  // 伸縮目地（20mごとの継ぎ目）とタールの補修跡
+  // 伸縮目地（20mごとの継ぎ目）。これは実物も等間隔なので繰り返して構いません。
   g.globalAlpha = 0.55;
   g.fillStyle = '#15171b';
   g.fillRect(0, 0, cv.width, 4);
-  g.globalAlpha = 0.28;
-  for (let i = 0; i < 7; i++) {
+  // タールの補修跡は「路面全体を横切る濃い線」を7本描いていたため、
+  // 20mごとに同じ模様が現れ、走ると縞が流れて見えていました。
+  // 実物の補修跡は部分的なので、幅の短い断片を散らします。
+  g.globalAlpha = 0.20;
+  g.fillStyle = '#101216';
+  for (let i = 0; i < 22; i++) {
     const y = Math.random() * cv.height;
-    g.fillStyle = '#101216';
-    g.fillRect(0, y, cv.width, 2 + Math.random() * 3);
+    const x = Math.random() * cv.width;
+    g.fillRect(x, y, cv.width * (0.06 + Math.random() * 0.16), 2 + Math.random() * 3);
   }
   g.globalAlpha = 1;
 

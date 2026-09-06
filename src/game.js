@@ -15,7 +15,10 @@ import { Actor, Particles, disposeTree } from './actors.js';
 const CAM_MODES = [
   { id: 'chase', label: '追走', dist: 6.6, height: 2.15, fov: 62, look: 9 },
   { id: 'far', label: 'ロング', dist: 10.5, height: 3.4, fov: 58, look: 12 },
-  { id: 'hood', label: 'ボンネット', dist: -0.35, height: 1.16, fov: 68, look: 22 },
+  // dist は「車の中心から前方へ何m」。以前は -0.35（＝中心より後ろ＝車内）で、
+  // ボディの内側とドアミラーが画面の半分を埋めていました。
+  // フロントガラス基部より前（+0.95m）へ出し、ボンネットの上から見ます。
+  { id: 'hood', label: 'ボンネット', dist: 0.95, height: 1.12, fov: 68, look: 22 },
   { id: 'cine', label: 'シネマ', dist: 8.2, height: 1.05, fov: 46, look: 14 },
 ];
 
@@ -189,8 +192,11 @@ export class Game {
       // 反射が路面の色に染まってしまい、ただ明るい灰色の道になります。
       // metalness 0・粗さをごく低くすると、正面は暗いまま浅い角度でだけ
       // 強く映り込む（フレネル反射）＝濡れた路面そのものの見え方になります。
-      roadMat.roughness = this.wet ? 0.10 : 0.62;
-      roadMat.metalness = this.wet ? 0.0 : 0.16;
+      roadMat.roughness = this.wet ? 0.10 : 0.60;
+      // 乾いていてもアスファルトは金属ではありません。metalness を残すと
+      // 拡散色が削られ、環境の色に染まった灰色の板になります。
+      roadMat.metalness = 0.0;
+      // 乾いた側の 0.55 は、根拠なく 0.75 へ上げて画が白っぽくなったので戻しました
       roadMat.envMapIntensity = this.wet ? 1.7 : 0.55;
       roadMat.color.setHex(this.wet ? 0x6e747e : 0xffffff);
     }
@@ -763,18 +769,58 @@ export class Game {
       light.color.setHex(0xffd9a0);
     }
     if (tunnel) {
-      // トンネル内は天井灯が連続しているので、真上に1灯だけ置き続けます
-      // 強度120では至近距離すぎて画面が白飛びしていました（比較実験で確認：
-      // この光を消すと平均輝度が 166 → 69 まで落ちた＝白飛びの主因）。
-      const l = this.lampLights[0];
-      l.position.copy(v.pos).addScaledVector(sm.up, 5.6);
-      l.color.setHex(0xfff2d8);
-      l.intensity = 46;
+      // トンネルの天井灯は 14m おきに左右へ交互に付いています（scenery.js と同じ間隔）。
+      // 以前は「車の真上に1灯」だけを置き続けていたため、天井のその一点だけが
+      // 白く焼き付き、ブルームで塊になって見えていました。
+      // 屋外の街灯と同じように、実際の灯具の位置に置いて通り過ぎさせます。
+      const TUNNEL_STEP = 14;
+      const tb = Math.round(v.s / TUNNEL_STEP);
+      for (let k = 0; k < this.lampLights.length; k++) {
+        const idx = tb + k - 1;
+        const light = this.lampLights[k];
+        const side = ((idx % 2) + 2) % 2 === 0 ? -1 : 1;
+        const lsm = this.track.sample(idx * TUNNEL_STEP, this._tmpB);
+        light.position.copy(lsm.pos)
+          .addScaledVector(lsm.lat, side * 6.5)
+          .addScaledVector(lsm.up, 6.0);
+        const d = Math.abs(idx * TUNNEL_STEP - v.s);
+        light.intensity = clamp(1 - d / 24, 0, 1) * 52;
+        light.color.setHex(0xfff2d8);
+      }
     }
     this.rimLight.position.copy(v.pos).addScaledVector(carDir, -4.0).addScaledVector(sm.up, 3.2);
 
-    // ヘッドライト
-    this.headSpot.position.copy(v.pos).addScaledVector(sm.up, 0.62);
+    // 車の下の影を、いちばん強い灯りの反対側へずらします。
+    // 真下に固定した黒い楕円のままだと、街灯の下を通っても影が動かず、
+    // 「地面に貼りついたシール」に見えます。
+    let lamp = null, best = 0;
+    for (const l of this.lampLights) if (l.intensity > best) { best = l.intensity; lamp = l; }
+    for (const actor of [this.player, this.rival]) {
+      if (!actor) continue;
+      const av = actor.vehicle;
+      actor.shadowOffset = actor.shadowOffset || new THREE.Vector2();
+      // 振れ幅は控えめに、しかも時間で滑らかに追わせます。
+      // 生の値をそのまま使うと、いちばん強い灯りが切り替わるたびに
+      // 影が 3m 近く飛び、車から外れて見えました（実測で上限に張り付いていた）。
+      let tx = 0, tz = 0;
+      if (lamp && best > 1) {
+        const dx = av.pos.x - lamp.position.x, dz = av.pos.z - lamp.position.z;
+        const dy = Math.max(2.5, lamp.position.y - av.pos.y);
+        const k = clamp(0.6 / dy, 0, 0.12);
+        tx = clamp(dx * k, -1.0, 1.0);
+        tz = clamp(dz * k, -1.0, 1.0);
+      }
+      actor.shadowOffset.set(damp(actor.shadowOffset.x, tx, 3.0, dt),
+                             damp(actor.shadowOffset.y, tz, 3.0, dt));
+    }
+
+    // ヘッドライト。
+    // 光源を車の中心に置いていたため、円錐が自分のボンネットを内側から照らし、
+    // ボンネットが白く光っていました（実車では起きません）。灯具の位置＝
+    // 車の先端へ出します。
+    this.headSpot.position.copy(v.pos)
+      .addScaledVector(carDir, v.spec.dims.L * 0.5 + 0.05)
+      .addScaledVector(sm.up, 0.62);
     this.headSpot.target.position.copy(v.pos)
       .addScaledVector(carDir, 42)
       .addScaledVector(sm.up, -0.4);

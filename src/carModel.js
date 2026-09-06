@@ -414,6 +414,26 @@ export function buildCar(spec, opts = {}) {
   return { root, wheels, brakeLights, tailGlows, reflections, headlights: headOff, paint, spec };
 }
 
+
+/**
+ * 路面への光の落ち方。夜は「車そのもの」より「路面に落ちた光」で車の存在が分かります。
+ * 自車にはこれがあったのに一般車には無く、周囲に何台いても路面を照らすのは
+ * 自車のライトだけ、という状態でした（ボンネット視点で明白）。
+ */
+function roadGlow(color, w, len, opacity, z) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, len),
+    new THREE.MeshBasicMaterial({
+      map: lampGlowTexture(), color, transparent: true, opacity,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(0, 0.013, z);
+  m.renderOrder = 2;
+  return m;
+}
+
 /** 一般車（交通量）用の簡易モデル。3種類をランダムに使い分けます。 */
 const TRAFFIC_PROFILE = {
   body: [
@@ -476,6 +496,8 @@ export function buildTrafficCar(kind, color, rand) {
         wheels.push(w);
       }
     }
+    root.add(roadGlow(0xff2a16, W * 1.4, 4.4, 0.075, -L * 0.5 - 2.2));
+    root.add(roadGlow(0xfff0cc, W * 1.7, 3.6, 0.055, L * 0.5 + 2.0));
     return { root, wheels, length: L, width: W };
   }
 
@@ -519,6 +541,8 @@ export function buildTrafficCar(kind, color, rand) {
       wheels.push(w);
     }
   }
+  root.add(roadGlow(0xff2a16, W * 1.2, 3.6, 0.075, -L * 0.5 - 1.7));
+  root.add(roadGlow(0xfff0cc, W * 1.5, 3.2, 0.055, L * 0.5 + 1.8));
   return { root, wheels, length: L, width: W };
 }
 

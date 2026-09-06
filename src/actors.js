@@ -85,7 +85,9 @@ export class Actor {
         g.scale.y = on ? 1.5 : 1;
       }
     }
-    this.shadow.position.set(v.pos.x, v.pos.y + 0.04, v.pos.z);
+    // 影の位置は game.js が灯りの向きから決めます（真下固定だとシールに見える）
+    const so = this.shadowOffset;
+    this.shadow.position.set(v.pos.x + (so ? so.x : 0), v.pos.y + 0.04, v.pos.z + (so ? so.y : 0));
     this.shadow.quaternion.copy(this.q);
     this.shadow.rotateX(-Math.PI / 2);
   }
