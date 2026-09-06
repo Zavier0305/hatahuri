@@ -741,7 +741,9 @@ export class Game {
     this.camPos.lerp(ideal, 1 - Math.exp(-follow * dt));
 
     // カメラが壁やビルにめり込まないよう、道路の内側・路面より上に押し戻します
-    if (cm.id !== 'hood') {
+    // ランプに降りているあいだは、カメラを本線の枠に押し戻してはいけません
+    // （押し戻すと、車だけ下のランプにいてカメラが上の本線に残ります）。
+    if (cm.id !== 'hood' && !v.onRamp) {
       const pr = this.track.project(this.camPos, v.trackIndex);
       const maxU = ROAD.halfRoad - 1.0;
       const cu = clamp(pr.u, -maxU, maxU);
@@ -928,7 +930,9 @@ export class Game {
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
       wet: this.wet,
-      zoneText: `${this.course.name}${this.wet ? '（雨）' : ''}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
+      zoneText: v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
+        ? `${this.course.name}  ${this.track.rampAt(v.s).name} 出口ランプ  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
+        : `${this.course.name}${this.wet ? '（雨）' : ''}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
     };
   }
 }

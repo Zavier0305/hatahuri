@@ -2333,6 +2333,7 @@ class Vehicle {
     this.roadHeading = undefined;  // いま走っている場所の道の向き
     this.roadCurv = 0;             // そこの曲率（直進復帰補助の減衰項が使います）
     this.laneU = undefined;        // 戻る先の車線中心（game.js が毎フレーム入れます）
+    this.onRamp = false;           // いま出口ランプの上にいるか
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -2646,11 +2647,42 @@ class Vehicle {
     this.trackIndex = pr.index;
     this.s = pr.s; this.u = pr.u;
     const half = S_halfWidth(this.spec);
-    const outer = limits.outer - half;   // 路肩側（負の方向）
-    const inner = limits.inner + half;   // 中央分離帯側
+    // 本線で走れる横位置の範囲
+    let lo = -(limits.outer - half);   // 路肩側
+    let hi = -(limits.inner + half);   // 中央分離帯側
+
+    // --- 出口ランプ
+    // ランプは本線の s に対する「横位置と高さ」で表せるので、道路をグラフとして
+    // 持たなくても、走れる範囲をランプ側へ切り替えるだけで降りられます。
+    // 分岐の直後は本線とランプの範囲が重なるので、そこでは今の状態を保ちます
+    // （毎フレーム判定し直すと、境目で本線とランプを往復してしまいます）。
+    // AI とデモ走行は本線から出しません。
+    const ramp = (this.isAI || this.autoSteer || !track.rampAt) ? null : track.rampAt(pr.s);
+    let rampH = 0;
+    if (ramp) {
+      const roadLo = lo;
+      const rLo = ramp.outerU + half;
+      const rHi = ramp.innerU - half;
+      // 路肩より外へ出ていて、かつランプの幅に収まっていれば「ランプにいる」。
+      // 路肩の内側へ戻れば本線に戻ります。
+      if (pr.u < roadLo && pr.u >= rLo) this.onRamp = true;
+      else if (pr.u >= roadLo) this.onRamp = false;
+      if (this.onRamp) {
+        lo = rLo;
+        hi = Math.min(hi, rHi);
+        rampH = ramp.h;
+      } else {
+        // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
+        lo = Math.min(lo, rLo);
+      }
+    } else {
+      this.onRamp = false;
+    }
+    this.rampHeight = rampH;
+
     let hit = 0;
-    if (pr.u < -outer) hit = -1;
-    else if (pr.u > -inner) hit = 1;
+    if (pr.u < lo) hit = -1;
+    else if (pr.u > hi) hit = 1;
 
     if (hit === 0) {
       this.onWall = Math.max(0, this.onWall - 0.08);
@@ -2661,9 +2693,9 @@ class Vehicle {
     const into = hit < 0 ? Math.max(0, this.vy) : Math.max(0, -this.vy);
 
     // 押し戻し。わずかに余裕を持たせて、毎フレーム再判定にならないようにします。
-    const targetU = hit < 0 ? -(outer - 0.03) : -(inner - 0.03);
+    const targetU = hit < 0 ? lo + 0.03 : hi - 0.03;
     const sm = track.sample(pr.s, this._sm);
-    this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
+    this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02 + rampH);
     this.u = targetU;
 
     // 衝撃：向かっていたぶんだけ前進速度も失う（真横から当たるほど大きい）
@@ -2682,7 +2714,13 @@ class Vehicle {
     const sm = track.sample(this.s, this._sm);
     this.roadHeading = sm.heading;   // 直進復帰補助が参照します
     this.roadCurv = sm.curv;
-    const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u);
+    // ランプの上では、そのぶん下がった高さに合わせます
+    let hOff = 0;
+    if (this.onRamp && track.rampAt) {
+      const r = track.rampAt(this.s);
+      if (r) hOff = r.h;
+    }
+    const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u).addScaledVector(sm.up, hOff);
     this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);
     return sm;
   }
@@ -2911,6 +2949,35 @@ const LANE_U = [-2.9, -6.5, -10.1];  // 追越車線 → 走行車線（日本�
 const ONCOMING_U = [2.9, 6.5, 10.1];
 
 /**
+ * 出口ランプの形。
+ *
+ * ランプは「本線の s に対する 横位置 と 高さ」で表せます。つまり道路を
+ * グラフとして持たなくても、いまの (s, u) のままで走れます。
+ * ここが見た目と当たり判定の唯一の定義です。別々に持つと必ずズレます。
+ *
+ *   lead … 出口の何m手前から分かれ始めるか
+ *   span … 分かれてから戻ってくるまでの長さ
+ *   inU  … 分岐点／合流点での横位置（本線の走行車線と同じ位置）
+ *   out  … いちばん外へ離れる量[m]
+ *   drop … いちばん下がる量[m]
+ *   half … ランプの半幅[m]
+ */
+// 数値の根拠：分岐の角度が atan(out / 分岐にかかる距離) になります。
+// span 320 / out 44 では約20度あり、110km/h では曲がりきれずに車が
+// 逆向きになりました（実測で s が減少）。実際のインターの分岐は5〜8度です。
+// span 560 / out 30 で、分岐にかかる距離は約210m、角度は約8度になります。
+const RAMP = { lead: 160, span: 560, inU: -8.0, out: 30, drop: 11, half: 5.0 };
+
+/** 0..1 の位置から「どれだけ本線から離れているか」を返します（両端で0）。 */
+function rampProfile(t) {
+  return Math.pow(Math.sin(Math.PI * t), 1.6);
+}
+const smoothstep01 = (x) => {
+  const k = x < 0 ? 0 : x > 1 ? 1 : x;
+  return k * k * (3 - 2 * k);
+};
+
+/**
  * コース定義から周回路を生成します。
  * 半径を三角関数で揺らした閉ループなので、必ず一周でつながります。
  *
@@ -3136,6 +3203,40 @@ function createTrack(course) {
       return { s: i * spacing + along, u: side, h: height, index: i, curv: curvature[i] };
     },
 
+    /**
+     * その地点にランプがあるか。あれば横位置・高さ・幅を返します。
+     * 出口は courses.js の exits を一周に等間隔で並べたものです。
+     */
+    rampAt(s) {
+      const ex = (course && course.exits) || null;
+      if (!ex || !ex.length) return null;
+      const x = ((s % length) + length) % length;
+      for (let i = 0; i < ex.length; i++) {
+        const es = (length * (i + 0.5)) / ex.length;
+        if (this.zoneAt(es) === 'tunnel') continue;   // トンネル内には作りません
+        let d = x - (es - RAMP.lead);
+        if (d < -length / 2) d += length;
+        if (d > length / 2) d -= length;
+        if (d < 0 || d > RAMP.span) continue;
+        const t = d / RAMP.span;
+        const f = rampProfile(t);
+        const u = RAMP.inU - RAMP.out * f;
+        // 分岐部では、ランプの内側の縁を本線の路肩まで広げます。
+        // これが実際のインターにある三角形の舗装（ゴア）です。
+        // ここが地続きでないと、一瞬のうちに横へ寄り切らないと降りられません
+        // （実際、最初の実装では本線の壁に阻まれて一度も降りられませんでした）。
+        const gore = f < 0.55;
+        const outerU = u - RAMP.half;
+        const innerU = gore
+          ? Math.max(u + RAMP.half, -(ROAD.halfRoad - 0.35))
+          : u + RAMP.half;
+        // 下り始めるのは、本線と分かれきってから。ゴアの区間は本線と同じ高さです。
+        const h = -RAMP.drop * smoothstep01((f - 0.5) / 0.5);
+        return { index: i, t, f, u, outerU, innerU, h, gore, name: ex[i][0] };
+      }
+      return null;
+    },
+
     zoneAt(s) {
       const x = ((s % length) + length) % length;
       for (const z of zones) if (x >= z.from && x < z.to) return z.kind;
@@ -3312,8 +3413,16 @@ function buildRoad(track) {
     group.add(mesh);
   }
 
+  // ランプが本線の壁を横切る区間では、壁を切らないと出入りできません。
+  // （当たり判定は resolveWalls 側で切り替えるので、ここは見た目の話です）
+  const rampOpen = (i) => {
+    if (!track.rampAt) return false;
+    const r = track.rampAt(i * track.spacing);
+    return !!r && r.f < 0.62;
+  };
+
   // 帯状の壁を作るヘルパー（u位置・高さ・材質を指定）
-  const ribbon = (u, y0, y1, mat, step = 2) => {
+  const ribbon = (u, y0, y1, mat, step = 2, gap = null) => {
     for (let c0 = 0; c0 < n; c0 += CHUNK * step) {
       const c1 = Math.min(c0 + CHUNK * step, n);
       const rows = c1 - c0 + 1;
@@ -3333,9 +3442,11 @@ function buildRoad(track) {
         }
       }
       for (let r = 0; r < rows - 1; r++) {
+        if (gap && (gap((c0 + r) % n) || gap((c0 + r + 1) % n))) continue;
         const a = r * 2, b = a + 1, cc = a + 2, d = a + 3;
         idx.push(a, cc, d, a, d, b);
       }
+      if (!idx.length) continue;
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3));
       g.setIndex(idx);
@@ -3349,9 +3460,9 @@ function buildRoad(track) {
   ribbon(-ROAD.medianHalf, 0, 0.92, wallM(wallMat));
   ribbon(ROAD.medianHalf, 0, 0.92, wallM(wallMat));
   // 外側の壁とガードレール
-  ribbon(-H - 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat));
+  ribbon(-H - 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat), 2, rampOpen);
   ribbon(H + 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat));
-  ribbon(-H - 0.5, 0.80, 0.94, railMat);
+  ribbon(-H - 0.5, 0.80, 0.94, railMat, 2, rampOpen);
   ribbon(H + 0.5, 0.80, 0.94, railMat);
 
   function wallM(m) { return m; }
@@ -4319,44 +4430,53 @@ function buildRamps(track, scene) {
     side: THREE.DoubleSide,
   });
   const sm = {};
-  const STEPS = 26, LEN = 210, HALF = 3.6;
+  const STEPS = 64;
 
   for (let e = 0; e < exits.length; e++) {
     const es = (L * (e + 0.5)) / exits.length;
     if (track.zoneAt(es) === 'tunnel') continue;
 
-    // 中心線・左右の縁・ガードレール上端を、同じ進み方で並べます
+    // 形は track.rampAt() から取ります。当たり判定と同じ式なので、
+    // 「見えている道」と「走れる道」が必ず一致します。
     const rows = [];
     for (let i = 0; i <= STEPS; i++) {
-      const t = i / STEPS;
-      const s2 = es - 70 + LEN * t;
+      const s2 = es - RAMP.lead + (RAMP.span * i) / STEPS;
+      const r = track.rampAt(s2);
+      if (!r) continue;
       track.sample(s2, sm);
-      // 外へ離れながら、下っていきます
-      // 本線から離す量。以前は +2.6m から始めていたため、ランプの内側の縁が
-      // 本線側へ1mほど食い込んでいました（走行空間の検査で |u|=12.05m として
-      // 検出）。路肩の壁より確実に外側から始めます。
-      const off = -(ROAD.halfRoad + 5.2) - Math.pow(t, 1.7) * 44;
-      const drop = -Math.pow(t, 2.0) * 17;
-      const c = sm.pos.clone().addScaledVector(sm.lat, off).addScaledVector(sm.up, drop);
-      rows.push({ c, lat: sm.lat.clone(), up: sm.up.clone(), t });
+      rows.push({
+        pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(),
+        outerU: r.outerU, innerU: r.innerU, h: r.h, f: r.f,
+        c: sm.pos.clone().addScaledVector(sm.lat, r.u).addScaledVector(sm.up, r.h),
+      });
     }
-    const strip = (uFrom, uTo, yOff, mat) => {
-      const posA = new Float32Array((STEPS + 1) * 2 * 3);
+    if (rows.length < 4) continue;
+    const N = rows.length - 1;
+
+    // uOf(row) は「その地点でのランプの縁の横位置」。当たり判定と同じ値を使います。
+    const strip = (uOfA, uOfB, yOff, mat, onlyWhenApart) => {
+      const posA = [];
       const idx = [];
-      for (let i = 0; i <= STEPS; i++) {
+      let cnt = 0;
+      for (let i = 0; i <= N; i++) {
         const r = rows[i];
         for (let qq = 0; qq < 2; qq++) {
-          const u = qq === 0 ? uFrom : uTo;
-          const o = (i * 2 + qq) * 3;
-          posA[o] = r.c.x + r.lat.x * u + r.up.x * yOff;
-          posA[o + 1] = r.c.y + r.lat.y * u + r.up.y * yOff;
-          posA[o + 2] = r.c.z + r.lat.z * u + r.up.z * yOff;
+          const u = qq === 0 ? uOfA(r) : uOfB(r);
+          posA.push(
+            r.pos.x + r.lat.x * u + r.up.x * (r.h + yOff),
+            r.pos.y + r.lat.y * u + r.up.y * (r.h + yOff),
+            r.pos.z + r.lat.z * u + r.up.z * (r.h + yOff)
+          );
         }
       }
-      for (let i = 0; i < STEPS; i++) {
+      for (let i = 0; i < N; i++) {
+        // ガードレールは、本線から十分離れてからだけ立てます
+        if (onlyWhenApart && (rows[i].f < 0.22 || rows[i + 1].f < 0.22)) continue;
         const a = i * 2, b = a + 1, cc = a + 2, d = a + 3;
         idx.push(a, d, cc, a, b, d);
+        cnt++;
       }
+      if (!cnt) return;
       const g2 = new THREE.BufferGeometry();
       g2.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3));
       g2.setIndex(idx);
@@ -4364,45 +4484,46 @@ function buildRamps(track, scene) {
       g2.computeBoundingSphere();
       group.add(new THREE.Mesh(g2, mat));
     };
-    strip(-HALF, HALF, 0, road);                    // 路面
-    strip(-HALF, -HALF + 0.18, 0.01, line);         // 外側の白線
-    strip(HALF - 0.18, HALF, 0.01, line);           // 内側の白線
-    strip(-HALF - 0.35, -HALF - 0.35, 0.9, rail);   // 外側のガードレール（薄い帯）
-    strip(HALF + 0.35, HALF + 0.35, 0.9, rail);
+    // 当たり判定の帯は、繋がりを保つために本線と重なる部分まで含みます。
+    // 舗装を描くのは「本線の外側だけ」。ここを分けないと、分岐部でランプの
+    // 舗装が本線の路上に敷かれてしまいます（侵入検査で |u|=2.70m として検出）。
+    const EDGE = -(ROAD.halfRoad - 0.35);
+    const OUT = (r) => r.outerU;
+    const IN = (r) => Math.min(r.innerU, EDGE);
+    strip(OUT, IN, 0, road);                                        // 路面（分岐部は三角に広がる）
+    strip(OUT, (r) => r.outerU + 0.18, 0.012, line);                // 外側の白線
+    strip((r) => Math.min(r.innerU, EDGE) - 0.18, IN, 0.012, line); // 内側の白線
+    strip((r) => r.outerU - 0.30, (r) => r.outerU - 0.30, 0.85, rail, true);
+    strip((r) => Math.min(r.innerU, EDGE) + 0.30,
+          (r) => Math.min(r.innerU, EDGE) + 0.30, 0.85, rail, true);
 
-    // ランプの先の料金所。降りた先に何も無いと、道が途中で消えて見えます。
+    // いちばん下がった地点に料金所を置きます
     {
-      const end = rows[rows.length - 1];
+      let mid = rows[0], bestF = -1;
+      for (const r of rows) if (r.f > bestF) { bestF = r.f; mid = r; }
       const booth = new THREE.MeshStandardMaterial({ color: 0x3b4048, roughness: 0.8, metalness: 0.1 });
       const roof = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.7, metalness: 0.3 });
       const lampG = new THREE.MeshStandardMaterial({
         color: 0x8fffc0, emissive: 0x2bd47a, emissiveIntensity: 3.2, roughness: 0.4,
       });
+      const H = RAMP.half;
       const g3 = new THREE.Group();
-      g3.position.copy(end.c);
+      g3.position.copy(mid.c);
       const bs = new THREE.Matrix4();
-      bs.makeBasis(end.lat, end.up, new THREE.Vector3().crossVectors(end.lat, end.up).negate());
+      bs.makeBasis(mid.lat, mid.up, new THREE.Vector3().crossVectors(mid.lat, mid.up).negate());
       g3.quaternion.setFromRotationMatrix(bs);
-      // 屋根
-      const rf = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 3.4, 0.45, 5.0), roof);
-      rf.position.set(0, 5.2, 0);
-      g3.add(rf);
-      // ブース（島）とレーンの表示灯
-      for (const u of [-HALF * 0.62, HALF * 0.62]) {
-        const b = new THREE.Mesh(new THREE.BoxGeometry(1.3, 2.9, 3.4), booth);
-        b.position.set(u, 1.45, 0);
-        g3.add(b);
+      const rf = new THREE.Mesh(new THREE.BoxGeometry(H * 2 + 3.4, 0.45, 5.0), roof);
+      rf.position.set(0, 5.4, 0); g3.add(rf);
+      // ブースは路肩側にだけ置きます（走行の邪魔をしない位置）
+      for (const u of [-H - 0.9, H + 0.9]) {
+        const b = new THREE.Mesh(new THREE.BoxGeometry(1.3, 3.1, 3.4), booth);
+        b.position.set(u, 1.55, 0); g3.add(b);
+        const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5.4, 0.4), roof);
+        p2.position.set(u, 2.7, 0); g3.add(p2);
       }
-      for (const u of [-HALF * 0.3, HALF * 0.3]) {
-        const l = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.16), lampG);
-        l.position.set(u, 4.3, 2.4);
-        g3.add(l);
-      }
-      // 支柱
-      for (const u of [-(HALF + 1.4), HALF + 1.4]) {
-        const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5.2, 0.4), roof);
-        p2.position.set(u, 2.6, 0);
-        g3.add(p2);
+      for (const u of [-H * 0.45, H * 0.45]) {
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.16), lampG);
+        l.position.set(u, 4.4, 2.4); g3.add(l);
       }
       group.add(g3);
     }
@@ -6203,7 +6324,9 @@ class Game {
     this.camPos.lerp(ideal, 1 - Math.exp(-follow * dt));
 
     // カメラが壁やビルにめり込まないよう、道路の内側・路面より上に押し戻します
-    if (cm.id !== 'hood') {
+    // ランプに降りているあいだは、カメラを本線の枠に押し戻してはいけません
+    // （押し戻すと、車だけ下のランプにいてカメラが上の本線に残ります）。
+    if (cm.id !== 'hood' && !v.onRamp) {
       const pr = this.track.project(this.camPos, v.trackIndex);
       const maxU = ROAD.halfRoad - 1.0;
       const cu = clamp(pr.u, -maxU, maxU);
@@ -6390,7 +6513,9 @@ class Game {
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
       wet: this.wet,
-      zoneText: `${this.course.name}${this.wet ? '（雨）' : ''}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
+      zoneText: v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
+        ? `${this.course.name}  ${this.track.rampAt(v.s).name} 出口ランプ  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
+        : `${this.course.name}${this.wet ? '（雨）' : ''}  ${zoneNames[this.track.zoneAt(v.s)] || '湾岸'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`,
     };
   }
 }

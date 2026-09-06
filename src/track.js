@@ -16,6 +16,35 @@ export const LANE_U = [-2.9, -6.5, -10.1];  // 追越車線 → 走行車線（�
 export const ONCOMING_U = [2.9, 6.5, 10.1];
 
 /**
+ * 出口ランプの形。
+ *
+ * ランプは「本線の s に対する 横位置 と 高さ」で表せます。つまり道路を
+ * グラフとして持たなくても、いまの (s, u) のままで走れます。
+ * ここが見た目と当たり判定の唯一の定義です。別々に持つと必ずズレます。
+ *
+ *   lead … 出口の何m手前から分かれ始めるか
+ *   span … 分かれてから戻ってくるまでの長さ
+ *   inU  … 分岐点／合流点での横位置（本線の走行車線と同じ位置）
+ *   out  … いちばん外へ離れる量[m]
+ *   drop … いちばん下がる量[m]
+ *   half … ランプの半幅[m]
+ */
+// 数値の根拠：分岐の角度が atan(out / 分岐にかかる距離) になります。
+// span 320 / out 44 では約20度あり、110km/h では曲がりきれずに車が
+// 逆向きになりました（実測で s が減少）。実際のインターの分岐は5〜8度です。
+// span 560 / out 30 で、分岐にかかる距離は約210m、角度は約8度になります。
+export const RAMP = { lead: 160, span: 560, inU: -8.0, out: 30, drop: 11, half: 5.0 };
+
+/** 0..1 の位置から「どれだけ本線から離れているか」を返します（両端で0）。 */
+export function rampProfile(t) {
+  return Math.pow(Math.sin(Math.PI * t), 1.6);
+}
+const smoothstep01 = (x) => {
+  const k = x < 0 ? 0 : x > 1 ? 1 : x;
+  return k * k * (3 - 2 * k);
+};
+
+/**
  * コース定義から周回路を生成します。
  * 半径を三角関数で揺らした閉ループなので、必ず一周でつながります。
  *
@@ -241,6 +270,40 @@ export function createTrack(course) {
       return { s: i * spacing + along, u: side, h: height, index: i, curv: curvature[i] };
     },
 
+    /**
+     * その地点にランプがあるか。あれば横位置・高さ・幅を返します。
+     * 出口は courses.js の exits を一周に等間隔で並べたものです。
+     */
+    rampAt(s) {
+      const ex = (course && course.exits) || null;
+      if (!ex || !ex.length) return null;
+      const x = ((s % length) + length) % length;
+      for (let i = 0; i < ex.length; i++) {
+        const es = (length * (i + 0.5)) / ex.length;
+        if (this.zoneAt(es) === 'tunnel') continue;   // トンネル内には作りません
+        let d = x - (es - RAMP.lead);
+        if (d < -length / 2) d += length;
+        if (d > length / 2) d -= length;
+        if (d < 0 || d > RAMP.span) continue;
+        const t = d / RAMP.span;
+        const f = rampProfile(t);
+        const u = RAMP.inU - RAMP.out * f;
+        // 分岐部では、ランプの内側の縁を本線の路肩まで広げます。
+        // これが実際のインターにある三角形の舗装（ゴア）です。
+        // ここが地続きでないと、一瞬のうちに横へ寄り切らないと降りられません
+        // （実際、最初の実装では本線の壁に阻まれて一度も降りられませんでした）。
+        const gore = f < 0.55;
+        const outerU = u - RAMP.half;
+        const innerU = gore
+          ? Math.max(u + RAMP.half, -(ROAD.halfRoad - 0.35))
+          : u + RAMP.half;
+        // 下り始めるのは、本線と分かれきってから。ゴアの区間は本線と同じ高さです。
+        const h = -RAMP.drop * smoothstep01((f - 0.5) / 0.5);
+        return { index: i, t, f, u, outerU, innerU, h, gore, name: ex[i][0] };
+      }
+      return null;
+    },
+
     zoneAt(s) {
       const x = ((s % length) + length) % length;
       for (const z of zones) if (x >= z.from && x < z.to) return z.kind;
@@ -417,8 +480,16 @@ export function buildRoad(track) {
     group.add(mesh);
   }
 
+  // ランプが本線の壁を横切る区間では、壁を切らないと出入りできません。
+  // （当たり判定は resolveWalls 側で切り替えるので、ここは見た目の話です）
+  const rampOpen = (i) => {
+    if (!track.rampAt) return false;
+    const r = track.rampAt(i * track.spacing);
+    return !!r && r.f < 0.62;
+  };
+
   // 帯状の壁を作るヘルパー（u位置・高さ・材質を指定）
-  const ribbon = (u, y0, y1, mat, step = 2) => {
+  const ribbon = (u, y0, y1, mat, step = 2, gap = null) => {
     for (let c0 = 0; c0 < n; c0 += CHUNK * step) {
       const c1 = Math.min(c0 + CHUNK * step, n);
       const rows = c1 - c0 + 1;
@@ -438,9 +509,11 @@ export function buildRoad(track) {
         }
       }
       for (let r = 0; r < rows - 1; r++) {
+        if (gap && (gap((c0 + r) % n) || gap((c0 + r + 1) % n))) continue;
         const a = r * 2, b = a + 1, cc = a + 2, d = a + 3;
         idx.push(a, cc, d, a, d, b);
       }
+      if (!idx.length) continue;
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3));
       g.setIndex(idx);
@@ -454,9 +527,9 @@ export function buildRoad(track) {
   ribbon(-ROAD.medianHalf, 0, 0.92, wallM(wallMat));
   ribbon(ROAD.medianHalf, 0, 0.92, wallM(wallMat));
   // 外側の壁とガードレール
-  ribbon(-H - 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat));
+  ribbon(-H - 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat), 2, rampOpen);
   ribbon(H + 0.55, 0.2, 0.2 + ROAD.wallH, wallM(wallMat));
-  ribbon(-H - 0.5, 0.80, 0.94, railMat);
+  ribbon(-H - 0.5, 0.80, 0.94, railMat, 2, rampOpen);
   ribbon(H + 0.5, 0.80, 0.94, railMat);
 
   function wallM(m) { return m; }

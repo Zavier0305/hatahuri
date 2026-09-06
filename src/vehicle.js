@@ -73,6 +73,7 @@ export class Vehicle {
     this.roadHeading = undefined;  // いま走っている場所の道の向き
     this.roadCurv = 0;             // そこの曲率（直進復帰補助の減衰項が使います）
     this.laneU = undefined;        // 戻る先の車線中心（game.js が毎フレーム入れます）
+    this.onRamp = false;           // いま出口ランプの上にいるか
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -386,11 +387,42 @@ export class Vehicle {
     this.trackIndex = pr.index;
     this.s = pr.s; this.u = pr.u;
     const half = S_halfWidth(this.spec);
-    const outer = limits.outer - half;   // 路肩側（負の方向）
-    const inner = limits.inner + half;   // 中央分離帯側
+    // 本線で走れる横位置の範囲
+    let lo = -(limits.outer - half);   // 路肩側
+    let hi = -(limits.inner + half);   // 中央分離帯側
+
+    // --- 出口ランプ
+    // ランプは本線の s に対する「横位置と高さ」で表せるので、道路をグラフとして
+    // 持たなくても、走れる範囲をランプ側へ切り替えるだけで降りられます。
+    // 分岐の直後は本線とランプの範囲が重なるので、そこでは今の状態を保ちます
+    // （毎フレーム判定し直すと、境目で本線とランプを往復してしまいます）。
+    // AI とデモ走行は本線から出しません。
+    const ramp = (this.isAI || this.autoSteer || !track.rampAt) ? null : track.rampAt(pr.s);
+    let rampH = 0;
+    if (ramp) {
+      const roadLo = lo;
+      const rLo = ramp.outerU + half;
+      const rHi = ramp.innerU - half;
+      // 路肩より外へ出ていて、かつランプの幅に収まっていれば「ランプにいる」。
+      // 路肩の内側へ戻れば本線に戻ります。
+      if (pr.u < roadLo && pr.u >= rLo) this.onRamp = true;
+      else if (pr.u >= roadLo) this.onRamp = false;
+      if (this.onRamp) {
+        lo = rLo;
+        hi = Math.min(hi, rHi);
+        rampH = ramp.h;
+      } else {
+        // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
+        lo = Math.min(lo, rLo);
+      }
+    } else {
+      this.onRamp = false;
+    }
+    this.rampHeight = rampH;
+
     let hit = 0;
-    if (pr.u < -outer) hit = -1;
-    else if (pr.u > -inner) hit = 1;
+    if (pr.u < lo) hit = -1;
+    else if (pr.u > hi) hit = 1;
 
     if (hit === 0) {
       this.onWall = Math.max(0, this.onWall - 0.08);
@@ -401,9 +433,9 @@ export class Vehicle {
     const into = hit < 0 ? Math.max(0, this.vy) : Math.max(0, -this.vy);
 
     // 押し戻し。わずかに余裕を持たせて、毎フレーム再判定にならないようにします。
-    const targetU = hit < 0 ? -(outer - 0.03) : -(inner - 0.03);
+    const targetU = hit < 0 ? lo + 0.03 : hi - 0.03;
     const sm = track.sample(pr.s, this._sm);
-    this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02);
+    this.pos.copy(sm.pos).addScaledVector(sm.lat, targetU).addScaledVector(sm.up, 0.02 + rampH);
     this.u = targetU;
 
     // 衝撃：向かっていたぶんだけ前進速度も失う（真横から当たるほど大きい）
@@ -422,7 +454,13 @@ export class Vehicle {
     const sm = track.sample(this.s, this._sm);
     this.roadHeading = sm.heading;   // 直進復帰補助が参照します
     this.roadCurv = sm.curv;
-    const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u);
+    // ランプの上では、そのぶん下がった高さに合わせます
+    let hOff = 0;
+    if (this.onRamp && track.rampAt) {
+      const r = track.rampAt(this.s);
+      if (r) hOff = r.h;
+    }
+    const p = this._p.copy(sm.pos).addScaledVector(sm.lat, this.u).addScaledVector(sm.up, hOff);
     this.pos.y = lerp(this.pos.y, p.y + 0.02, 0.4);
     return sm;
   }

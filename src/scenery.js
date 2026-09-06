@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rng, clamp, lerp, TAU } from './util.js';
-import { ROAD } from './track.js';
+import { ROAD, RAMP } from './track.js';
 
 // ---------------------------------------------------------------- 空と海
 
@@ -957,44 +957,53 @@ export function buildRamps(track, scene) {
     side: THREE.DoubleSide,
   });
   const sm = {};
-  const STEPS = 26, LEN = 210, HALF = 3.6;
+  const STEPS = 64;
 
   for (let e = 0; e < exits.length; e++) {
     const es = (L * (e + 0.5)) / exits.length;
     if (track.zoneAt(es) === 'tunnel') continue;
 
-    // 中心線・左右の縁・ガードレール上端を、同じ進み方で並べます
+    // 形は track.rampAt() から取ります。当たり判定と同じ式なので、
+    // 「見えている道」と「走れる道」が必ず一致します。
     const rows = [];
     for (let i = 0; i <= STEPS; i++) {
-      const t = i / STEPS;
-      const s2 = es - 70 + LEN * t;
+      const s2 = es - RAMP.lead + (RAMP.span * i) / STEPS;
+      const r = track.rampAt(s2);
+      if (!r) continue;
       track.sample(s2, sm);
-      // 外へ離れながら、下っていきます
-      // 本線から離す量。以前は +2.6m から始めていたため、ランプの内側の縁が
-      // 本線側へ1mほど食い込んでいました（走行空間の検査で |u|=12.05m として
-      // 検出）。路肩の壁より確実に外側から始めます。
-      const off = -(ROAD.halfRoad + 5.2) - Math.pow(t, 1.7) * 44;
-      const drop = -Math.pow(t, 2.0) * 17;
-      const c = sm.pos.clone().addScaledVector(sm.lat, off).addScaledVector(sm.up, drop);
-      rows.push({ c, lat: sm.lat.clone(), up: sm.up.clone(), t });
+      rows.push({
+        pos: sm.pos.clone(), lat: sm.lat.clone(), up: sm.up.clone(),
+        outerU: r.outerU, innerU: r.innerU, h: r.h, f: r.f,
+        c: sm.pos.clone().addScaledVector(sm.lat, r.u).addScaledVector(sm.up, r.h),
+      });
     }
-    const strip = (uFrom, uTo, yOff, mat) => {
-      const posA = new Float32Array((STEPS + 1) * 2 * 3);
+    if (rows.length < 4) continue;
+    const N = rows.length - 1;
+
+    // uOf(row) は「その地点でのランプの縁の横位置」。当たり判定と同じ値を使います。
+    const strip = (uOfA, uOfB, yOff, mat, onlyWhenApart) => {
+      const posA = [];
       const idx = [];
-      for (let i = 0; i <= STEPS; i++) {
+      let cnt = 0;
+      for (let i = 0; i <= N; i++) {
         const r = rows[i];
         for (let qq = 0; qq < 2; qq++) {
-          const u = qq === 0 ? uFrom : uTo;
-          const o = (i * 2 + qq) * 3;
-          posA[o] = r.c.x + r.lat.x * u + r.up.x * yOff;
-          posA[o + 1] = r.c.y + r.lat.y * u + r.up.y * yOff;
-          posA[o + 2] = r.c.z + r.lat.z * u + r.up.z * yOff;
+          const u = qq === 0 ? uOfA(r) : uOfB(r);
+          posA.push(
+            r.pos.x + r.lat.x * u + r.up.x * (r.h + yOff),
+            r.pos.y + r.lat.y * u + r.up.y * (r.h + yOff),
+            r.pos.z + r.lat.z * u + r.up.z * (r.h + yOff)
+          );
         }
       }
-      for (let i = 0; i < STEPS; i++) {
+      for (let i = 0; i < N; i++) {
+        // ガードレールは、本線から十分離れてからだけ立てます
+        if (onlyWhenApart && (rows[i].f < 0.22 || rows[i + 1].f < 0.22)) continue;
         const a = i * 2, b = a + 1, cc = a + 2, d = a + 3;
         idx.push(a, d, cc, a, b, d);
+        cnt++;
       }
+      if (!cnt) return;
       const g2 = new THREE.BufferGeometry();
       g2.setAttribute('position', new THREE.Float32BufferAttribute(posA, 3));
       g2.setIndex(idx);
@@ -1002,45 +1011,46 @@ export function buildRamps(track, scene) {
       g2.computeBoundingSphere();
       group.add(new THREE.Mesh(g2, mat));
     };
-    strip(-HALF, HALF, 0, road);                    // 路面
-    strip(-HALF, -HALF + 0.18, 0.01, line);         // 外側の白線
-    strip(HALF - 0.18, HALF, 0.01, line);           // 内側の白線
-    strip(-HALF - 0.35, -HALF - 0.35, 0.9, rail);   // 外側のガードレール（薄い帯）
-    strip(HALF + 0.35, HALF + 0.35, 0.9, rail);
+    // 当たり判定の帯は、繋がりを保つために本線と重なる部分まで含みます。
+    // 舗装を描くのは「本線の外側だけ」。ここを分けないと、分岐部でランプの
+    // 舗装が本線の路上に敷かれてしまいます（侵入検査で |u|=2.70m として検出）。
+    const EDGE = -(ROAD.halfRoad - 0.35);
+    const OUT = (r) => r.outerU;
+    const IN = (r) => Math.min(r.innerU, EDGE);
+    strip(OUT, IN, 0, road);                                        // 路面（分岐部は三角に広がる）
+    strip(OUT, (r) => r.outerU + 0.18, 0.012, line);                // 外側の白線
+    strip((r) => Math.min(r.innerU, EDGE) - 0.18, IN, 0.012, line); // 内側の白線
+    strip((r) => r.outerU - 0.30, (r) => r.outerU - 0.30, 0.85, rail, true);
+    strip((r) => Math.min(r.innerU, EDGE) + 0.30,
+          (r) => Math.min(r.innerU, EDGE) + 0.30, 0.85, rail, true);
 
-    // ランプの先の料金所。降りた先に何も無いと、道が途中で消えて見えます。
+    // いちばん下がった地点に料金所を置きます
     {
-      const end = rows[rows.length - 1];
+      let mid = rows[0], bestF = -1;
+      for (const r of rows) if (r.f > bestF) { bestF = r.f; mid = r; }
       const booth = new THREE.MeshStandardMaterial({ color: 0x3b4048, roughness: 0.8, metalness: 0.1 });
       const roof = new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.7, metalness: 0.3 });
       const lampG = new THREE.MeshStandardMaterial({
         color: 0x8fffc0, emissive: 0x2bd47a, emissiveIntensity: 3.2, roughness: 0.4,
       });
+      const H = RAMP.half;
       const g3 = new THREE.Group();
-      g3.position.copy(end.c);
+      g3.position.copy(mid.c);
       const bs = new THREE.Matrix4();
-      bs.makeBasis(end.lat, end.up, new THREE.Vector3().crossVectors(end.lat, end.up).negate());
+      bs.makeBasis(mid.lat, mid.up, new THREE.Vector3().crossVectors(mid.lat, mid.up).negate());
       g3.quaternion.setFromRotationMatrix(bs);
-      // 屋根
-      const rf = new THREE.Mesh(new THREE.BoxGeometry(HALF * 2 + 3.4, 0.45, 5.0), roof);
-      rf.position.set(0, 5.2, 0);
-      g3.add(rf);
-      // ブース（島）とレーンの表示灯
-      for (const u of [-HALF * 0.62, HALF * 0.62]) {
-        const b = new THREE.Mesh(new THREE.BoxGeometry(1.3, 2.9, 3.4), booth);
-        b.position.set(u, 1.45, 0);
-        g3.add(b);
+      const rf = new THREE.Mesh(new THREE.BoxGeometry(H * 2 + 3.4, 0.45, 5.0), roof);
+      rf.position.set(0, 5.4, 0); g3.add(rf);
+      // ブースは路肩側にだけ置きます（走行の邪魔をしない位置）
+      for (const u of [-H - 0.9, H + 0.9]) {
+        const b = new THREE.Mesh(new THREE.BoxGeometry(1.3, 3.1, 3.4), booth);
+        b.position.set(u, 1.55, 0); g3.add(b);
+        const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5.4, 0.4), roof);
+        p2.position.set(u, 2.7, 0); g3.add(p2);
       }
-      for (const u of [-HALF * 0.3, HALF * 0.3]) {
-        const l = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.16), lampG);
-        l.position.set(u, 4.3, 2.4);
-        g3.add(l);
-      }
-      // 支柱
-      for (const u of [-(HALF + 1.4), HALF + 1.4]) {
-        const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5.2, 0.4), roof);
-        p2.position.set(u, 2.6, 0);
-        g3.add(p2);
+      for (const u of [-H * 0.45, H * 0.45]) {
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.16), lampG);
+        l.position.set(u, 4.4, 2.4); g3.add(l);
       }
       group.add(g3);
     }
