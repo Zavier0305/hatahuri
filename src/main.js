@@ -8,6 +8,7 @@ import { RIVALS } from './story.js';
 import { COURSES, COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { RAMP } from './track.js';
 import { load, save, resetSave, emptyTune } from './save.js';
+import { TITLES, newTitles } from './titles.js';
 import { applyTune } from './vehicle.js';
 import { buildCar } from './carModel.js';
 import { formatMoney, formatTime, clamp } from './util.js';
@@ -62,6 +63,7 @@ function show(id) {
   if (id === 'course') renderCourses();
   if (id === 'garage') renderGarage();
   if (id === 'story') renderStory();
+  if (id === 'records') renderRecords();
   if (id === 'settings') syncSettings();
   menuIndex = 0;
   requestAnimationFrame(() => paintMenu(menuButtons()));
@@ -429,6 +431,34 @@ function applyCourse(id) {
   save(data);
 }
 
+// ---------------------------------------------------------------- 走行記録
+
+function renderRecords() {
+  const st = data.stats;
+  const km = (m) => `${(m / 1000).toFixed(1)} km`;
+  $('#rec-sum').textContent = `称号 ${data.titles.length} / ${TITLES.length}`;
+  $('#rec-stats').innerHTML = [
+    ['総走行距離', km(st.dist)],
+    ['自己最高速', `${Math.round(data.bestTop)} km/h`],
+    ['依頼の達成', `${st.jobs} 件`],
+    ['依頼の失敗', `${st.jobFail} 件`],
+    ['高速隊を振り切った', `${st.escapes} 回`],
+    ['連行された', `${st.busted} 回`],
+    ['最高手配度', `★${st.maxWanted}`],
+    ['信号無視', `${st.reds} 回`],
+    ['PAに寄った', `${st.paVisits} 回`],
+    ['夜明けまで走った', `${st.dawns} 回`],
+    ['倒したライバル', `${data.cleared.length} 人`],
+  ].map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join('');
+  const owned = new Set(data.titles);
+  $('#rec-titles').innerHTML = TITLES.map((t) => {
+    const on = owned.has(t.id);
+    return `<div class="rec-t ${on ? 'on' : 'off'}">`
+      + `<b>${on ? t.name : '？？？'}</b><i>${t.desc}</i>`
+      + `<span class="mark">${on ? '獲得' : ''}</span></div>`;
+  }).join('');
+}
+
 // ---------------------------------------------------------------- ストーリー
 
 function renderStory() {
@@ -649,6 +679,8 @@ function showResult(result, state) {
   }
   data.money += reward;
   data.bestTop = Math.max(data.bestTop, Math.round(state.topSpeed));
+  // 走った距離は、モードにかかわらず積み上げます
+  bump('dist', Math.round(state.distance));
   if (state.bestLap < Infinity) {
     const key = bestKey(game.course.id, data.carId);
     data.bestLap[key] = Math.min(data.bestLap[key] ?? Infinity, state.bestLap);
@@ -775,6 +807,21 @@ input.onAction = (code) => {
 
 // 画面のボタンは HUD 側が組み立てて、押された番号を返してきます
 
+/**
+ * 走行の記録を1つ足して、新しく付いた称号があれば知らせます。
+ * フリーランに残るものを作るための仕組みです。
+ */
+function bump(key, by = 1) {
+  data.stats[key] = (data.stats[key] || 0) + by;
+  const got = newTitles(data.stats, data.titles);
+  for (const t of got) data.titles.push(t.id);
+  save(data);
+  if (got.length && hud) {
+    hud.message('称号を獲得', `${got[0].name} — ${got[0].desc}`, 2600);
+    audio.beep(1180, 0.16, 0.14);
+  }
+}
+
 function onGameEvent(type, payload) {
   if (type === 'count') hud.message(String(payload), '', 900);
   if (type === 'go') hud.message('GO', '', 900);
@@ -800,9 +847,11 @@ function onGameEvent(type, payload) {
     if (payload.level > payload.was) {
       hud.message('WANTED', payload.level === 1 ? '高速隊が来た' : `手配度 ${payload.level}`, 1800);
       audio.beep(payload.level >= 3 ? 340 : 420, 0.22, 0.16);
+      if (payload.level > data.stats.maxWanted) bump('maxWanted', payload.level - data.stats.maxWanted);
     } else if (payload.level === 0) {
       hud.message('振り切った', '', 1500);
       audio.beep(880, 0.14, 0.12);
+      bump('escapes');
     } else {
       hud.message(`手配度 ${payload.level}`, '1台まいた', 1300);
     }
@@ -820,23 +869,29 @@ function onGameEvent(type, payload) {
     save(data);
     hud.message('DELIVERED', `¥${formatMoney(pay)} ／ 残り ${payload.left.toFixed(1)}秒`, 2800);
     audio.beep(1320, 0.2, 0.16);
+    bump('jobs');
   }
   if (type === 'job-fail') {
     hud.message('依頼失敗', payload.reason, 2200);
     audio.beep(300, 0.24, 0.14);
+    bump('jobFail');
   }
+  if (type === 'pa-arrive') bump('paVisits');
+  if (type === 'dawn-done') bump('dawns');
   if (type === 'crossing-hit') {
     hud.message('出合い頭', '赤信号を無視した', 2000);
   }
   if (type === 'runred') {
     hud.message('信号無視', '手配度が上がった', 1600);
     audio.beep(360, 0.16, 0.13);
+    bump('reds');
   }
   if (type === 'busted') {
     data.money = Math.max(0, data.money - payload.fine);
     save(data);
     hud.message('BUSTED', `罰金 ¥${formatMoney(payload.fine)}`, 2600);
     audio.beep(220, 0.4, 0.18);
+    bump('busted');
   }
   if (type === 'finish') {
     setTimeout(() => showResult(payload.result, payload.state), 900);

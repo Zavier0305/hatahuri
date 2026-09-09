@@ -100,6 +100,23 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .wt-note{margin-top:5px;font-size:11px;letter-spacing:.1em;color:var(--dim)}
 #hud-wanted.chase .wt-note{color:#ff8f8f}
 
+/* 走行記録 */
+.rec-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:18px}
+@media(max-width:760px){.rec-body{grid-template-columns:1fr}}
+.rec-stats{display:grid;grid-template-columns:1fr auto;gap:7px 12px;align-content:start}
+.rec-stats span{font-size:13px;color:var(--dim);letter-spacing:.08em}
+.rec-stats b{font:800 15px/1 var(--f-display,monospace);text-align:right}
+.rec-titles{display:flex;flex-direction:column;gap:7px;max-height:52vh;overflow:auto}
+.rec-t{
+  display:flex;align-items:baseline;gap:10px;padding:8px 11px;
+  background:rgba(255,255,255,.03);border-left:2px solid rgba(255,255,255,.12)
+}
+.rec-t.on{background:rgba(255,154,82,.10);border-left-color:#ff9a52}
+.rec-t b{font-size:14px;letter-spacing:.06em}
+.rec-t.off b{color:var(--dim)}
+.rec-t i{font-style:normal;font-size:11px;color:var(--dim);letter-spacing:.06em}
+.rec-t .mark{margin-left:auto;font-size:11px;color:#ff9a52;letter-spacing:.1em}
+
 /* 時刻。深夜2時から夜明けまで進みます */
 #hud-clock{
   font:800 15px/1 var(--f-display,monospace);letter-spacing:.1em;
@@ -680,7 +697,8 @@ kbd{
         <button data-go="garage"><span class="mi">04</span><b>ガレージ</b><i>マシン・チューン・カラー</i></button>
         <button data-go="howto"><span class="mi">05</span><b>操作方法</b><i>キーボード / パッド / タッチ</i></button>
         <button data-go="settings"><span class="mi">06</span><b>設定</b><i>画質・操作・サウンド</i></button>
-        <button data-go="credits"><span class="mi">07</span><b>クレジット</b><i>制作について</i></button>
+        <button data-go="records"><span class="mi">07</span><b>走行記録</b><i>積み上げと称号</i></button>
+        <button data-go="credits"><span class="mi">08</span><b>クレジット</b><i>制作について</i></button>
       </nav>
       <div class="title-foot">
         <span id="build-ver">v1.0</span>
@@ -851,6 +869,17 @@ kbd{
           <div class="set-head">データ</div>
           <label><span>セーブデータ<i>所持金・所有車・チューン・記録</i></span><button id="btn-reset">消去する</button></label>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 走行記録 -->
+  <section id="scr-records" class="screen">
+    <div class="panel wide">
+      <header><h2>走行記録</h2><span id="rec-sum" class="sub"></span><button class="back" data-go="title">戻る</button></header>
+      <div class="rec-body">
+        <div class="rec-stats" id="rec-stats"></div>
+        <div class="rec-titles" id="rec-titles"></div>
       </div>
     </div>
   </section>
@@ -7487,6 +7516,19 @@ const DEFAULT = {
   bestLap: {},               // `${courseId}:${carId}` -> ms
   courseId: 'bayshore',      // 最後に選んだステージ
   bestTop: 0,                // 自己最高速[km/h]
+  // 走行の積み上げ。フリーランに「残るもの」を作るための記録です。
+  stats: {
+    dist: 0,                 // 総走行距離[m]
+    jobs: 0,                 // 依頼の達成数
+    jobFail: 0,              // 依頼の失敗数
+    escapes: 0,              // 高速隊を振り切った回数
+    busted: 0,               // 連行された回数
+    maxWanted: 0,            // 最高手配度
+    reds: 0,                 // 信号無視の回数
+    paVisits: 0,             // 立ち寄ったPAの数（延べ）
+    dawns: 0,                // 夜明けまで走りきった回数
+  },
+  titles: [],                // 獲得した称号のid
   hintSeen: false,           // 初回の操作ガイドを見たか
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
@@ -7498,7 +7540,13 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return structuredClone(DEFAULT);
     const d = JSON.parse(raw);
-    return { ...structuredClone(DEFAULT), ...d, settings: { ...DEFAULT.settings, ...(d.settings || {}) } };
+    return {
+      ...structuredClone(DEFAULT), ...d,
+      settings: { ...DEFAULT.settings, ...(d.settings || {}) },
+      // 古いセーブには stats が無いので、足りないものを補います
+      stats: { ...structuredClone(DEFAULT.stats), ...(d.stats || {}) },
+      titles: Array.isArray(d.titles) ? d.titles : [],
+    };
   } catch (e) {
     return structuredClone(DEFAULT);
   }
@@ -7511,6 +7559,41 @@ function save(data) {
 function resetSave() {
   try { localStorage.removeItem(KEY); } catch (e) {}
   return structuredClone(DEFAULT);
+}
+
+
+// ============================== src/titles.js ==============================
+/**
+ * 称号。走行の記録から自動で付きます。
+ *
+ * フリーランは走っても何も残らないので、積み上がるものを作ります。
+ * 条件はすべて save.js の stats から判定できるものだけにしてあります。
+ */
+const TITLES = [
+  { id: 'first-run', name: '初走行', desc: '湾岸を走った', test: (s) => s.dist > 1000 },
+  { id: 'commuter', name: '通い慣れた道', desc: '通算100km', test: (s) => s.dist > 100000 },
+  { id: 'regular', name: '湾岸の常連', desc: '通算500km', test: (s) => s.dist > 500000 },
+  { id: 'nightlife', name: '夜通し', desc: '通算1000km', test: (s) => s.dist > 1000000 },
+
+  { id: 'courier', name: '運び屋', desc: '依頼を5件こなした', test: (s) => s.jobs >= 5 },
+  { id: 'courier2', name: '腕のいい運び屋', desc: '依頼を25件こなした', test: (s) => s.jobs >= 25 },
+  { id: 'careful', name: '無事故無違反', desc: '依頼を10件こなして、一度も連行されていない',
+    test: (s) => s.jobs >= 10 && s.busted === 0 },
+
+  { id: 'runner', name: '逃げ足', desc: '高速隊を3回振り切った', test: (s) => s.escapes >= 3 },
+  { id: 'ghost', name: '影も踏ませない', desc: '高速隊を15回振り切った', test: (s) => s.escapes >= 15 },
+  { id: 'most-wanted', name: '手配中', desc: '手配度3まで上がった', test: (s) => s.maxWanted >= 3 },
+  { id: 'reckless', name: '赤信号は止まれ', desc: '信号無視20回', test: (s) => s.reds >= 20 },
+
+  { id: 'wanderer', name: '寄り道', desc: 'PAに10回立ち寄った', test: (s) => s.paVisits >= 10 },
+  { id: 'sunrise', name: '夜明けまで', desc: '空が明けるまで走りきった', test: (s) => s.dawns >= 1 },
+  { id: 'sunrise3', name: '朝がくるまで', desc: '夜明けまで3回走りきった', test: (s) => s.dawns >= 3 },
+];
+
+/** 記録から、新しく付いた称号を返します。 */
+function newTitles(stats, have) {
+  const owned = new Set(have || []);
+  return TITLES.filter((t) => !owned.has(t.id) && t.test(stats));
 }
 
 
@@ -8451,7 +8534,18 @@ class Game {
     }
 
     // --- 夜明け
+    const wasDawn = this.dawn;
     this.updateDawn(dt);
+    if (wasDawn < 1 && this.dawn >= 1) this.onEvent('dawn-done', {});
+
+    // --- パーキングエリアに入った（延べ回数を数えます）
+    if (pv.onRamp && this.track.rampAt) {
+      const rr = this.track.rampAt(pv.s);
+      const id = rr && rr.pad > 0.5 ? rr.index : -1;
+      if (id >= 0 && id !== this._paSeen) { this._paSeen = id; this.onEvent('pa-arrive', { index: id }); }
+    } else if (!pv.onRamp) {
+      this._paSeen = -1;
+    }
 
     // --- 一般道の信号と、交差点を横切る車
     if (this.mode === 'racing') {
@@ -8924,6 +9018,7 @@ function show(id) {
   if (id === 'course') renderCourses();
   if (id === 'garage') renderGarage();
   if (id === 'story') renderStory();
+  if (id === 'records') renderRecords();
   if (id === 'settings') syncSettings();
   menuIndex = 0;
   requestAnimationFrame(() => paintMenu(menuButtons()));
@@ -9291,6 +9386,34 @@ function applyCourse(id) {
   save(data);
 }
 
+// ---------------------------------------------------------------- 走行記録
+
+function renderRecords() {
+  const st = data.stats;
+  const km = (m) => `${(m / 1000).toFixed(1)} km`;
+  $('#rec-sum').textContent = `称号 ${data.titles.length} / ${TITLES.length}`;
+  $('#rec-stats').innerHTML = [
+    ['総走行距離', km(st.dist)],
+    ['自己最高速', `${Math.round(data.bestTop)} km/h`],
+    ['依頼の達成', `${st.jobs} 件`],
+    ['依頼の失敗', `${st.jobFail} 件`],
+    ['高速隊を振り切った', `${st.escapes} 回`],
+    ['連行された', `${st.busted} 回`],
+    ['最高手配度', `★${st.maxWanted}`],
+    ['信号無視', `${st.reds} 回`],
+    ['PAに寄った', `${st.paVisits} 回`],
+    ['夜明けまで走った', `${st.dawns} 回`],
+    ['倒したライバル', `${data.cleared.length} 人`],
+  ].map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join('');
+  const owned = new Set(data.titles);
+  $('#rec-titles').innerHTML = TITLES.map((t) => {
+    const on = owned.has(t.id);
+    return `<div class="rec-t ${on ? 'on' : 'off'}">`
+      + `<b>${on ? t.name : '？？？'}</b><i>${t.desc}</i>`
+      + `<span class="mark">${on ? '獲得' : ''}</span></div>`;
+  }).join('');
+}
+
 // ---------------------------------------------------------------- ストーリー
 
 function renderStory() {
@@ -9511,6 +9634,8 @@ function showResult(result, state) {
   }
   data.money += reward;
   data.bestTop = Math.max(data.bestTop, Math.round(state.topSpeed));
+  // 走った距離は、モードにかかわらず積み上げます
+  bump('dist', Math.round(state.distance));
   if (state.bestLap < Infinity) {
     const key = bestKey(game.course.id, data.carId);
     data.bestLap[key] = Math.min(data.bestLap[key] ?? Infinity, state.bestLap);
@@ -9637,6 +9762,21 @@ input.onAction = (code) => {
 
 // 画面のボタンは HUD 側が組み立てて、押された番号を返してきます
 
+/**
+ * 走行の記録を1つ足して、新しく付いた称号があれば知らせます。
+ * フリーランに残るものを作るための仕組みです。
+ */
+function bump(key, by = 1) {
+  data.stats[key] = (data.stats[key] || 0) + by;
+  const got = newTitles(data.stats, data.titles);
+  for (const t of got) data.titles.push(t.id);
+  save(data);
+  if (got.length && hud) {
+    hud.message('称号を獲得', `${got[0].name} — ${got[0].desc}`, 2600);
+    audio.beep(1180, 0.16, 0.14);
+  }
+}
+
 function onGameEvent(type, payload) {
   if (type === 'count') hud.message(String(payload), '', 900);
   if (type === 'go') hud.message('GO', '', 900);
@@ -9662,9 +9802,11 @@ function onGameEvent(type, payload) {
     if (payload.level > payload.was) {
       hud.message('WANTED', payload.level === 1 ? '高速隊が来た' : `手配度 ${payload.level}`, 1800);
       audio.beep(payload.level >= 3 ? 340 : 420, 0.22, 0.16);
+      if (payload.level > data.stats.maxWanted) bump('maxWanted', payload.level - data.stats.maxWanted);
     } else if (payload.level === 0) {
       hud.message('振り切った', '', 1500);
       audio.beep(880, 0.14, 0.12);
+      bump('escapes');
     } else {
       hud.message(`手配度 ${payload.level}`, '1台まいた', 1300);
     }
@@ -9682,23 +9824,29 @@ function onGameEvent(type, payload) {
     save(data);
     hud.message('DELIVERED', `¥${formatMoney(pay)} ／ 残り ${payload.left.toFixed(1)}秒`, 2800);
     audio.beep(1320, 0.2, 0.16);
+    bump('jobs');
   }
   if (type === 'job-fail') {
     hud.message('依頼失敗', payload.reason, 2200);
     audio.beep(300, 0.24, 0.14);
+    bump('jobFail');
   }
+  if (type === 'pa-arrive') bump('paVisits');
+  if (type === 'dawn-done') bump('dawns');
   if (type === 'crossing-hit') {
     hud.message('出合い頭', '赤信号を無視した', 2000);
   }
   if (type === 'runred') {
     hud.message('信号無視', '手配度が上がった', 1600);
     audio.beep(360, 0.16, 0.13);
+    bump('reds');
   }
   if (type === 'busted') {
     data.money = Math.max(0, data.money - payload.fine);
     save(data);
     hud.message('BUSTED', `罰金 ¥${formatMoney(payload.fine)}`, 2600);
     audio.beep(220, 0.4, 0.18);
+    bump('busted');
   }
   if (type === 'finish') {
     setTimeout(() => showResult(payload.result, payload.state), 900);

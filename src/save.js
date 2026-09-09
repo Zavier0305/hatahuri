@@ -11,6 +11,19 @@ const DEFAULT = {
   bestLap: {},               // `${courseId}:${carId}` -> ms
   courseId: 'bayshore',      // 最後に選んだステージ
   bestTop: 0,                // 自己最高速[km/h]
+  // 走行の積み上げ。フリーランに「残るもの」を作るための記録です。
+  stats: {
+    dist: 0,                 // 総走行距離[m]
+    jobs: 0,                 // 依頼の達成数
+    jobFail: 0,              // 依頼の失敗数
+    escapes: 0,              // 高速隊を振り切った回数
+    busted: 0,               // 連行された回数
+    maxWanted: 0,            // 最高手配度
+    reds: 0,                 // 信号無視の回数
+    paVisits: 0,             // 立ち寄ったPAの数（延べ）
+    dawns: 0,                // 夜明けまで走りきった回数
+  },
+  titles: [],                // 獲得した称号のid
   hintSeen: false,           // 初回の操作ガイドを見たか
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
@@ -22,7 +35,13 @@ export function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return structuredClone(DEFAULT);
     const d = JSON.parse(raw);
-    return { ...structuredClone(DEFAULT), ...d, settings: { ...DEFAULT.settings, ...(d.settings || {}) } };
+    return {
+      ...structuredClone(DEFAULT), ...d,
+      settings: { ...DEFAULT.settings, ...(d.settings || {}) },
+      // 古いセーブには stats が無いので、足りないものを補います
+      stats: { ...structuredClone(DEFAULT.stats), ...(d.stats || {}) },
+      titles: Array.isArray(d.titles) ? d.titles : [],
+    };
   } catch (e) {
     return structuredClone(DEFAULT);
   }

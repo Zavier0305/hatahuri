@@ -147,7 +147,8 @@
         <button data-go="garage"><span class="mi">04</span><b>ガレージ</b><i>マシン・チューン・カラー</i></button>
         <button data-go="howto"><span class="mi">05</span><b>操作方法</b><i>キーボード / パッド / タッチ</i></button>
         <button data-go="settings"><span class="mi">06</span><b>設定</b><i>画質・操作・サウンド</i></button>
-        <button data-go="credits"><span class="mi">07</span><b>クレジット</b><i>制作について</i></button>
+        <button data-go="records"><span class="mi">07</span><b>走行記録</b><i>積み上げと称号</i></button>
+        <button data-go="credits"><span class="mi">08</span><b>クレジット</b><i>制作について</i></button>
       </nav>
       <div class="title-foot">
         <span id="build-ver">v1.0</span>
@@ -318,6 +319,17 @@
           <div class="set-head">データ</div>
           <label><span>セーブデータ<i>所持金・所有車・チューン・記録</i></span><button id="btn-reset">消去する</button></label>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 走行記録 -->
+  <section id="scr-records" class="screen">
+    <div class="panel wide">
+      <header><h2>走行記録</h2><span id="rec-sum" class="sub"></span><button class="back" data-go="title">戻る</button></header>
+      <div class="rec-body">
+        <div class="rec-stats" id="rec-stats"></div>
+        <div class="rec-titles" id="rec-titles"></div>
       </div>
     </div>
   </section>

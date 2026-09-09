@@ -953,7 +953,18 @@ export class Game {
     }
 
     // --- 夜明け
+    const wasDawn = this.dawn;
     this.updateDawn(dt);
+    if (wasDawn < 1 && this.dawn >= 1) this.onEvent('dawn-done', {});
+
+    // --- パーキングエリアに入った（延べ回数を数えます）
+    if (pv.onRamp && this.track.rampAt) {
+      const rr = this.track.rampAt(pv.s);
+      const id = rr && rr.pad > 0.5 ? rr.index : -1;
+      if (id >= 0 && id !== this._paSeen) { this._paSeen = id; this.onEvent('pa-arrive', { index: id }); }
+    } else if (!pv.onRamp) {
+      this._paSeen = -1;
+    }
 
     // --- 一般道の信号と、交差点を横切る車
     if (this.mode === 'racing') {
