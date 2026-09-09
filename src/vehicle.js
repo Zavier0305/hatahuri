@@ -81,6 +81,7 @@ export class Vehicle {
     // タイムアタックでコースの外へ出られるとラップの意味がなくなり、
     // バトル中に一般道まで行けると、相手の来られない道で延々と粘れます。
     this.roam = 2;
+    this.offRoadAI = false;        // AI でも一般道へ出られるか（高速隊だけ）
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -431,7 +432,10 @@ export class Vehicle {
     //
     // AI とデモ走行は本線から出しません。
     const roam = this.roam === undefined ? 2 : this.roam;
-    const canLeave = !(this.isAI || this.autoSteer) && !!track.rampAt && roam >= 1;
+    // AI は原則として本線から出しません。高速隊だけは例外で、
+    // 一般道まで追ってこられるように offRoadAI を立てます。
+    const canLeave = (!(this.isAI || this.autoSteer) || this.offRoadAI)
+      && !!track.rampAt && roam >= 1;
     const ramp = canLeave ? track.rampAt(pr.s) : null;
     const surf = (canLeave && roam >= 2 && track.surfaceAt) ? track.surfaceAt(pr.s) : null;
     let rampH = 0;
@@ -443,7 +447,9 @@ export class Vehicle {
       // 縁に沿って走っているあいだ毎フレーム行き来して車が暴れます
       // （実際に、広場の端で前後不覚になりました）。
       if (!surf) this.zone = 'road';
-      else if (ramp && ramp.pad > 0.75) this.zone = 'ramp';
+      // 高速隊は一般道を通り過ぎるだけで、広場（PA）へは入りません。
+      // 入れると、逃げ込む場所がなくなります。
+      else if (!this.offRoadAI && ramp && ramp.pad > 0.75) this.zone = 'ramp';
     } else if (this.zone === 'ramp') {
       if (!ramp) this.zone = 'road';
       else if (pr.u >= roadLo) this.zone = 'road';

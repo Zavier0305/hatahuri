@@ -851,7 +851,7 @@ export class Game {
       }
     }
 
-    this.traffic.update(dt, pv.s, pv.u);
+    this.traffic.update(dt, pv.s, pv.u, pv.onSurface);
     this.emitSmoke(this.player);
     if (this.rival) this.emitSmoke(this.rival);
     this.sparks.update(dt);

@@ -146,22 +146,73 @@ export class Police {
       rubber: 0.42,
     });
     ai.gripScale = this.wet ? 0.80 : 1;
-
-    // 後ろから、車線をずらして出します
-    const back = 190 + Math.random() * 90;
-    const lane = LANE_U[this.units.length % LANE_U.length];
-    const s0 = player.vehicle.s - back;
-    actor.vehicle.placeOnTrack(this.track, s0, lane);
-    actor.vehicle.vx = Math.max(45, Math.abs(player.vehicle.vx) * 0.95);
-    actor.vehicle.gear = 5;
+    // 一般道まで追ってこられるようにします（ほかのAIは本線から出しません）
+    actor.vehicle.offRoadAI = true;
 
     const flashA = flashPool(0xff2a2a);
     const flashB = flashPool(0x2a6bff);
     this.scene.add(flashA); this.scene.add(flashB);
 
-    const u = { actor, ai, lamps: bar.lamps, flashA, flashB };
+    const u = { actor, ai, lamps: bar.lamps, flashA, flashB, surf: false };
+    this.place(u, player, this.units.length);
     this.units.push(u);
     return u;
+  }
+
+  /**
+   * 1台を自車の後方へ置きます。
+   * 自車が一般道にいるなら、パトカーも一般道へ出します。
+   * 本線に湧かせたままだと、高架の上を並走するだけで永久に追いつけません。
+   */
+  place(u, player, idx = 0) {
+    const pv = player.vehicle;
+    const surf = !!(pv.onSurface && this.track.surfaceAt);
+    u.surf = surf;
+    const back = (surf ? 90 + Math.random() * 70 : 190 + Math.random() * 90);
+    const s0 = pv.s - back;
+    const av = u.actor.vehicle;
+    if (surf) {
+      const sf = this.track.surfaceAt(s0);
+      av.placeOnTrack(this.track, s0, sf ? sf.u - 1.7 : 0, { onSurface: !!sf });
+      av.vx = Math.max(30, Math.abs(pv.vx) * 0.95);
+      av.gear = 3;
+    } else {
+      av.placeOnTrack(this.track, s0, LANE_U[idx % LANE_U.length]);
+      av.vx = Math.max(45, Math.abs(pv.vx) * 0.95);
+      av.gear = 5;
+    }
+  }
+
+  /**
+   * 一般道でのパトカーの運転。
+   * RivalAI は本線の車線を狙うので、そのままでは一般道の外へ出ようとします。
+   * 一般道は道なりに走るだけなので、簡単な追従で足ります。
+   */
+  driveSurface(u, dt, player) {
+    const av = u.actor.vehicle;
+    const sf = this.track.surfaceAt(av.s);
+    if (!sf) return;
+    const inp = av.input;
+    const Ld = Math.max(22, Math.abs(av.vx) * 1.2);
+    const ah = this.track.surfaceAt(av.s + Ld) || sf;
+    // 自分と同じ向きの車線（中心より左）を狙います
+    const want = ah.u - 1.7;
+    inp.steer = clamp(-Math.atan2((av.u - want) * 1.2, Ld) * 2.4, -1, 1);
+    // 逃げる相手に合わせて追い上げます（制限速度は無視します）
+    const pv = player.vehicle;
+    const L = this.track.length;
+    let gap = pv.s - av.s;
+    if (gap > L / 2) gap -= L;
+    if (gap < -L / 2) gap += L;
+    const target = clamp(Math.abs(pv.vx) + clamp(gap * 0.12, -6, 14), 12, 46);
+    const e = target - av.vx;
+    inp.throttle = clamp(e * 0.35, 0, 1);
+    inp.brake = clamp(-e * 0.35, 0, 1);
+    inp.handbrake = 0;
+    if (av.shiftTimer <= 0) {
+      if (av.rpm > av.spec.redline * 0.95 && av.gear < av.maxGear) av.shiftUp();
+      else if (av.rpm < av.spec.redline * 0.45 && av.gear > 1) av.shiftDown();
+    }
   }
 
   /** 手配度に見合う台数へ増減させます。 */
@@ -269,8 +320,11 @@ export class Police {
       this.evade = Math.max(0, this.evade - dt * 2);
     }
 
-    // 捕まる判定。真後ろに付かれて速度を落とすと連行されます
-    if (this.level > 0 && near < 16 && v.speedKmh < 45) {
+    // 捕まる判定。真後ろに付かれて速度を落とすと連行されます。
+    // パーキングエリアの中では捕まりません。一般道まで追ってくるようにしたので、
+    // どこかに「確実に逃げ込める場所」を残しておかないと、逃げ道のない
+    // 鬼ごっこになります。パトカーは広場へは入らず、一般道を通り過ぎます。
+    if (this.level > 0 && !v.onRamp && near < 16 && v.speedKmh < 45) {
       this.bust += dt;
       if (this.bust > 2.5) {
         const lv = this.level;
@@ -289,12 +343,16 @@ export class Police {
     const L = this.track.length;
     this.blink += dt;
     const on = (this.blink * 4.4) % 2 < 1;   // 赤と青が交互
+    const wantSurf = !!(v.onSurface && this.track.surfaceAt);
     for (const u of this.units) {
       const pv2 = u.actor.vehicle;
+      // 自車が高速と一般道を行き来したら、パトカーもそちらへ移します
+      if (u.surf !== wantSurf) this.place(u, player, this.units.indexOf(u));
       let gap = v.s - pv2.s;
       if (gap > L / 2) gap -= L;
       if (gap < -L / 2) gap += L;
-      u.ai.update(dt, obstacles, gap);
+      if (u.surf) this.driveSurface(u, dt, player);
+      else u.ai.update(dt, obstacles, gap);
       pv2.update(dt, { wet: this.wet });
       pv2.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
       pv2.snapToRoad(this.track);
@@ -306,7 +364,9 @@ export class Police {
       u.lamps[1].emissiveIntensity = on ? 0.12 : 9.0;
       const sm = this.track.sample(pv2.s, this._sm);
       for (const [mesh, lit] of [[u.flashA, on], [u.flashB, !on]]) {
-        mesh.position.copy(sm.pos).addScaledVector(sm.lat, pv2.u).addScaledVector(sm.up, 0.05);
+        // 車の実際の位置を使います。本線の高さで置くと、一般道を走っている
+        // あいだ、光だけが11m上の高架の上に残ります。
+        mesh.position.copy(pv2.pos).addScaledVector(sm.up, 0.04);
         mesh.material.opacity = lit ? 0.55 : 0.05;
       }
     }

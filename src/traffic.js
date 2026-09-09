@@ -26,6 +26,10 @@ export class Traffic {
       this.cars.push({
         model, kind,
         s: 0, u: 0, vx: 0, lane: 0, oncoming: false, active: false,
+        // 一般道に出られる個体。片側1車線なので、本線と同じ数を出すと
+        // 20mおきに詰まった渋滞になります。4台に1台だけ出します。
+        surfSlot: i % 4 === 0,
+        surface: false, laneOff: 0, surfH: 0,
         laneChange: 0, targetU: 0,
         // 衝突の計算に使う実寸と質量（大型トラックに突っ込めば、当然こちらが弾かれます）
         halfW: model.width * 0.5, halfL: model.length * 0.5, cruise: 0,
@@ -42,11 +46,32 @@ export class Traffic {
     this._nearPool = [];
   }
 
-  /** プレイヤーの周囲に配置しなおします。 */
-  respawn(car, playerS, ahead) {
+  /**
+   * プレイヤーの周囲に配置しなおします。
+   * surface を渡すと、本線ではなく一般道（側道）へ出します。
+   */
+  respawn(car, playerS, ahead, surface = false) {
     const r = this.rand;
-    const oncoming = r() < 0.34;
+    const oncoming = r() < (surface ? 0.5 : 0.34);
     car.oncoming = oncoming;
+    car.surface = surface;
+    if (surface) {
+      // 一般道は片側1車線。中心から半車線ぶん寄せた位置を走ります
+      car.lane = 0;
+      // 日本の道なので左側通行。lat は「進行方向に対して右」なので、
+      // 自分と同じ向きの車は中心より負（＝左）へ寄せます。
+      car.laneOff = (oncoming ? 1 : -1) * 1.7;
+      car.u = 0;                       // 実際の横位置は update で毎回求めます
+      car.targetU = 0;
+      const base = car.kind === 'truck' ? 42 : car.kind === 'van' ? 48 : 52;
+      car.cruise = (base + r() * 14) / 3.6;
+      car.vx = car.cruise;
+      car.s = playerS + (ahead ? 90 + Math.pow(r(), 1.3) * 420 : -(70 + r() * 200));
+      car.active = true;
+      car.laneChange = 999;            // 一般道では車線変更しません
+      return;
+    }
+    car.laneOff = 0;
     const lanes = oncoming ? ONCOMING_U : LANE_U;
     let lane;
     if (car.kind === 'truck') lane = lanes.length - 1;                 // 大型は左寄り
@@ -65,13 +90,25 @@ export class Traffic {
     car.laneChange = 2 + r() * 12;
   }
 
-  update(dt, playerS, playerU) {
+  /**
+   * @param onSurface 自車が一般道にいるか。いるなら一般車もそちらへ出します。
+   *                  高速の車を一般道から見上げても意味がないので、
+   *                  自車のいる側だけに実体を置きます。
+   */
+  update(dt, playerS, playerU, onSurface = false) {
     const L = this.track.length;
+    const surfOK = onSurface && !!this.track.surfaceAt;
     for (const c of this.cars) {
-      if (!c.active) { this.respawn(c, playerS, true); continue; }
+      if (surfOK && !c.surfSlot) {
+        if (c.active) { c.active = false; c.model.root.visible = false; }
+        continue;
+      }
+      if (!c.active) { this.respawn(c, playerS, true, surfOK); c.model.root.visible = true; continue; }
+      // 自車が高速と一般道を行き来したら、一般車も入れ替えます
+      if (!!c.surface !== surfOK) { this.respawn(c, playerS, this.rand() < 0.6, surfOK); continue; }
       c.s += (c.oncoming ? -c.vx : c.vx) * dt;
 
-      // 車線変更（たまに）
+      // 車線変更（たまに）。一般道は1車線なのでしません
       c.laneChange -= dt;
       if (c.laneChange <= 0 && c.kind !== 'truck') {
         const lanes = c.oncoming ? ONCOMING_U : LANE_U;
@@ -85,7 +122,15 @@ export class Traffic {
         }
         c.laneChange = 6 + this.rand() * 16;
       }
-      c.u = lerp(c.u, c.targetU, 1 - Math.exp(-dt * 0.9));
+      if (c.surface) {
+        // 一般道の横位置は、その地点の道の中心から決めます
+        const sf = this.track.surfaceAt(c.s);
+        if (!sf) { this.respawn(c, playerS, true, true); continue; }
+        c.u = sf.u + c.laneOff;
+        c.surfH = sf.h;
+      } else {
+        c.u = lerp(c.u, c.targetU, 1 - Math.exp(-dt * 0.9));
+      }
       // 押し出された速度は、じわっと本来の巡航速度へ戻します
       if (c.cruise && Math.abs(c.vx - c.cruise) > 0.05) {
         c.vx = lerp(c.vx, c.cruise, 1 - Math.exp(-dt * 0.55));
@@ -100,12 +145,13 @@ export class Traffic {
       let rel = c.s - playerS;
       if (rel > L / 2) rel -= L;
       if (rel < -L / 2) rel += L;
-      if (rel < -300 || rel > 900) this.respawn(c, playerS, rel < 0);
+      if (rel < -300 || rel > 900) this.respawn(c, playerS, rel < 0, surfOK);
 
       // 見た目の更新
       const sm = this.track.sample(c.s, this._tmp);
       const root = c.model.root;
-      root.position.copy(sm.pos).addScaledVector(sm.lat, c.u).addScaledVector(sm.up, 0.01);
+      root.position.copy(sm.pos).addScaledVector(sm.lat, c.u)
+        .addScaledVector(sm.up, (c.surface ? c.surfH : 0) + 0.01);
       // 右手系（X×Y=Z）になるよう、+X は「進行方向の左」を取ります
       const fwd = c.oncoming ? this._fwd.copy(sm.tan).negate() : this._fwd.copy(sm.tan);
       const lft = c.oncoming ? this._lft.copy(sm.lat) : this._lft.copy(sm.lat).negate();
