@@ -25,6 +25,22 @@ export const JOB_KINDS = {
     label: '逃走', mult: 2.2, slack: 1.25,
     desc: '高速隊に捕まらずに届ける',
   },
+  // 以下は「速く走る」以外のことを要求する依頼です。
+  // 同じ「AからBへ」でも、守る条件が変わると走り方が変わります。
+  cargo: {
+    label: '積荷', mult: 1.9, slack: 1.35,
+    desc: '急ブレーキ・急ハンドルを使わずに届ける',
+    // 横Gと減速Gの上限[m/s^2]。超えると積荷が傷みます
+    maxLat: 7.5, maxDec: 8.5,
+  },
+  vip: {
+    label: '要人送迎', mult: 2.4, slack: 1.30,
+    desc: '一度もぶつけず、信号も守って届ける',
+  },
+  quiet: {
+    label: '深夜便', mult: 1.6, slack: 1.45,
+    desc: '手配度を上げずに届ける（制限速度を守る）',
+  },
 };
 
 /** 想定平均速度[km/h]。制限時間はこれと距離から決めます。 */
@@ -79,6 +95,7 @@ export class Jobs {
       left: job.limit,
       startS: job.fromS,
       clean: true,
+      cargo: 1,      // 積荷の状態（1が無傷）
       done: false,
     };
     this.onEvent('job-start', this.active);
@@ -92,12 +109,41 @@ export class Jobs {
     this.onEvent('job-fail', { job: j, reason });
   }
 
-  /** ぶつけた（無傷の依頼はここで失敗します）。 */
+  /** ぶつけた（無傷が条件の依頼はここで失敗します）。 */
   hit() {
     const j = this.active;
     if (!j || !j.clean) return;
     j.clean = false;
     if (j.kind === 'clean') this.abandon('接触');
+    if (j.kind === 'vip') this.abandon('接触');
+  }
+
+  /** 信号無視（要人送迎はここで失敗します）。 */
+  ranRed() {
+    const j = this.active;
+    if (!j) return;
+    if (j.kind === 'vip') this.abandon('信号無視');
+  }
+
+  /** 手配度が上がった（深夜便はここで失敗します）。 */
+  wanted(level) {
+    const j = this.active;
+    if (!j) return;
+    if (j.kind === 'quiet' && level >= 1) this.abandon('手配された');
+  }
+
+  /**
+   * 積荷の傷み。横Gと減速Gが大きいほど減ります。
+   * 「速く走る」と「丁寧に走る」を両立させるための条件です。
+   */
+  strain(dt, latG, decG) {
+    const j = this.active;
+    if (!j || j.kind !== 'cargo') return;
+    const K = JOB_KINDS.cargo;
+    const over = Math.max(0, latG - K.maxLat) + Math.max(0, decG - K.maxDec);
+    if (over <= 0) return;
+    j.cargo = Math.max(0, j.cargo - over * 0.045 * dt);
+    if (j.cargo <= 0) this.abandon('積荷が壊れた');
   }
 
   /** 連行された。 */
@@ -143,7 +189,13 @@ export class Jobs {
       destS: j.toS,
       reward: j.reward,
       clean: j.clean,
+      cargo: j.cargo,
       kind: j.kind,
+      note: j.kind === 'cargo' ? `積荷 ${Math.round(j.cargo * 100)}%`
+        : j.kind === 'vip' ? '無接触・信号厳守'
+          : j.kind === 'quiet' ? '手配度を上げない'
+            : j.kind === 'clean' && !j.clean ? '接触あり — 減額'
+              : j.kind === 'heat' ? '捕まったら失敗' : '',
     };
   }
 }

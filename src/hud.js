@@ -351,8 +351,8 @@ export class HUD {
     this.el.jobKind.textContent = j.label;
     this.el.jobTime.textContent = `${j.time.toFixed(1)}s`;
     this.el.jobTo.textContent = `${j.to} まで ${(j.dist / 1000).toFixed(1)} km`;
-    this.el.jobMeta.textContent = j.kind === 'clean' && !j.clean
-      ? '接触あり — 失敗'
+    this.el.jobMeta.textContent = j.note
+      ? `${j.note} ／ ¥${formatMoney(j.reward)}`
       : `報酬 ¥${formatMoney(j.reward)}`;
   }
 

@@ -135,6 +135,8 @@ export class Game {
       onEvent: (t, p) => {
         // 連行されたら、受けている依頼もそこで終わりです
         if (t === 'busted' && this.jobs) this.jobs.busted();
+        // 手配されたら「深夜便」は失敗です
+        if (t === 'wanted' && this.jobs) this.jobs.wanted(p.level);
         this.onEvent(t, p);
       },
     });
@@ -947,7 +949,11 @@ export class Game {
     }
 
     // --- 依頼の進行
-    if (this.mode === 'racing') this.jobs.update(dt, pv, this.track);
+    if (this.mode === 'racing') {
+      this.jobs.update(dt, pv, this.track);
+      // 積荷の依頼は、横Gと減速Gが大きいと荷が傷みます
+      this.jobs.strain(dt, Math.abs(pv.lastAy), Math.max(0, -pv.lastAx));
+    }
 
     // --- パーキングエリアでできること
     this.updatePaActions();
@@ -1246,6 +1252,7 @@ export class Game {
       if (d1 <= 0 || d1 > ds) continue;
       if (signalPhase(sg.s, this.signalTime) !== 'red') continue;
       if (this.police.runRed()) this.onEvent('runred', {});
+      this.jobs.ranRed();
     }
   }
 
