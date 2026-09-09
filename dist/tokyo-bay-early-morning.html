@@ -6182,6 +6182,133 @@ class Traffic {
 }
 
 
+// ============================== src/crossing.js ==============================
+
+const CROSS_COLORS = [0xd8dade, 0x1b1d22, 0x5a6068, 0x2a3a5a, 0x8f9298, 0xbfc3c8];
+
+/**
+ * 交差点を横切る車。
+ *
+ * 信号を守る理由を作るための仕組みです。赤で突っ切ると横から車が出てきます。
+ * 手配度が上がるだけでは、止まる側が時間を損するだけで、守る意味がありません。
+ *
+ * 交差する道そのものは作りません。車は交差点の位置（s は固定）で、道を横切る
+ * 向き（u）へ動くだけです。1本の道に沿った座標のままでも「横切る」は表せます。
+ */
+class Crossing {
+  constructor(track, scene, seed = 77, count = 3) {
+    this.track = track;
+    this.rand = rng(seed);
+    this.group = new THREE.Group();
+    this.group.name = 'crossing';
+    scene.add(this.group);
+    this.cars = [];
+    for (let i = 0; i < count; i++) {
+      const kind = this.rand() < 0.22 ? 'van' : 'sedan';
+      const model = buildTrafficCar(kind, CROSS_COLORS[(this.rand() * CROSS_COLORS.length) | 0], this.rand);
+      model.root.visible = false;
+      this.group.add(model.root);
+      this.cars.push({
+        model, active: false, s: 0, u: 0, dir: 1, vx: 0, h: 0,
+        halfL: model.length * 0.5, halfW: model.width * 0.5,
+      });
+    }
+    this._sm = {};
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._f = new THREE.Vector3();
+    this._x = new THREE.Vector3();
+  }
+
+  clear() {
+    for (const c of this.cars) { c.active = false; c.model.root.visible = false; }
+  }
+
+  /**
+   * @param v       自車
+   * @param signals game が持っている信号の一覧（s を使います）
+   * @param time    信号の時計
+   */
+  update(dt, v, signals, time) {
+    const t = this.track;
+    if (!signals || !signals.length || !t.surfaceAt) { this.clear(); return; }
+    // 一般道にいるときだけ動かします。本線からは見えません
+    if (!v.onSurface) { this.clear(); return; }
+    const L = t.length;
+    const wrap = (d) => (d > L / 2 ? d - L : d < -L / 2 ? d + L : d);
+
+    for (const c of this.cars) {
+      if (c.active) {
+        c.u += c.dir * c.vx * dt;
+        const sf = t.surfaceAt(c.s);
+        // 道を渡りきったら消えます
+        if (!sf || Math.abs(c.u - sf.u) > 34) { c.active = false; c.model.root.visible = false; continue; }
+        this.place(c);
+        continue;
+      }
+      // 空いている車を、近くの「赤（＝交差側が青）」の交差点へ出します
+      let pick = null;
+      for (const sg of signals) {
+        const d = wrap(sg.s - v.s);
+        if (d < -30 || d > 150) continue;
+        if (signalPhase(sg.s, time) !== 'red') continue;
+        // 1つの交差点に2台まで。1台だけだと、赤なのに閑散として見えます
+        const n = this.cars.filter((o) => o.active && o.s === sg.s).length;
+        if (n >= 2) continue;
+        pick = sg; c.slot = n; break;
+      }
+      if (!pick) continue;
+      const sf = t.surfaceAt(pick.s);
+      if (!sf) continue;
+      c.s = pick.s;
+      c.dir = this.rand() < 0.5 ? 1 : -1;
+      c.u = sf.u - c.dir * (24 + (c.slot || 0) * 10);
+      c.vx = (28 + this.rand() * 16) / 3.6;
+      c.h = sf.h;
+      c.active = true;
+      c.model.root.visible = true;
+      this.place(c);
+    }
+  }
+
+  place(c) {
+    const sm = this.track.sample(c.s, this._sm);
+    const root = c.model.root;
+    root.position.copy(sm.pos).addScaledVector(sm.lat, c.u).addScaledVector(sm.up, c.h + 0.01);
+    // 進む向きは横（lat）。右手系（X×Y=Z）になるよう X には tan を取ります
+    const fwd = this._f.copy(sm.lat).multiplyScalar(c.dir);
+    const left = this._x.copy(sm.tan).multiplyScalar(c.dir);
+    this._m.makeBasis(left, sm.up, fwd);
+    this._q.setFromRotationMatrix(this._m);
+    root.quaternion.copy(this._q);
+  }
+
+  /**
+   * 自車との接触。
+   * 横切る車は「進行方向に細く、横に長い」ので、s と u の役割が入れ替わります。
+   * ぶつかった強さを返します（0 なら当たっていません）。
+   */
+  hitTest(v) {
+    if (!v.onSurface) return 0;
+    const L = this.track.length;
+    for (const c of this.cars) {
+      if (!c.active) continue;
+      let ds = v.s - c.s;
+      if (ds > L / 2) ds -= L;
+      if (ds < -L / 2) ds += L;
+      if (Math.abs(ds) > c.halfW + v.spec.dims.L * 0.5) continue;
+      if (Math.abs(v.u - c.u) > c.halfL + v.spec.dims.W * 0.5) continue;
+      const sev = clamp((Math.abs(v.vx) + c.vx) / 22, 0.25, 1);
+      // 一度当たったら、その車は退場します（めり込んだまま何度も数えないため）
+      c.active = false;
+      c.model.root.visible = false;
+      return sev;
+    }
+    return 0;
+  }
+}
+
+
 // ============================== src/audio.js ==============================
 /**
  * 効果音はすべて WebAudio でその場で合成しています（音声ファイルなし）。
@@ -6628,6 +6755,21 @@ class HUD {
   setTrack(track) {
     this.track = track;
     this._buildMinimapPath();
+    // 一般道の形。走っている場所が地図に無いと、自分がどこにいるか分かりません
+    this.surfPath = null;
+    if (track.surfaceAt && track.surfaceNodes) {
+      const pts = [];
+      const sm = {};
+      const N = 160;
+      for (let i = 0; i <= N; i++) {
+        const s2 = (i / N) * track.length;
+        const sf = track.surfaceAt(s2);
+        if (!sf) { pts.length = 0; break; }
+        track.sample(s2, sm);
+        pts.push(sm.pos.x + sm.lat.x * sf.u, sm.pos.z + sm.lat.z * sf.u);
+      }
+      if (pts.length) this.surfPath = pts;
+    }
   }
 
   _buildMinimapPath() {
@@ -6737,6 +6879,18 @@ class HUD {
     g.lineWidth = 2.4;
     path(); g.stroke();
 
+    // 一般道（本線の外側を一周している側道）
+    if (this.surfPath) {
+      g.beginPath();
+      for (let i = 0; i < this.surfPath.length; i += 2) {
+        const [x, y] = this._mmPt(this.surfPath[i], this.surfPath[i + 1], w, h);
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.closePath();
+      g.strokeStyle = 'rgba(6,10,18,0.8)'; g.lineWidth = 3.4; g.stroke();
+      g.strokeStyle = 'rgba(120,148,180,0.75)'; g.lineWidth = 1.2; g.stroke();
+    }
+
     // トンネル区間だけ色を変えて、いま自分がどこを走っているか分かるように
     g.strokeStyle = 'rgba(255,180,60,0.9)';
     g.lineWidth = 2.6;
@@ -6751,9 +6905,9 @@ class HUD {
       g.stroke();
     }
 
-    const dot = (s, color, r = 3.4, ring = false) => {
+    const dot = (s, color, r = 3.4, ring = false, u = 0) => {
       const sm = t.sample(s, this._dotTmp || (this._dotTmp = {}));
-      const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
+      const [x, y] = this._mmPt(sm.pos.x + sm.lat.x * u, sm.pos.z + sm.lat.z * u, w, h);
       if (ring) {
         g.strokeStyle = 'rgba(0,0,0,0.85)';
         g.lineWidth = 3;
@@ -6788,7 +6942,8 @@ class HUD {
       g.beginPath(); g.arc(x, y, 2.6, 0, Math.PI * 2); g.fill();
     }
     for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.6, true);
-    dot(playerS, '#5ff0ff', 4.6, true);
+    // 一般道にいるときは、外側の線の上に自車を出します
+    dot(playerS, '#5ff0ff', 4.6, true, this.playerOffMain ? playerU : 0);
   }
 
   /** 地図に出すパーキングエリアの位置（コースを切り替えるたびに渡します） */
@@ -6902,6 +7057,7 @@ class HUD {
     this.el.gear.textContent = v.gear <= 0 ? 'N' : String(v.gear);
     this.el.boostBar.style.width = `${clamp(v.boost, 0, 1) * 100}%`;
     this.drawTacho(v.rpm, v.spec.redline, v.gear, v.boost);
+    this.playerOffMain = !!(v.onRamp || v.onSurface);
     this.drawMinimap(v.s, v.u, st.others || []);
     if (this.el.time) this.el.time.textContent = st.timeText || '';
     if (this.el.best) this.el.best.textContent = st.bestText || '';
@@ -7232,6 +7388,11 @@ class Game {
     buildTunnels(this.track, w);
     buildSigns(this.track, w);
     buildRamps(this.track, w);
+    if (this.crossing) {
+      this.scene.remove(this.crossing.group);
+      disposeTree(this.crossing.group);
+    }
+    this.crossing = new Crossing(this.track, this.scene, (course.seed ?? 1) + 313);
     const surface = buildSurfaceRoad(this.track, w);
     // 信号は「近くの数個だけ」見た目を更新するので、一覧を持っておきます
     this.signals = (surface.userData && surface.userData.signals) || [];
@@ -7948,8 +8109,23 @@ class Game {
       }
     }
 
-    // --- 一般道の信号
-    if (this.mode === 'racing') this.updateSignals(dt, pv);
+    // --- 一般道の信号と、交差点を横切る車
+    if (this.mode === 'racing') {
+      this.updateSignals(dt, pv);
+      this.crossing.update(dt, pv, this.signals, this.signalTime);
+      const cross = this.crossing.hitTest(pv);
+      if (cross > 0) {
+        // 横から出てきた車にぶつかった。赤信号を無視した結果です
+        pv.vx *= 0.35;
+        pv.vy += (Math.random() - 0.5) * 4;
+        this.shake = Math.max(this.shake, clamp(cross, 0.3, 1));
+        this.emitSparks(pv, 16);
+        audio && audio.crash(cross);
+        this.police.impact(cross * 2);
+        this.jobs.hit();
+        this.onEvent('crossing-hit', { severity: cross });
+      }
+    }
 
     // --- 依頼の進行
     if (this.mode === 'racing') this.jobs.update(dt, pv, this.track);
@@ -9103,6 +9279,9 @@ function onGameEvent(type, payload) {
   if (type === 'job-fail') {
     hud.message('依頼失敗', payload.reason, 2200);
     audio.beep(300, 0.24, 0.14);
+  }
+  if (type === 'crossing-hit') {
+    hud.message('出合い頭', '赤信号を無視した', 2000);
   }
   if (type === 'runred') {
     hud.message('信号無視', '手配度が上がった', 1600);

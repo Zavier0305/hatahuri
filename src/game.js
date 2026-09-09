@@ -12,6 +12,7 @@ import { RivalAI } from './ai.js';
 import { Traffic } from './traffic.js';
 import { Police } from './police.js';
 import { Jobs } from './jobs.js';
+import { Crossing } from './crossing.js';
 import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
@@ -194,6 +195,11 @@ export class Game {
     buildTunnels(this.track, w);
     buildSigns(this.track, w);
     buildRamps(this.track, w);
+    if (this.crossing) {
+      this.scene.remove(this.crossing.group);
+      disposeTree(this.crossing.group);
+    }
+    this.crossing = new Crossing(this.track, this.scene, (course.seed ?? 1) + 313);
     const surface = buildSurfaceRoad(this.track, w);
     // 信号は「近くの数個だけ」見た目を更新するので、一覧を持っておきます
     this.signals = (surface.userData && surface.userData.signals) || [];
@@ -910,8 +916,23 @@ export class Game {
       }
     }
 
-    // --- 一般道の信号
-    if (this.mode === 'racing') this.updateSignals(dt, pv);
+    // --- 一般道の信号と、交差点を横切る車
+    if (this.mode === 'racing') {
+      this.updateSignals(dt, pv);
+      this.crossing.update(dt, pv, this.signals, this.signalTime);
+      const cross = this.crossing.hitTest(pv);
+      if (cross > 0) {
+        // 横から出てきた車にぶつかった。赤信号を無視した結果です
+        pv.vx *= 0.35;
+        pv.vy += (Math.random() - 0.5) * 4;
+        this.shake = Math.max(this.shake, clamp(cross, 0.3, 1));
+        this.emitSparks(pv, 16);
+        audio && audio.crash(cross);
+        this.police.impact(cross * 2);
+        this.jobs.hit();
+        this.onEvent('crossing-hit', { severity: cross });
+      }
+    }
 
     // --- 依頼の進行
     if (this.mode === 'racing') this.jobs.update(dt, pv, this.track);

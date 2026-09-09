@@ -70,6 +70,21 @@ export class HUD {
   setTrack(track) {
     this.track = track;
     this._buildMinimapPath();
+    // 一般道の形。走っている場所が地図に無いと、自分がどこにいるか分かりません
+    this.surfPath = null;
+    if (track.surfaceAt && track.surfaceNodes) {
+      const pts = [];
+      const sm = {};
+      const N = 160;
+      for (let i = 0; i <= N; i++) {
+        const s2 = (i / N) * track.length;
+        const sf = track.surfaceAt(s2);
+        if (!sf) { pts.length = 0; break; }
+        track.sample(s2, sm);
+        pts.push(sm.pos.x + sm.lat.x * sf.u, sm.pos.z + sm.lat.z * sf.u);
+      }
+      if (pts.length) this.surfPath = pts;
+    }
   }
 
   _buildMinimapPath() {
@@ -179,6 +194,18 @@ export class HUD {
     g.lineWidth = 2.4;
     path(); g.stroke();
 
+    // 一般道（本線の外側を一周している側道）
+    if (this.surfPath) {
+      g.beginPath();
+      for (let i = 0; i < this.surfPath.length; i += 2) {
+        const [x, y] = this._mmPt(this.surfPath[i], this.surfPath[i + 1], w, h);
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.closePath();
+      g.strokeStyle = 'rgba(6,10,18,0.8)'; g.lineWidth = 3.4; g.stroke();
+      g.strokeStyle = 'rgba(120,148,180,0.75)'; g.lineWidth = 1.2; g.stroke();
+    }
+
     // トンネル区間だけ色を変えて、いま自分がどこを走っているか分かるように
     g.strokeStyle = 'rgba(255,180,60,0.9)';
     g.lineWidth = 2.6;
@@ -193,9 +220,9 @@ export class HUD {
       g.stroke();
     }
 
-    const dot = (s, color, r = 3.4, ring = false) => {
+    const dot = (s, color, r = 3.4, ring = false, u = 0) => {
       const sm = t.sample(s, this._dotTmp || (this._dotTmp = {}));
-      const [x, y] = this._mmPt(sm.pos.x, sm.pos.z, w, h);
+      const [x, y] = this._mmPt(sm.pos.x + sm.lat.x * u, sm.pos.z + sm.lat.z * u, w, h);
       if (ring) {
         g.strokeStyle = 'rgba(0,0,0,0.85)';
         g.lineWidth = 3;
@@ -230,7 +257,8 @@ export class HUD {
       g.beginPath(); g.arc(x, y, 2.6, 0, Math.PI * 2); g.fill();
     }
     for (const o of others) dot(o.s, o.color || '#ff5a4d', 3.6, true);
-    dot(playerS, '#5ff0ff', 4.6, true);
+    // 一般道にいるときは、外側の線の上に自車を出します
+    dot(playerS, '#5ff0ff', 4.6, true, this.playerOffMain ? playerU : 0);
   }
 
   /** 地図に出すパーキングエリアの位置（コースを切り替えるたびに渡します） */
@@ -344,6 +372,7 @@ export class HUD {
     this.el.gear.textContent = v.gear <= 0 ? 'N' : String(v.gear);
     this.el.boostBar.style.width = `${clamp(v.boost, 0, 1) * 100}%`;
     this.drawTacho(v.rpm, v.spec.redline, v.gear, v.boost);
+    this.playerOffMain = !!(v.onRamp || v.onSurface);
     this.drawMinimap(v.s, v.u, st.others || []);
     if (this.el.time) this.el.time.textContent = st.timeText || '';
     if (this.el.best) this.el.best.textContent = st.bestText || '';

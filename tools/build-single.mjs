@@ -12,7 +12,7 @@ const threeBase = process.argv[3] || 'https://cdn.jsdelivr.net/npm/three@0.160.0
 // （入れ忘れは下の検査で必ず落ちます）。
 const ORDER = [
   'util', 'courses', 'cars', 'carModel', 'track', 'vehicle', 'actors', 'scenery',
-  'ai', 'police', 'jobs', 'traffic', 'audio', 'input', 'hud', 'story', 'save', 'game', 'main',
+  'ai', 'police', 'jobs', 'traffic', 'crossing', 'audio', 'input', 'hud', 'story', 'save', 'game', 'main',
 ];
 
 // ローカルの vendor/addons は平坦だが、npm 配布は postprocessing/ 配下にある
