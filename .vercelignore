@@ -1,0 +1,5 @@
+# 配信しないもの
+docs/
+tools/
+test-single.html
+README.md
