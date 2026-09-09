@@ -8180,11 +8180,23 @@ class Game {
     // --- 物理
     // 補助が「どこへ戻すか」を決めます。いま自分がいる場所にいちばん近い車線の中心。
     // 元いた車線へ引き戻すのではなく近いほうへ寄せるので、車線変更の邪魔になりません。
-    let lane = LANE_U[0];
-    for (const u of LANE_U) if (Math.abs(pv.u - u) < Math.abs(pv.u - lane)) lane = u;
-    // 追越車線の中心(-2.9)ちょうどに寄せると中央分離帯まで1mしかなく、
-    // わずかな振れで擦り続けます。分離帯側だけ余裕を持たせます（AI と同じ扱い）。
-    pv.laneU = clamp(lane, -10.6, -3.4);
+    // いる場所によって「戻る先」は変わります。本線の車線を狙わせたままだと、
+    // 一般道（u≒-47）では40m内側へ引っ張り続け、ずっと縁石に押しつけられます。
+    if (pv.onAlley) {
+      pv.laneU = undefined;                 // 路地は道と直角。戻す先がありません
+    } else if (pv.onSurface && this.track.surfaceAt) {
+      const sf = this.track.surfaceAt(pv.s);
+      pv.laneU = sf ? sf.u - 1.7 : undefined;   // 一般道は左側の車線
+    } else if (pv.onRamp && this.track.rampAt) {
+      const r = this.track.rampAt(pv.s);
+      pv.laneU = r ? clamp(pv.u, r.outerU + 2, Math.min(r.innerU, -(ROAD.halfRoad - 0.35)) - 2) : undefined;
+    } else {
+      let lane = LANE_U[0];
+      for (const u of LANE_U) if (Math.abs(pv.u - u) < Math.abs(pv.u - lane)) lane = u;
+      // 追越車線の中心(-2.9)ちょうどに寄せると中央分離帯まで1mしかなく、
+      // わずかな振れで擦り続けます。分離帯側だけ余裕を持たせます（AI と同じ扱い）。
+      pv.laneU = clamp(lane, -10.6, -3.4);
+    }
 
     pv.update(dt, { wet: this.wet });
     const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
