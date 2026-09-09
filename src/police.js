@@ -177,7 +177,15 @@ export class Police {
     }
   }
 
-  /** 一番近いパトカーとの距離[m]（見つからなければ Infinity） */
+  /**
+   * 一番近いパトカーとの距離[m]（見つからなければ Infinity）。
+   *
+   * 進行方向の差だけで測ってはいけません。パトカーは本線しか走れないので、
+   * 一般道やパーキングエリアにいる自車とは s が同じでも 11m 下にいます。
+   * s だけで測っていたため、真上の本線にいるパトカーに「連行」されていました
+   * （「PAへ逃げ込めば巻ける」という作りと正面から矛盾していました）。
+   * 横位置の差も入れて測ります。
+   */
   nearest(v) {
     const L = this.track.length;
     let best = Infinity;
@@ -185,7 +193,7 @@ export class Police {
       let d = u.actor.vehicle.s - v.s;
       if (d > L / 2) d -= L;
       if (d < -L / 2) d += L;
-      best = Math.min(best, Math.abs(d));
+      best = Math.min(best, Math.hypot(d, u.actor.vehicle.u - v.u));
     }
     return best;
   }

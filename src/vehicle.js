@@ -77,6 +77,10 @@ export class Vehicle {
     this.onRamp = false;           // いま出口ランプ（＝パーキングエリア）の上にいるか
     this.onSurface = false;        // いま一般道（側道）にいるか
     this.zone = 'road';            // 'road' | 'ramp' | 'surf'
+    // どこまで出て行けるか。0=本線のみ / 1=ランプとPAまで / 2=一般道まで。
+    // タイムアタックでコースの外へ出られるとラップの意味がなくなり、
+    // バトル中に一般道まで行けると、相手の来られない道で延々と粘れます。
+    this.roam = 2;
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: 0, up: false, down: false };
     this._sm = {};          // track.sample 用の使い回し
     this._p = new THREE.Vector3();
@@ -426,9 +430,10 @@ export class Vehicle {
     //   側道 → ランプ … 広場の幅に入る
     //
     // AI とデモ走行は本線から出しません。
-    const canLeave = !(this.isAI || this.autoSteer) && !!track.rampAt;
+    const roam = this.roam === undefined ? 2 : this.roam;
+    const canLeave = !(this.isAI || this.autoSteer) && !!track.rampAt && roam >= 1;
     const ramp = canLeave ? track.rampAt(pr.s) : null;
-    const surf = canLeave && track.surfaceAt ? track.surfaceAt(pr.s) : null;
+    const surf = (canLeave && roam >= 2 && track.surfaceAt) ? track.surfaceAt(pr.s) : null;
     let rampH = 0;
     const roadLo = lo;
     if (!canLeave) {

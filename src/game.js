@@ -508,6 +508,9 @@ export class Game {
     // 勝負にならず、記録も意味がなくなります。
     this.police.clear();
     this.police.enabled = (kind === 'free');
+    // どこまで出て行けるか。タイムアタックは本線だけ、バトルはPAまで
+    // （逃げ込んで降りるため）、フリーランは一般道まで。
+    pv.roam = kind === 'timeattack' ? 0 : kind === 'battle' ? 1 : 2;
     if (kind !== 'free') this.jobs.reset();
     this.mode = this.state.countdown > 0 ? 'countdown' : 'racing';
     if (opts.camMode !== undefined) this.userCamMode = opts.camMode;
