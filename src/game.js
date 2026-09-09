@@ -801,10 +801,13 @@ export class Game {
       pv.input.steer = -s.steer;   // 入力は右が＋、車両モデルは左が＋
       pv.assist = this.settings.assist !== false;
       pv.input.handbrake = s.handbrake;
+      // R の出し入れ。手動変速でもこの操作は使えるようにしておきます
+      // （行き止まりの路地やPAで、シフト操作を知らなくても抜け出せます）
+      pv.updateReverse();
       if (this.settings.at) {
         if (pv.shiftTimer <= 0) {
           const boostBefore = pv.boost;
-          if (pv.rpm > pv.spec.redline * 0.955 && pv.gear < pv.maxGear) {
+          if (pv.gear > 0 && pv.rpm > pv.spec.redline * 0.955 && pv.gear < pv.maxGear) {
             if (pv.shiftUp() && boostBefore > 0.55) {
               this.emitBackfire(this.player);
               audio && audio.blowoff(boostBefore);

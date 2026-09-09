@@ -370,7 +370,7 @@ export class HUD {
     this._resizeCanvases();
     const v = st.player;
     this.el.speed.textContent = String(Math.round(v.speedKmh)).padStart(3, ' ');
-    this.el.gear.textContent = v.gear <= 0 ? 'N' : String(v.gear);
+    this.el.gear.textContent = v.gear === -1 ? 'R' : v.gear <= 0 ? 'N' : String(v.gear);
     this.el.boostBar.style.width = `${clamp(v.boost, 0, 1) * 100}%`;
     this.drawTacho(v.rpm, v.spec.redline, v.gear, v.boost);
     this.playerOffMain = !!(v.onRamp || v.onSurface);

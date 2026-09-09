@@ -53,6 +53,7 @@ export class Vehicle {
     this.vy = 0;           // 車体左右方向の速度[m/s]（右が＋）
     this.yawRate = 0;
     this.gear = 1;         // 1..N（0はニュートラル、-1はR）
+    this.revArm = false;   // ブレーキを踏み直したか（Rへ入る合図）
     this.rpm = spec.idle;
     this.boost = 0;
     this.shiftTimer = 0;
@@ -120,34 +121,79 @@ export class Vehicle {
     this.roadHeading = sm.heading; this.roadCurv = sm.curv;
     this.vx = 0; this.vy = 0; this.yawRate = 0;
     this.gear = 1; this.rpm = this.spec.idle; this.boost = 0;
+    this.revArm = false;
+    // 置き直した車のタイヤは滑っていません。ここを残すと、直前の
+    // ドリフトの滑り量を引きずって、置いた先でタイヤ痕が出ます。
+    this.slipRear = 0; this.slipFront = 0; this.wheelSpin = 0;
+    this.onWall = 0;
   }
 
   get speedKmh() { return Math.abs(this.vx) * KMH; }
 
+  /** R のギア比。実車でも1速より少し低い（低速で力が出る）のが普通です。 */
+  reverseRatio() { return this.spec.gears[0] * 1.08; }
+
   gearRatio() {
+    // R は比を負にします。駆動力の式がそのまま「後ろ向きの力」になります。
+    if (this.gear === -1) return -this.reverseRatio();
     if (this.gear <= 0) return 0;
     return this.spec.gears[this.gear - 1];
   }
 
   /** 現ギアでの理論回転数 */
   rpmFor(v, gear) {
-    const gr = gear <= 0 ? 0 : this.spec.gears[gear - 1];
+    const gr = gear === -1 ? this.reverseRatio() : (gear <= 0 ? 0 : this.spec.gears[gear - 1]);
     if (!gr) return this.spec.idle;
     return Math.abs(v) / this.spec.wheelR * gr * this.final * RADS_TO_RPM;
   }
 
   shiftUp() {
-    if (this.gear < this.maxGear && this.shiftTimer <= 0) {
+    if (this.shiftTimer > 0) return false;
+    // R からは 0（ニュートラル）を飛ばして1速へ戻します
+    if (this.gear === -1) { this.gear = 1; this.shiftTimer = 0.16; return true; }
+    if (this.gear < this.maxGear) {
       this.gear++; this.shiftTimer = 0.16; return true;
     }
     return false;
   }
   shiftDown() {
-    if (this.gear > 1 && this.shiftTimer <= 0) {
+    if (this.shiftTimer > 0) return false;
+    // 1速で止まっているときだけ R へ落とせます（走行中は入りません）
+    if (this.gear === 1) {
+      if (!this.isAI && !this.autoSteer && Math.abs(this.vx) < 0.4) {
+        this.gear = -1; this.shiftTimer = 0.16; return true;
+      }
+      return false;
+    }
+    if (this.gear > 1) {
       const nr = this.rpmFor(this.vx, this.gear - 1);
       if (nr < this.spec.redline * 1.06) { this.gear--; this.shiftTimer = 0.16; return true; }
     }
     return false;
+  }
+
+  /**
+   * 自動変速での R の出し入れ。
+   *
+   * 「止まっているあいだブレーキを踏んでいたら後退」にすると、信号待ちで
+   * 勝手に下がってしまいます。そこで一度ブレーキを離してから踏み直した
+   * ときだけ R に入れます。踏み直すのは明らかに意図のある操作なので、
+   * 待っているだけの人が巻き込まれません。
+   *
+   * R では前後のペダルが入れ替わります（ブレーキ＝後ろへ／アクセル＝止まる）。
+   * 「Sを踏み直してそのまま踏み続けると下がっていく」という一続きの操作に
+   * なるので、持ち替えが要りません。
+   */
+  updateReverse() {
+    const inp = this.input;
+    const stopped = Math.abs(this.vx) < 0.25;
+    if (this.gear === -1) {
+      if (inp.throttle > 0.1 && stopped) { this.gear = 1; this.revArm = false; }
+      return;
+    }
+    if (this.gear !== 1 || !stopped) { this.revArm = false; return; }
+    if (inp.brake < 0.05) this.revArm = true;
+    else if (this.revArm && inp.brake > 0.3) { this.gear = -1; this.revArm = false; }
   }
 
   /** dt はサブステップ済みの短い時間刻み */
@@ -261,28 +307,32 @@ export class Vehicle {
     const cut = this.shiftTimer > 0 ? 0 : 1;
 
     // --- エンジン
+    // R では前後のペダルが入れ替わります（ブレーキ＝後ろへ／アクセル＝止まる）
+    const rev = this.gear === -1;
+    const thr = rev ? inp.brake : inp.throttle;
+    const brk = rev ? inp.throttle : inp.brake;
     const theoretical = this.rpmFor(this.vx, this.gear);
     const targetRpm = clamp(theoretical, S.idle, S.redline * 1.07);
     this.rpm = damp(this.rpm, this.shiftTimer > 0 ? Math.max(S.idle, targetRpm * 0.86) : targetRpm, 18, dt);
 
     const x = this.rpm / S.redline;
     // ターボの過給（アクセル量と回転数で立ち上がる）
-    const boostTarget = inp.throttle * clamp((this.rpm - S.redline * 0.22) / (S.redline * 0.36), 0, 1);
+    const boostTarget = thr * clamp((this.rpm - S.redline * 0.22) / (S.redline * 0.36), 0, 1);
     const lag = boostTarget > this.boost ? S.lag : S.lag * 0.35;
     this.boost = damp(this.boost, boostTarget, 1 / Math.max(0.05, lag), dt);
     const boostMul = S.turbo > 0
       ? (1 - 0.42 * S.turbo) + 0.42 * S.turbo * this.boost
       : 1;
 
-    let engineTq = S.torque * torqueShape(x) * boostMul * inp.throttle * cut;
-    if (inp.throttle < 0.02) engineTq = -S.torque * 0.055 * clamp(x, 0, 1.1); // エンジンブレーキ
+    let engineTq = S.torque * torqueShape(x) * boostMul * thr * cut;
+    if (thr < 0.02) engineTq = -S.torque * 0.055 * clamp(x, 0, 1.1); // エンジンブレーキ
     // 出力の頭打ち（PS換算）
     const wRad = Math.max(1, this.rpm / RADS_TO_RPM);
     const maxTq = (S.power * 735.49875) / wRad;
     if (engineTq > maxTq) engineTq = maxTq;
 
     const gr = this.gearRatio();
-    let Fdrive = gr > 0 ? (engineTq * gr * this.final * DRIVE_EFF) / S.wheelR : 0;
+    let Fdrive = gr !== 0 ? (engineTq * gr * this.final * DRIVE_EFF) / S.wheelR : 0;
 
     // --- 空力
     const dragK = 0.5 * RHO * S.cd * S.area * (1 - this.slipstream * 0.42);
@@ -292,7 +342,7 @@ export class Vehicle {
 
     // --- ブレーキ
     const brakeMax = S.grip * m * G * 1.02;
-    let Fbrake = inp.brake * brakeMax;
+    let Fbrake = brk * brakeMax;
 
     // --- 荷重
     const ax = this.lastAx;
@@ -349,7 +399,7 @@ export class Vehicle {
     this.vy += ayn * dt;
     this.yawRate += yawAcc * dt;
     // 低速の暴れ止め
-    if (Math.abs(this.vx) < 0.6 && inp.throttle < 0.05) {
+    if (Math.abs(this.vx) < 0.6 && thr < 0.05) {
       this.vx *= 0.90; this.vy *= 0.75; this.yawRate *= 0.80;
     }
     this.yawRate *= Math.exp(-dt * 0.55);
@@ -373,7 +423,7 @@ export class Vehicle {
     }
     this.yawRate = clamp(this.yawRate, -4.0, 4.0);
     this.vy = clamp(this.vy, -38, 38);
-    this.vx = clamp(this.vx, -14, 130);
+    this.vx = clamp(this.vx, -8.5, 130);
 
     this.lastAx = axn;
     this.lastAy = ayn;
@@ -550,7 +600,10 @@ export class Vehicle {
     this.u = targetU;
 
     // 衝撃：向かっていたぶんだけ前進速度も失う（真横から当たるほど大きい）
-    this.vx = Math.max(0, this.vx - Math.min(this.vx * 0.30, into * 0.55));
+    // 後退中も同じだけ失わせます。符号ごと 0 に丸めると R が効かなくなります。
+    const sgnV = Math.sign(this.vx) || 1;
+    const lossV = Math.min(Math.abs(this.vx) * 0.30, into * 0.55);
+    this.vx = sgnV * Math.max(0, Math.abs(this.vx) - lossV);
     // 擦り：時間あたりのゆるい摩擦。押し付けが強いほど効きます。
     this.vx *= Math.exp(-(0.35 + into * 0.30) * dt);
     // 反発はごくわずか。壁伝いに滑る挙動になります。

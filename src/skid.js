@@ -90,6 +90,10 @@ export class Skid {
     const prev = this._prev;
     this._prev = cur;
     if (!prev) return;
+    // 車が飛んだとき（PAからの復帰や再スタート）は、前回の位置と繋ぐと
+    // 地図を横切る帯が1枚できてしまいます。離れていたら描かずに繋ぎ直します。
+    const jump = Math.abs(cur.lx - prev.lx) + Math.abs(cur.ly - prev.ly) + Math.abs(cur.lz - prev.lz);
+    if (jump > 8) return;
     // 前回と今回の4点で1枚の帯を作ります
     const i = this.n;
     const o = i * 12;
