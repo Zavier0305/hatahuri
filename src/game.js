@@ -17,6 +17,10 @@ import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
 import { CARS } from './cars.js';
+// 信号の3色。消えているときは灯具そのものの暗い色にします。
+const SIGNAL_LIT = [new THREE.Color(0x2cff7a), new THREE.Color(0xffcc22), new THREE.Color(0xff3b26)];
+const SIGNAL_DARK = new THREE.Color(0x0a0c0f);
+
 const CAM_MODES = [
   { id: 'chase', label: '追走', dist: 6.6, height: 2.15, fov: 62, look: 9 },
   { id: 'far', label: 'ロング', dist: 10.5, height: 3.4, fov: 58, look: 12 },
@@ -205,6 +209,7 @@ export class Game {
     const surface = buildSurfaceRoad(this.track, w);
     // 信号は「近くの数個だけ」見た目を更新するので、一覧を持っておきます
     this.signals = (surface.userData && surface.userData.signals) || [];
+    this.signalLamps = (surface.userData && surface.userData.signalLamps) || null;
     this.signalTime = 0;
     this._prevSurfS = undefined;
     buildBridges(this.track, w);
@@ -1073,7 +1078,8 @@ export class Game {
         light.position.copy(lsm.pos).addScaledVector(lsm.lat, sf.u)
           .addScaledVector(lsm.up, sf.h + 8.0);
         const d = Math.abs(ls - v.s);
-        light.intensity = clamp(1 - d / 55, 0, 1) * 150;
+        // 一般道は本線より暗いので、強めに当てます
+        light.intensity = clamp(1 - d / 60, 0, 1) * 190;
         light.color.setHex(0xffe2b4);
       }
     } else if (v.onRamp && this.track.rampAt) {
@@ -1090,7 +1096,8 @@ export class Game {
           .addScaledVector(lsm.lat, mid)
           .addScaledVector(lsm.up, rampHeightAtU(rr, mid) + 8.5);
         const d = Math.abs(ls - v.s);
-        light.intensity = clamp(1 - d / 55, 0, 1) * 165;
+        // 広場も同じく強めに
+        light.intensity = clamp(1 - d / 60, 0, 1) * 230;
         light.color.setHex(0xffd9a0);
       }
     }
@@ -1229,20 +1236,24 @@ export class Game {
     const L = this.track.length;
     const wrap = (d) => (d > L / 2 ? d - L : d < -L / 2 ? d + L : d);
 
+    // 3色の灯は1つのインスタンスメッシュにまとまっているので、
+    // 色を差し替えるだけで済みます（信号49個ぶんで描画命令1つ）。
+    const lamps = this.signalLamps;
+    let dirty = false;
     for (const sg of list) {
       const d = wrap(sg.s - v.s);
-      if (Math.abs(d) > SIGNAL.near) {
-        if (sg.lit !== 'off') { sg.lit = 'off'; for (const m of sg.lamps) m.emissiveIntensity = 0.08; }
-        continue;
-      }
-      const ph = signalPhase(sg.s, this.signalTime);
-      if (sg.lit !== ph) {
-        sg.lit = ph;
-        sg.lamps[0].emissiveIntensity = ph === 'green' ? 5.5 : 0.08;
-        sg.lamps[1].emissiveIntensity = ph === 'yellow' ? 5.5 : 0.08;
-        sg.lamps[2].emissiveIntensity = ph === 'red' ? 5.5 : 0.08;
+      const ph = Math.abs(d) > SIGNAL.near ? 'off' : signalPhase(sg.s, this.signalTime);
+      if (sg.lit === ph) continue;
+      sg.lit = ph;
+      if (lamps) {
+        const on = ph === 'green' ? 0 : ph === 'yellow' ? 1 : ph === 'red' ? 2 : -1;
+        for (let k = 0; k < 3; k++) {
+          lamps.setColorAt(sg.i * 3 + k, k === on ? SIGNAL_LIT[k] : SIGNAL_DARK);
+        }
+        dirty = true;
       }
     }
+    if (dirty && lamps && lamps.instanceColor) lamps.instanceColor.needsUpdate = true;
 
     if (!v.onSurface || prev === undefined) return;
     const ds = wrap(v.s - prev);

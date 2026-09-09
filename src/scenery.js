@@ -1294,121 +1294,189 @@ export function buildSurfaceRoad(track, scene) {
   strip((r) => IN(r) - 0.5, IN, 0.10, kerb);              // 内側の縁石
   strip((r) => r.sf.u - 0.09, (r) => r.sf.u + 0.09, 0.012, line);   // センターライン
 
-  // ---- 路地。一般道から直角に折れて入る、行き止まりの短い道
-  for (const a2 of (track.alleys || [])) {
-    track.sample(a2.s, sm);
-    const g7 = new THREE.Group();
-    g7.position.copy(sm.pos);
-    const m7 = new THREE.Matrix4();
-    m7.makeBasis(sm.lat, sm.up, new THREE.Vector3().copy(sm.tan).negate());
-    g7.quaternion.setFromRotationMatrix(m7);
-    const W = ALLEY.half * 2;
-    // 高さは横位置ごとに変わります（バンクを打ち消して水平に保つため）。
-    // 一枚板で置くと、路地が5mの坂になります。
-    const H = (u) => levelH(sm, u, a2.drop);
-    const hIn = H(a2.uInner), hOut = H(a2.uOuter);
-    /** 路地に沿った帯を、両端の高さを合わせて張ります */
-    const slab = (uA, uB, yOff, th, w, mat) => {
-      const pos = [], idx = [];
-      for (let i = 0; i < 2; i++) {
-        const u = i === 0 ? uA : uB;
-        const y = H(u) + yOff;
-        for (let q = 0; q < 2; q++) {
-          const z = (q === 0 ? -1 : 1) * w * 0.5;
-          pos.push(u, y, z);
+  // ---- 路地と信号
+  //
+  // ここは点数が多い場所です（信号49・路地17のコースで、素朴に作ると
+  // メッシュが792個＝そのぶん描画命令が増えます）。
+  //   ・平らな塗り（横断歩道・停止線・路地の舗装）は1つの形にまとめる
+  //   ・柱や灯具のように同じ形が並ぶものはインスタンス化する
+  //   ・信号の3色だけは色が変わるので、インスタンスごとの色で塗る
+  // これで10個ほどに収まります。
+  {
+    const sm2 = {};
+    /** (s,u) の点を世界座標へ。高さは水平を保つように補正します。 */
+    const P = (s2, u, drop, yOff = 0) => {
+      const m = track.sample(s2, sm2);
+      const h = levelH(m, u, drop) + yOff;
+      return [
+        m.pos.x + m.lat.x * u + m.up.x * h,
+        m.pos.y + m.lat.y * u + m.up.y * h,
+        m.pos.z + m.lat.z * u + m.up.z * h,
+      ];
+    };
+    /** まとめて1つの形にするための入れ物 */
+    const bin = () => ({ pos: [], idx: [] });
+    const quad = (b, p0, p1, p2, p3) => {
+      const n = b.pos.length / 3;
+      b.pos.push(...p0, ...p1, ...p2, ...p3);
+      b.idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
+    };
+    const build = (b, mat) => {
+      if (!b.pos.length) return;
+      const g8 = new THREE.BufferGeometry();
+      g8.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
+      g8.setIndex(b.idx);
+      g8.computeVertexNormals();
+      g8.computeBoundingSphere();
+      group.add(new THREE.Mesh(g8, mat));
+    };
+
+    const paintBin = bin();      // 白い塗り（横断歩道・停止線）
+    const alleyBin = bin();      // 路地の舗装
+    const kerbBin = bin();       // 路地の縁石
+    const wallBin = bin();       // 路地の突き当たり
+
+    const paintM = new THREE.MeshStandardMaterial({
+      color: 0xcfd3ca, roughness: 0.75, metalness: 0.0,
+      emissive: 0x24261f, emissiveIntensity: 0.5, side: THREE.DoubleSide,
+    });
+    const wallM = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.9, metalness: 0.05 });
+    const poleM = new THREE.MeshStandardMaterial({ color: 0x4a4f57, roughness: 0.7, metalness: 0.3 });
+
+    // ---- 路地
+    for (const a2 of (track.alleys || [])) {
+      const A = ALLEY.half;
+      const uIn = a2.uInner, uOut = a2.uOuter, d = a2.drop;
+      quad(alleyBin,
+        P(a2.s - A, uIn, d, 0.02), P(a2.s - A, uOut, d, 0.02),
+        P(a2.s + A, uOut, d, 0.02), P(a2.s + A, uIn, d, 0.02));
+      for (const side of [-1, 1]) {
+        const z0 = side * (A - 0.5), z1 = side * A;
+        quad(kerbBin,
+          P(a2.s + z0, uIn, d, 0.18), P(a2.s + z0, uOut, d, 0.18),
+          P(a2.s + z1, uOut, d, 0.18), P(a2.s + z1, uIn, d, 0.18));
+      }
+      // 突き当たりの壁（立ち上がり）
+      quad(wallBin,
+        P(a2.s - A, uOut, d, 0.0), P(a2.s + A, uOut, d, 0.0),
+        P(a2.s + A, uOut, d, 4.4), P(a2.s - A, uOut, d, 4.4));
+    }
+
+    // ---- 信号：横断歩道と停止線
+    const sigList = signalPoints(track).map((s2) => ({ s: s2, sf: track.surfaceAt(s2) }))
+      .filter((x) => x.sf);
+    for (const { s: s2, sf } of sigList) {
+      const uL = sf.u - sf.half + 0.5, uR = sf.u + sf.half - 0.5;
+      for (let k = -3; k <= 3; k++) {
+        const c = s2 + k * 1.35;
+        quad(paintBin,
+          P(c - 0.28, uL, sf.drop, 0.02), P(c - 0.28, uR, sf.drop, 0.02),
+          P(c + 0.28, uR, sf.drop, 0.02), P(c + 0.28, uL, sf.drop, 0.02));
+      }
+      // 停止線（自分の車線側だけ）
+      quad(paintBin,
+        P(s2 + 5.8, sf.u - sf.half + 0.4, sf.drop, 0.02), P(s2 + 5.8, sf.u - 0.2, sf.drop, 0.02),
+        P(s2 + 6.2, sf.u - 0.2, sf.drop, 0.02), P(s2 + 6.2, sf.u - sf.half + 0.4, sf.drop, 0.02));
+    }
+
+    build(paintBin, paintM);
+    build(alleyBin, road);
+    build(kerbBin, kerb);
+    build(wallBin, wallM);
+
+    // ---- 同じ形が並ぶものはインスタンスで
+    const mtx = new THREE.Matrix4();
+    const quat = new THREE.Quaternion();
+    const one = new THREE.Vector3(1, 1, 1);
+    const pv = new THREE.Vector3();
+    const basis = new THREE.Matrix4();
+    const back = new THREE.Vector3();
+    const setAt = (im, i, s2, u, drop, yOff) => {
+      const m = track.sample(s2, sm2);
+      const h = levelH(m, u, drop) + yOff;
+      pv.copy(m.pos).addScaledVector(m.lat, u).addScaledVector(m.up, h);
+      basis.makeBasis(m.lat, m.up, back.copy(m.tan).negate());
+      quat.setFromRotationMatrix(basis);
+      mtx.compose(pv, quat, one);
+      im.setMatrixAt(i, mtx);
+    };
+    const addInstanced = (geo, mat, n) => {
+      const im = new THREE.InstancedMesh(geo, mat, Math.max(1, n));
+      im.count = n;
+      group.add(im);
+      return im;
+    };
+
+    const nSig = sigList.length;
+    if (nSig > 0) {
+      const poleG = new THREE.CylinderGeometry(0.13, 0.16, 6.2, 6); poleG.translate(0, 3.1, 0);
+      const armG = new THREE.BoxGeometry(6.0, 0.16, 0.16);
+      const boxG = new THREE.BoxGeometry(1.5, 0.5, 0.30);
+      const poles = addInstanced(poleG, poleM, nSig);
+      const arms = addInstanced(armG, poleM, nSig);
+      const boxes = addInstanced(boxG, wallM, nSig);
+      // 3色の灯。色を変えるので、インスタンスごとの色で塗ります。
+      // 明かりそのものなので陰影は要りません（MeshBasic）。
+      const lampG = new THREE.BoxGeometry(0.34, 0.34, 0.10);
+      const lampM = new THREE.MeshBasicMaterial({ toneMapped: false });
+      const lamps = new THREE.InstancedMesh(lampG, lampM, nSig * 3);
+      lamps.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nSig * 9), 3);
+      group.add(lamps);
+      const dark = new THREE.Color(0x0a0c0f);
+      for (let i = 0; i < nSig; i++) {
+        const { s: s2, sf } = sigList[i];
+        const inner = sf.u + sf.half;
+        setAt(poles, i, s2 + 5.4, inner + 0.6, sf.drop, 0);
+        setAt(arms, i, s2 + 5.4, inner + 0.6 - 3.0, sf.drop, 6.0);
+        setAt(boxes, i, s2 + 5.4, sf.u + 1.0, sf.drop, 5.7);
+        for (let k = 0; k < 3; k++) {
+          setAt(lamps, i * 3 + k, s2 + 5.28, sf.u + 1.0 + (k - 1) * 0.5, sf.drop, 5.7);
+          lamps.setColorAt(i * 3 + k, dark);
         }
       }
-      idx.push(0, 1, 3, 0, 3, 2);
-      const gg = new THREE.BufferGeometry();
-      gg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      gg.setIndex(idx);
-      gg.computeVertexNormals();
-      gg.computeBoundingSphere();
-      const m = new THREE.Mesh(gg, mat);
-      g7.add(m);
-      return m;
-    };
-    slab(a2.uInner, a2.uOuter, 0.02, 0, W, road);
-    // 両側の縁石（細い帯を2本）
-    for (const dz of [-ALLEY.half + 0.25, ALLEY.half - 0.25]) {
-      const k = new THREE.Mesh(new THREE.BoxGeometry(ALLEY.len, 0.16, 0.5), kerb);
-      k.position.set((a2.uInner + a2.uOuter) * 0.5, (hIn + hOut) * 0.5 + 0.08, dz);
-      k.rotation.z = Math.atan2(hOut - hIn, a2.uOuter - a2.uInner);
-      g7.add(k);
+      poles.instanceMatrix.needsUpdate = true;
+      arms.instanceMatrix.needsUpdate = true;
+      boxes.instanceMatrix.needsUpdate = true;
+      lamps.instanceMatrix.needsUpdate = true;
+      lamps.instanceColor.needsUpdate = true;
+      group.userData.signals = sigList.map(({ s: s2 }, i) => ({ s: s2, i, lit: null }));
+      group.userData.signalLamps = lamps;
+    } else {
+      group.userData.signals = [];
     }
-    // 突き当たりの壁
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.6, 4.4, W),
-      new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.9, metalness: 0.05 }));
-    wall.position.set(a2.uOuter - 0.3, hOut + 2.2, 0);
-    g7.add(wall);
-    // 奥の街灯（ここに入れることを気づかせる目印）
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.18, 0.5),
-      new THREE.MeshStandardMaterial({ color: 0xffe7bb, emissive: 0xffd79a, emissiveIntensity: 3.4 }));
-    lamp.position.set(a2.uOuter + 3.5, H(a2.uOuter + 3.5) + 5.0, 0);
-    g7.add(lamp);
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 5.2, 6),
-      new THREE.MeshStandardMaterial({ color: 0x4a4f57, roughness: 0.7, metalness: 0.3 }));
-    pole.position.set(a2.uOuter + 3.5, H(a2.uOuter + 3.5) + 2.6, ALLEY.half - 0.6);
-    g7.add(pole);
-    group.add(g7);
-  }
 
-  // ---- 信号と交差点
-  // 色は game 側が毎フレーム決めます（近くの数個だけ）。
-  {
-    const pole = new THREE.MeshStandardMaterial({ color: 0x4a4f57, roughness: 0.7, metalness: 0.3 });
-    const hood = new THREE.MeshStandardMaterial({ color: 0x23272d, roughness: 0.8, metalness: 0.1 });
-    const cross = new THREE.MeshStandardMaterial({
-      color: 0xcfd3ca, roughness: 0.75, emissive: 0x24261f, emissiveIntensity: 0.5, side: THREE.DoubleSide,
-    });
-    const lights = [];
-    const basis = new THREE.Matrix4(), back = new THREE.Vector3();
-    for (const s2 of signalPoints(track)) {
-      const sf = track.surfaceAt(s2);
-      if (!sf) continue;
-      track.sample(s2, sm);
-      const g6 = new THREE.Group();
-      g6.position.copy(sm.pos);
-      basis.makeBasis(sm.lat, sm.up, back.copy(sm.tan).negate());
-      g6.quaternion.setFromRotationMatrix(basis);
-      const inner = sf.u + sf.half;
-
-      // 横断歩道（ゼブラ）。信号の手前が交差点だと分かるように
-      for (let k = -3; k <= 3; k++) {
-        const z = new THREE.Mesh(new THREE.BoxGeometry(sf.half * 2 - 1.0, 0.02, 0.55), cross);
-        z.position.set(sf.u, sf.h + 0.02, k * 1.35);
-        g6.add(z);
+    // ---- 路地の街灯（入口の目印）。柱と灯具、路面に落ちる光
+    const nAl = (track.alleys || []).length;
+    if (nAl > 0) {
+      const apG = new THREE.CylinderGeometry(0.11, 0.13, 5.2, 6); apG.translate(0, 2.6, 0);
+      const ahG = new THREE.BoxGeometry(0.9, 0.18, 0.5);
+      const ahM = new THREE.MeshBasicMaterial({ color: 0xffe7bb, toneMapped: false });
+      const poolG = new THREE.PlaneGeometry(16, 16);
+      const poolM = new THREE.MeshBasicMaterial({
+        map: glowTexture(), transparent: true, blending: THREE.AdditiveBlending,
+        depthWrite: false, opacity: 0.30,
+      });
+      const aPoles = addInstanced(apG, poleM, nAl);
+      const aHeads = addInstanced(ahG, ahM, nAl);
+      const aPools = addInstanced(poolG, poolM, nAl);
+      aPools.renderOrder = 2;
+      const flat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+      for (let i = 0; i < nAl; i++) {
+        const a2 = track.alleys[i];
+        const u = a2.uOuter + 4.0;
+        setAt(aPoles, i, a2.s + ALLEY.half - 0.6, u, a2.drop, 0);
+        setAt(aHeads, i, a2.s + ALLEY.half - 0.6, u, a2.drop, 5.0);
+        // 路面に落ちる光。実際の光源を増やすと全マテリアルが重くなるので、
+        // 落ちた光の板で「明るい場所」を作ります。
+        const m = track.sample(a2.s, sm2);
+        pv.copy(m.pos).addScaledVector(m.lat, u).addScaledVector(m.up, levelH(m, u, a2.drop) + 0.06);
+        mtx.compose(pv, flat, one);
+        aPools.setMatrixAt(i, mtx);
       }
-      // 停止線
-      const stop = new THREE.Mesh(new THREE.BoxGeometry(sf.half - 0.4, 0.02, 0.35), cross);
-      stop.position.set(sf.u - sf.half / 2 + 0.2, sf.h + 0.02, 6.0);
-      g6.add(stop);
-
-      // 柱とアーム
-      const p2 = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 6.2, 6), pole);
-      p2.position.set(inner + 0.6, sf.h + 3.1, 5.4);
-      g6.add(p2);
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(sf.half + 1.2, 0.16, 0.16), pole);
-      arm.position.set(inner + 0.6 - (sf.half + 1.2) / 2, sf.h + 6.0, 5.4);
-      g6.add(arm);
-      const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 0.30), hood);
-      box.position.set(sf.u + 1.0, sf.h + 5.7, 5.4);
-      g6.add(box);
-
-      const lamps = [];
-      for (const [dx, col] of [[-0.5, 0x22d15a], [0, 0xf0c020], [0.5, 0xff3020]]) {
-        const m = new THREE.MeshStandardMaterial({
-          color: col, emissive: col, emissiveIntensity: 0.08, roughness: 0.4,
-        });
-        const l = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.10), m);
-        l.position.set(sf.u + 1.0 + dx, sf.h + 5.7, 5.28);
-        g6.add(l);
-        lamps.push(m);
-      }
-      group.add(g6);
-      lights.push({ s: s2, lamps });
+      aPoles.instanceMatrix.needsUpdate = true;
+      aHeads.instanceMatrix.needsUpdate = true;
+      aPools.instanceMatrix.needsUpdate = true;
     }
-    group.userData.signals = lights;
   }
 
   scene.add(group);
