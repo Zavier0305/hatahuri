@@ -4,7 +4,7 @@ import { HUD } from './hud.js';
 import { Input } from './input.js';
 import { AudioEngine } from './audio.js';
 import { CARS, CAR_BY_ID } from './cars.js';
-import { RIVALS } from './story.js';
+import { RIVALS, CHAPTERS, chapterOf } from './story.js';
 import { COURSES, COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { RAMP } from './track.js';
 import { load, save, resetSave, emptyTune } from './save.js';
@@ -462,17 +462,28 @@ function renderRecords() {
 // ---------------------------------------------------------------- ストーリー
 
 function renderStory() {
-  $('#rival-list').innerHTML = RIVALS.map((r, i) => {
+  // 章の見出しを挟みます。16人がただ並ぶだけだと名簿にしか見えず、
+  // どこまで来たのかも分かりません。
+  const out = [];
+  RIVALS.forEach((r, i) => {
+    const ch = CHAPTERS.find((c) => c.from === i);
+    if (ch) {
+      // まだ誰にも出会っていない章は、見出しだけ伏せます
+      const seen = data.storyStage >= ch.from;
+      out.push(`<div class="chapter ${seen ? '' : 'locked'}">`
+        + `<b>${ch.title}</b><i>${seen ? ch.lead : '——'}</i></div>`);
+    }
     const cleared = data.cleared.includes(r.id);
     const locked = i > data.storyStage;
     const car = CAR_BY_ID[r.carId];
-    return `<div class="rival-card ${locked ? 'locked' : ''} ${cleared ? 'cleared' : ''}" data-rival="${r.id}">
+    out.push(`<div class="rival-card ${locked ? 'locked' : ''} ${cleared ? 'cleared' : ''}" data-rival="${r.id}">
       <div class="no">STAGE ${String(i + 1).padStart(2, '0')}</div>
       <div class="nm">${locked ? '？？？' : r.name}</div>
       <div class="tt">${locked ? '—' : r.title}</div>
       <div class="cr">${locked ? 'まだ出会っていない' : `${car.maker} ${car.name}<br>${car.chassis}`}</div>
-    </div>`;
-  }).join('');
+    </div>`);
+  });
+  $('#rival-list').innerHTML = out.join('');
   $$('#rival-list .rival-card').forEach((el) => el.addEventListener('click', () => {
     if (el.classList.contains('locked')) return;
     openBrief(el.dataset.rival);
@@ -490,13 +501,16 @@ function openBrief(rivalId) {
   const rEff = applyTune(rc, r.tune);
 
   const rc2 = COURSE_BY_ID[r.courseId] || COURSE_BY_ID[DEFAULT_COURSE];
-  $('#brief-title').textContent = `STAGE ${RIVALS.indexOf(r) + 1} — ${rc2.name}（${(rc2.length / 1000).toFixed(1)}km）`;
+  const ch = chapterOf(RIVALS.indexOf(r));
+  $('#brief-title').textContent =
+    `${ch.title}　STAGE ${RIVALS.indexOf(r) + 1} — ${rc2.name}（${(rc2.length / 1000).toFixed(1)}km）`;
   $('#brief-name').textContent = r.name;
   $('#brief-subtitle').textContent = r.title;
   $('#brief-car').innerHTML =
     `${rc.maker} ${rc.name}<br>${rc.chassis} / ${rc.layout}<br>` +
     `約${Math.round(rEff.power)}ps · ${Math.round(rEff.mass)}kg`;
-  $('#brief-quote').textContent = r.intro;
+  // 一度倒した相手には、別の一言を出します
+  $('#brief-quote').textContent = (data.cleared.includes(r.id) && r.rematch) ? r.rematch : r.intro;
   $('#brief-mycar').innerHTML = `${mc.maker} ${mc.name}<br>${mc.chassis} / ${mc.layout}`;
   $('#brief-mystats').innerHTML =
     `出力 ${Math.round(eff.power)} ps ／ 車重 ${Math.round(eff.mass)} kg<br>` +

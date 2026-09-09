@@ -94,6 +94,12 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .wt-note{margin-top:5px;font-size:11px;letter-spacing:.1em;color:var(--dim)}
 #hud-wanted.chase .wt-note{color:#ff8f8f}
 
+/* ストーリーの章見出し */
+.chapter{grid-column:1/-1;padding:14px 4px 6px;border-bottom:1px solid var(--line-strong);margin-bottom:4px}
+.chapter b{display:block;font:800 17px/1.2 var(--f-display,serif);letter-spacing:.14em}
+.chapter i{display:block;margin-top:6px;font-style:normal;font-size:12px;color:var(--dim);letter-spacing:.06em;line-height:1.7}
+.chapter.locked b,.chapter.locked i{color:var(--dim);opacity:.55}
+
 /* 走行記録 */
 .rec-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:18px}
 @media(max-width:760px){.rec-body{grid-template-columns:1fr}}
