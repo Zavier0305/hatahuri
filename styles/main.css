@@ -94,6 +94,12 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .wt-note{margin-top:5px;font-size:11px;letter-spacing:.1em;color:var(--dim)}
 #hud-wanted.chase .wt-note{color:#ff8f8f}
 
+/* 時刻。深夜2時から夜明けまで進みます */
+#hud-clock{
+  font:800 15px/1 var(--f-display,monospace);letter-spacing:.1em;
+  color:#ffd9a0;margin-right:4px
+}
+
 /* 受けている依頼 */
 #hud-job{
   position:absolute;left:20px;top:96px;width:236px;

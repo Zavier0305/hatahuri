@@ -16,6 +16,8 @@ export function buildSky(scene) {
       lower: { value: new THREE.Color(0x2b4767) },    // 地平線ぎわ：白みはじめた青
       dawn: { value: new THREE.Color(0xd87a44) },     // 東の空の焼け
       dawnDir: { value: new THREE.Vector3(0.82, 0, 0.57).normalize() },
+      // 東の焼けの強さ。夜が明けるにつれて game 側が動かします
+      dawnAmt: { value: 0.85 },
     },
     vertexShader: `
       varying vec3 vP;
@@ -24,6 +26,7 @@ export function buildSky(scene) {
     fragmentShader: `
       uniform vec3 zenith, upper, lower, dawn;
       uniform vec3 dawnDir;
+      uniform float dawnAmt;
       varying vec3 vP;
       void main(){
         vec3 d = normalize(vP);
@@ -33,7 +36,7 @@ export function buildSky(scene) {
         // 東の空だけを焼く（方位と高度の両方で絞り込みます）
         float az = max(0.0, dot(normalize(vec3(d.x, 0.0, d.z)), dawnDir));
         float band = pow(clamp(1.0 - abs(h) * 4.2, 0.0, 1.0), 2.2);
-        c += dawn * pow(az, 3.0) * band * 0.85;
+        c += dawn * pow(az, 3.0) * band * dawnAmt;
         // 反対側にもわずかな街明かりの照り返し
         c += vec3(0.10, 0.07, 0.05) * band * 0.5;
         gl_FragColor = vec4(c, 1.0);

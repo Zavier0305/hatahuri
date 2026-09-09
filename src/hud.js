@@ -21,6 +21,7 @@ export class HUD {
       msg: root.querySelector('#hud-msg'),
       sub: root.querySelector('#hud-sub'),
       zone: root.querySelector('#hud-zone'),
+      clock: root.querySelector('#hud-clock'),
       money: root.querySelector('#hud-money'),
       wanted: root.querySelector('#hud-wanted'),
       wantedStars: Array.from(root.querySelectorAll('#hud-wanted .wt-stars i')),
@@ -377,6 +378,7 @@ export class HUD {
     if (this.el.time) this.el.time.textContent = st.timeText || '';
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
+    if (this.el.clock) this.el.clock.textContent = st.clock || '';
     if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
     this.setPrompt(st.actions);
     this.setWanted(st.police);

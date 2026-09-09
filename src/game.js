@@ -17,6 +17,19 @@ import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
 import { CARS } from './cars.js';
+/**
+ * 夜明けの進み。0＝深夜2時、1＝空が明けきったころ（4時半）。
+ * 空・星・月・霧・街灯を、この1つの値から動かします。
+ */
+const DAWN_KEYS = [
+  { t: 0.0, zenith: 0x070d1e, upper: 0x16233f, lower: 0x2b4767, dawn: 0xd87a44, amt: 0.85 },
+  { t: 0.45, zenith: 0x0d1a33, upper: 0x1f3760, lower: 0x4a6c95, dawn: 0xff8f52, amt: 1.15 },
+  { t: 0.75, zenith: 0x1a3560, upper: 0x3f6598, lower: 0x87a9cf, dawn: 0xffb478, amt: 0.95 },
+  { t: 1.0, zenith: 0x2a5288, upper: 0x6690c6, lower: 0xb5cee7, dawn: 0xffd9ae, amt: 0.45 },
+];
+/** 夜明けまでの時間[秒]。走っているあいだだけ進みます。 */
+const DAWN_SECONDS = 900;
+
 // 信号の3色。消えているときは灯具そのものの暗い色にします。
 const SIGNAL_LIT = [new THREE.Color(0x2cff7a), new THREE.Color(0xffcc22), new THREE.Color(0xff3b26)];
 const SIGNAL_DARK = new THREE.Color(0x0a0c0f);
@@ -73,6 +86,10 @@ export class Game {
     this.envMap = buildEnvironment(this.renderer, this.sky.sky);
     this.scene.environment = this.envMap;
     this.sea = buildSea(this.scene);
+    // 夜明けの進み（0=深夜2時 / 1=明けきったころ）
+    this.dawn = 0;
+    this._dawnBaked = -1;
+    this._dawnTmp = new THREE.Color();
 
     // --- コースごとに作り直す部分は world にまとめ、切り替え時にまとめて捨てます
     this.world = null;
@@ -935,6 +952,9 @@ export class Game {
       }
     }
 
+    // --- 夜明け
+    this.updateDawn(dt);
+
     // --- 一般道の信号と、交差点を横切る車
     if (this.mode === 'racing') {
       this.updateSignals(dt, pv);
@@ -1223,6 +1243,55 @@ export class Game {
   }
 
   /**
+   * 夜明けを進めます。走っているあいだだけ進みます。
+   * 空・星・月・霧・街灯を、この1つの値から動かします。
+   */
+  updateDawn(dt) {
+    if (this.mode === 'racing' && !this.demo) {
+      this.dawn = clamp(this.dawn + dt / DAWN_SECONDS, 0, 1);
+    }
+    const t = this.dawn;
+    // 色の並びから、いまの色を取り出します
+    let a = DAWN_KEYS[0], b = DAWN_KEYS[DAWN_KEYS.length - 1];
+    for (let i = 0; i < DAWN_KEYS.length - 1; i++) {
+      if (t >= DAWN_KEYS[i].t && t <= DAWN_KEYS[i + 1].t) { a = DAWN_KEYS[i]; b = DAWN_KEYS[i + 1]; break; }
+    }
+    const k = b.t > a.t ? (t - a.t) / (b.t - a.t) : 0;
+    const u = this.sky.sky.material.uniforms;
+    for (const key of ['zenith', 'upper', 'lower', 'dawn']) {
+      u[key].value.setHex(a[key]).lerp(this._dawnTmp.setHex(b[key]), k);
+    }
+    if (u.dawnAmt) u.dawnAmt.value = a.amt + (b.amt - a.amt) * k;
+
+    // 星と月は明るくなるほど消えます
+    this.sky.stars.material.opacity = 0.62 * Math.max(0, 1 - t * 1.5);
+    this.sky.moon.material.opacity = 0.75 * Math.max(0, 1 - t * 1.3);
+    // 街灯は明るくなるほど目立たなくなります（明け方に消えていく感じ）
+    if (this.lights) {
+      const dim = Math.max(0, 1 - t * 0.85);
+      this.lights.heads.material.emissiveIntensity = 5.0 * dim;
+      this.lights.pools.material.opacity = 0.17 * dim;
+      this.lights.flares.material.opacity = 0.95 * dim;
+    }
+    // 空が変われば、映り込みも変えます。焼き直しは重いので4段階だけ。
+    const step = Math.floor(t * 3.999);
+    if (step !== this._dawnBaked) {
+      this._dawnBaked = step;
+      const old = this.envMap;
+      this.envMap = buildEnvironment(this.renderer, this.sky.sky);
+      this.scene.environment = this.envMap;
+      if (old && old.dispose) old.dispose();
+    }
+  }
+
+  /** いまの時刻（深夜2時から夜明けまで）。 */
+  clockText() {
+    const mins = 120 + this.dawn * 150;      // 2:00 → 4:30
+    const h = Math.floor(mins / 60), m = Math.floor(mins % 60);
+    return `${h}:${String(m).padStart(2, '0')}`;
+  }
+
+  /**
    * 一般道の信号。
    * 色は「時刻と位置」から計算できるので、近くの信号だけ見た目を更新します。
    * 赤で停止線を越えたら手配度が上がります。
@@ -1285,6 +1354,7 @@ export class Game {
       battle: this.kind === 'battle' && this.rival && !this.state.finished
         ? { life: this.state.life, rivalLife: this.state.rivalLife, gap: this.state.gap }
         : null,
+      clock: this.clockText(),
       timeText: this.kind === 'timeattack'
         ? formatTime(this.state.lapTime)
         : `${this.state.elapsed.toFixed(1)}s`,
