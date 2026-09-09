@@ -13,6 +13,7 @@ import { Traffic } from './traffic.js';
 import { Police } from './police.js';
 import { Jobs } from './jobs.js';
 import { Crossing } from './crossing.js';
+import { Skid } from './skid.js';
 import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
@@ -126,6 +127,8 @@ export class Game {
     // --- エフェクト
     this.sparks = new Particles(this.scene, 240, 0xffc266, 0.42);
     this.smoke = new Particles(this.scene, 220, 0xa8b0bd, 0.7, false);
+    // 滑らせたところに残るタイヤ痕
+    this.skid = new Skid(this.scene);
     this.smoke.points.material.opacity = 0.11;
 
     // --- ヘッドライト（自車のみスポットライト）
@@ -532,6 +535,7 @@ export class Game {
     this.traffic.density = opts.traffic ?? 1;
     this.paPrompt = null;
     this.paActions = null;
+    if (this.skid) this.skid.clear();
     this._paSig = '';
     this._offer = null;
     // 高速隊と依頼はフリーランだけ。バトルやタイムアタックに割り込ませると
@@ -898,6 +902,16 @@ export class Game {
     if (this.rival) this.emitSmoke(this.rival);
     this.sparks.update(dt);
     this.smoke.update(dt);
+    this.skid.update(dt);
+    // タイヤ痕。濡れた路面では跡が残りません
+    if (this.mode === 'racing' && !this.wet && Math.abs(pv.vx) > 6) {
+      const slip = Math.max(pv.slipRear, pv.wheelSpin * 0.8);
+      const left = this._skidLeft || (this._skidLeft = new THREE.Vector3());
+      left.set(Math.cos(pv.heading), 0, -Math.sin(pv.heading));
+      this.skid.add(pv, clamp((slip - 0.15) / 0.25, 0, 1), left);
+    } else {
+      this.skid.add(pv, 0, this._skidLeft || (this._skidLeft = new THREE.Vector3()));
+    }
 
     // --- 記録
     if (this.mode === 'racing') {

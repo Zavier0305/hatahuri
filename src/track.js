@@ -724,7 +724,28 @@ function makeRoadTexture() {
   tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = 8;
   tex.colorSpace = THREE.SRGBColorSpace;
-  return { tex, TILE, W };
+
+  // 粗さの地図。いままで路面は「どこも同じ粗さ」で、白線もアスファルトも
+  // 同じように光っていました。塗った線は滑らかで光を返し、アスファルトは
+  // ざらついて返さない、という差が出ると路面が急に路面らしくなります。
+  // 色の明るいところ（＝線や継ぎ目）を滑らかに、暗いところを粗くします。
+  const rcv = document.createElement('canvas');
+  rcv.width = cv.width; rcv.height = cv.height;
+  const rg = rcv.getContext('2d');
+  const src = g.getImageData(0, 0, cv.width, cv.height);
+  const dst = rg.createImageData(cv.width, cv.height);
+  for (let i = 0; i < src.data.length; i += 4) {
+    const lum = (src.data[i] * 0.30 + src.data[i + 1] * 0.59 + src.data[i + 2] * 0.11) / 255;
+    // 明るいほど粗さを下げます（1.0 が material.roughness そのまま）
+    const r = Math.round(255 * (1.0 - Math.min(0.55, lum * 0.75)));
+    dst.data[i] = r; dst.data[i + 1] = r; dst.data[i + 2] = r; dst.data[i + 3] = 255;
+  }
+  rg.putImageData(dst, 0, 0);
+  const rough = new THREE.CanvasTexture(rcv);
+  rough.wrapS = THREE.RepeatWrapping;
+  rough.wrapT = THREE.RepeatWrapping;
+  rough.anisotropy = 4;
+  return { tex, rough, TILE, W };
 }
 
 // ---------------------------------------------------------------- 路面メッシュ
@@ -736,10 +757,11 @@ function makeRoadTexture() {
 export function buildRoad(track) {
   const group = new THREE.Group();
   group.name = 'road';
-  const { tex, TILE, W } = makeRoadTexture();
+  const { tex, rough, TILE, W } = makeRoadTexture();
   const roadMat = new THREE.MeshStandardMaterial({
     // 環境マップを弱く反射させると、街灯が路面に薄く伸びて「濡れたアスファルト」に見えます
-    map: tex, roughness: 0.62, metalness: 0.16, color: 0xffffff, envMapIntensity: 0.55,
+    map: tex, roughnessMap: rough,
+    roughness: 0.62, metalness: 0.16, color: 0xffffff, envMapIntensity: 0.55,
   });
   // コンクリートは光を返さない。艶を出すと「白い壁」に見えてしまいます。
   const wallMat = new THREE.MeshStandardMaterial({
