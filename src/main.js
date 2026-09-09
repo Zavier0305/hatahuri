@@ -65,6 +65,7 @@ function show(id) {
   if (id === 'garage') renderGarage();
   if (id === 'story') renderStory();
   if (id === 'records') renderRecords();
+  if (id === 'online') renderOnline();
   if (id === 'settings') syncSettings();
   menuIndex = 0;
   requestAnimationFrame(() => paintMenu(menuButtons()));
@@ -434,6 +435,163 @@ function applyCourse(id) {
 
 // ---------------------------------------------------------------- 走行記録
 
+// ---------------------------------------------------------------- オンライン対戦
+
+/*
+ * 合言葉で部屋に入り、同じ道に相手の車を出します。
+ *
+ * 通信の中身は net.js、相手の車の描画と当たりは remote.js が持っています。
+ * ここは画面と、その2つを繋ぐところだけです。
+ */
+
+let net = null;
+let netCfg = null;          // /api/pusher-config の中身
+let netRoom = '';
+
+/** サーバに鍵が入っているか。入っていなければ理由を画面に出します */
+async function loadNetConfig() {
+  if (netCfg) return netCfg;
+  try {
+    const r = await fetch('/api/pusher-config', { cache: 'no-store' });
+    if (!r.ok) throw new Error(String(r.status));
+    netCfg = await r.json();
+  } catch {
+    // 単一ファイル版やファイル直開きには API がありません
+    netCfg = { enabled: false, reason: 'この版にはオンライン対戦のサーバがありません（配信サイト版で遊べます）' };
+  }
+  return netCfg;
+}
+
+function renderOnline() {
+  $('#ol-name').value = data.netName || '';
+  $('#ol-room').value = data.netRoom || '';
+  const sel = $('#ol-course');
+  if (!sel.options.length) {
+    for (const c of COURSES) {
+      const o = document.createElement('option');
+      o.value = c.id; o.textContent = `${c.name}（${(c.length / 1000).toFixed(1)}km）`;
+      sel.appendChild(o);
+    }
+  }
+  sel.value = data.netCourse || game.course.id;
+  $('#ol-setup').classList.toggle('hidden', !!net);
+  $('#ol-lobby').classList.toggle('hidden', !net);
+  const note = $('#ol-note');
+  note.className = 'ol-note';
+  note.textContent = '接続を確認しています…';
+  $('#ol-join').disabled = true;
+  loadNetConfig().then((cfg) => {
+    if (current !== 'online') return;
+    $('#ol-join').disabled = !cfg.enabled;
+    note.className = cfg.enabled ? 'ol-note' : 'ol-note bad';
+    note.textContent = cfg.enabled
+      ? '同じ合言葉を入れた人と同じ部屋になります。相手の車には当たり判定があります。'
+      : cfg.reason;
+  });
+  if (net) renderLobby();
+}
+
+function renderLobby() {
+  if (!net) return;
+  const st = $('#ol-status'), de = $('#ol-detail'), box = $('#ol-members');
+  const live = net.status === 'joined';
+  $('.ol-state').classList.toggle('live', live && net.count > 0);
+  st.textContent = net.status === 'error' ? '入れませんでした'
+    : !live ? '接続しています…'
+    : net.count ? '相手がいます' : '相手を待っています';
+  de.textContent = net.status === 'error' ? net.error : `合言葉「${netRoom}」`;
+  box.innerHTML = '';
+  const rows = [{ name: data.netName || '名無し', carId: data.carId, courseId: data.netCourse, mine: true },
+    ...net.others.map((m) => ({ name: m.info.name, carId: m.info.carId, courseId: m.info.courseId }))];
+  for (const r of rows) {
+    const car = CAR_BY_ID[r.carId];
+    const el = document.createElement('div');
+    el.className = 'ol-mem';
+    const sw = document.createElement('i'); sw.className = 'sw';
+    sw.style.background = '#' + (colorOf(r.carId) || 0x888888).toString(16).padStart(6, '0');
+    const tx = document.createElement('div');
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = r.name || '名無し';
+    const ch = document.createElement('div'); ch.className = 'ch'; ch.textContent = car ? car.chassis : '—';
+    tx.append(nm, ch);
+    el.append(sw, tx);
+    const tail = document.createElement('span');
+    if (r.mine) { tail.className = 'me'; tail.textContent = 'YOU'; }
+    else if (r.courseId && r.courseId !== data.netCourse) {
+      // ここを黙って通すと「部屋には居るのに一生すれ違わない」ことになります
+      tail.className = 'warn';
+      const c = COURSE_BY_ID[r.courseId];
+      tail.textContent = `別のステージ（${c ? c.name : r.courseId}）`;
+    }
+    if (tail.textContent) el.append(tail);
+    box.append(el);
+  }
+  if (!net.others.length) {
+    const e = document.createElement('div');
+    e.className = 'ol-empty';
+    e.textContent = '合言葉を相手に伝えてください。同じ言葉を入れると、ここに出ます。';
+    box.append(e);
+  }
+}
+
+async function joinRoom() {
+  const cfg = await loadNetConfig();
+  if (!cfg.enabled) return;
+  const name = ($('#ol-name').value || '').trim().slice(0, 16) || '名無し';
+  const room = ($('#ol-room').value || '').trim();
+  if (!room) { const n = $('#ol-note'); n.className = 'ol-note bad'; n.textContent = '合言葉を入れてください。'; return; }
+  const courseId = $('#ol-course').value;
+  data.netName = name; data.netRoom = room; data.netCourse = courseId;
+  save(data);
+  netRoom = room;
+
+  const channel = await roomChannel(room);
+  net = new Net(new PusherTransport({ key: cfg.key, cluster: cfg.cluster }));
+  net.onChange = () => { if (current === 'online') renderLobby(); };
+  $('#ol-setup').classList.add('hidden');
+  $('#ol-lobby').classList.remove('hidden');
+  renderLobby();
+  await net.join(channel, { name, carId: data.carId, color: colorOf(data.carId), courseId });
+  renderLobby();
+}
+
+function leaveRoom() {
+  if (net) { net.leave(); net = null; }
+  if (game) game.detachNet();
+  $('#hud-net').style.display = 'none';
+  if (current === 'online') { $('#ol-setup').classList.remove('hidden'); $('#ol-lobby').classList.add('hidden'); }
+}
+
+/** 部屋に入ったまま走り出します */
+function startOnline() {
+  if (!net || net.status !== 'joined') return;
+  mode = 'online';
+  if (data.netCourse && data.netCourse !== game.course.id) game.setCourse(data.netCourse);
+  preparePlayer();
+  game.setRival(null);
+  game.setPaRacers(unlockedRivals());
+  game.start('free', { startS: 0, rollingStart: true });
+  game.attachNet(net);
+  hud.setBattle(false);
+  hud.message('オンライン', net.count ? `${net.others[0].info.name} と同じ道にいます` : '相手を待っています', 2400);
+  hideAll();
+  audio.resume();
+}
+
+/** 走行中、通信の状態を出します */
+function paintNetHud() {
+  const el = $('#hud-net');
+  if (!net || mode !== 'online' || current !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = '';
+  const n = net.count;
+  const r = game && game.remotes.size ? [...game.remotes.values()][0] : null;
+  const lost = !!(r && r.silence > 3);
+  el.classList.toggle('lost', lost || !n);
+  el.innerHTML = '';
+  const b = document.createElement('b');
+  b.textContent = !n ? '相手なし' : lost ? '相手の通信が途切れています' : `${r ? r.name : ''} と対戦中`;
+  el.append(b);
+}
+
 function renderRecords() {
   const st = data.stats;
   const km = (m) => `${(m / 1000).toFixed(1)} km`;
@@ -659,6 +817,8 @@ function restart() {
   if (mode === 'battle') startBattle(currentRival, battleOpts);
   else if (mode === 'free') startFree();
   else if (mode === 'ta') startTA();
+  // オンラインは部屋に入ったまま走り直します（入り直すと相手から一度消えます）
+  else if (mode === 'online') startOnline();
 }
 
 // ---------------------------------------------------------------- リザルト
@@ -798,6 +958,12 @@ $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   show(go);
 }));
 
+$('#ol-join').addEventListener('click', () => { joinRoom(); });
+$('#ol-leave').addEventListener('click', () => { leaveRoom(); renderOnline(); });
+$('#ol-go').addEventListener('click', () => { startOnline(); });
+// 合言葉は Enter でも入れます
+$('#ol-room').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
+
 input.onAction = (code) => {
   if (code === 'Escape') {
     if (pitStop && current === 'garage') { closePit(); return; }
@@ -931,6 +1097,7 @@ function loop(now) {
       hud.update(dt, game.hudState(data.money));
       const v = game.player.vehicle;
       $('#speedvignette').style.opacity = String(clamp((v.speedKmh - 130) / 150, 0, 1));
+      if (net) paintNetHud();
     } else if (game.demo && current !== 'loading') {
       game.update(dt, NEUTRAL, null);
     }

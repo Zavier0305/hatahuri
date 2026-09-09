@@ -25,6 +25,9 @@ const DEFAULT = {
   },
   titles: [],                // 獲得した称号のid
   hintSeen: false,           // 初回の操作ガイドを見たか
+  netName: '',               // オンラインでの表示名
+  netRoom: '',               // 最後に使った合言葉
+  netCourse: '',             // オンラインで走るステージ
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
 

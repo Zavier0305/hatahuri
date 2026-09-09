@@ -98,6 +98,8 @@
     </div>
   </div>
 
+  <div id="hud-net" style="display:none"></div>
+
   <div id="speedvignette"></div>
 
   <div id="first-hint" class="hidden">
@@ -113,6 +115,7 @@
         <li>PAで依頼を受けると、別のPAまでの配送で稼げる</li>
         <li>PAをまっすぐ抜けると一般道。信号あり・制限80km/h</li>
         <li>行き止まりは、止まって <kbd>↓</kbd> を踏み直すと後退（R）できる</li>
+        <li>タイトルの「オンライン対戦」で、合言葉を合わせると1対1で走れる</li>
       </ul>
       <span class="fh-close">何かキーを押すと消えます</span>
     </div>
@@ -148,8 +151,9 @@
         <button data-go="garage"><span class="mi">04</span><b>ガレージ</b><i>マシン・チューン・カラー</i></button>
         <button data-go="howto"><span class="mi">05</span><b>操作方法</b><i>キーボード / パッド / タッチ</i></button>
         <button data-go="settings"><span class="mi">06</span><b>設定</b><i>画質・操作・サウンド</i></button>
-        <button data-go="records"><span class="mi">07</span><b>走行記録</b><i>積み上げと称号</i></button>
-        <button data-go="credits"><span class="mi">08</span><b>クレジット</b><i>制作について</i></button>
+        <button data-go="online"><span class="mi">07</span><b>オンライン対戦</b><i>合言葉で1対1</i></button>
+        <button data-go="records"><span class="mi">08</span><b>走行記録</b><i>積み上げと称号</i></button>
+        <button data-go="credits"><span class="mi">09</span><b>クレジット</b><i>制作について</i></button>
       </nav>
       <div class="title-foot">
         <span id="build-ver">v1.0</span>
@@ -282,6 +286,15 @@
           <b>無傷回送</b>（一度もぶつけない）と<b>逃走</b>（手配度2から始まり、捕まらずに届ける）は
           報酬が上がります。行き先はミニマップに水色の丸で出ます。</p>
 
+          <b>オンライン対戦</b>
+          <p>タイトルの「オンライン対戦」で、名前と<b>合言葉</b>を入れて部屋に入ります。
+          相手が同じ合言葉を入れると、同じ道にその車が出ます。<b>ステージも合わせてください。</b>
+          違うと、同じ部屋にいてもすれ違いません。相手の車には当たり判定があります。</p>
+          <p>位置のやり取りは毎秒10回で、あいだは予測で埋めています。回線の遅れのぶん、
+          自分の画面と相手の画面では車の位置が数十cmずれます。ぶつけ合いは、
+          そのずれを含んだうえでの勝負だと思ってください。
+          オンラインでの走りは、賞金にも記録にも反映されません。</p>
+
           <b>インターで降りる</b>
           <p>出口の標識が出たら左へ寄る。ランプを下りた先はパーキングエリアで、自由に走り回れます。
           走り屋が停まっているので、真横につけて <kbd>F</kbd> でその場で勝負。
@@ -321,6 +334,43 @@
           <div class="set-head">データ</div>
           <label><span>セーブデータ<i>所持金・所有車・チューン・記録</i></span><button id="btn-reset">消去する</button></label>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- オンライン対戦 -->
+  <section id="scr-online" class="screen">
+    <div class="panel">
+      <header><h2>オンライン対戦</h2><span class="sub">合言葉を合わせて1対1</span>
+        <button class="back" data-go="title">戻る</button></header>
+
+      <div id="ol-setup">
+        <div class="ol-form">
+          <label class="ol-row"><span>あなたの名前</span>
+            <input id="ol-name" type="text" maxlength="16" placeholder="ザビエル" autocomplete="off"></label>
+          <label class="ol-row"><span>合言葉<i>相手と同じ言葉を入れると同じ部屋に入ります</i></span>
+            <input id="ol-room" type="text" maxlength="24" placeholder="wangan01" autocomplete="off"></label>
+          <label class="ol-row"><span>ステージ<i>相手と違うと、同じ部屋でもすれ違いません</i></span>
+            <select id="ol-course"></select></label>
+        </div>
+        <p id="ol-note" class="ol-note"></p>
+        <footer>
+          <button class="primary" id="ol-join">部屋に入る</button>
+        </footer>
+      </div>
+
+      <div id="ol-lobby" class="hidden">
+        <div class="ol-state"><b id="ol-status">接続しています…</b><span id="ol-detail"></span></div>
+        <div id="ol-members" class="ol-members"></div>
+        <p class="ol-note">
+          相手が入ってくると、同じ道にその車が出ます。名前は車の上に出ます。<br>
+          通信は毎秒10回です。相手の位置は予測で埋めているので、
+          接触の判定は自分の画面での位置が基準になります。
+        </p>
+        <footer>
+          <button id="ol-leave">部屋を出る</button>
+          <button class="primary" id="ol-go">走り出す</button>
+        </footer>
       </div>
     </div>
   </section>

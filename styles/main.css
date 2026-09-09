@@ -538,6 +538,44 @@ kbd{
 .res-stats div{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 2px}
 .res-stats span:last-child{font:700 13px/1 var(--f-data);color:var(--dawn);font-variant-numeric:tabular-nums}
 
+/* ============================ オンライン対戦 ============================ */
+.ol-form{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+.ol-row{display:flex;align-items:center;gap:18px;padding:14px 15px;background:rgba(9,14,25,.7);font-size:13px}
+.ol-row>span{flex:1}
+.ol-row i{display:block;margin-top:4px;font-style:normal;font-size:11px;color:var(--faint);line-height:1.6}
+.ol-row input,.ol-row select{
+  width:230px;background:rgba(7,11,19,.95);color:var(--ink);
+  border:1px solid var(--line-strong);padding:9px 11px;
+  font-family:var(--f-display);font-size:13px
+}
+.ol-row input:focus,.ol-row select:focus{outline:none;border-color:var(--dawn)}
+.ol-note{margin:16px 0 0;font-size:12px;line-height:2;color:var(--dim)}
+.ol-note.warn{color:var(--dawn)}
+.ol-note.bad{color:var(--danger)}
+.ol-state{
+  display:flex;align-items:baseline;gap:14px;padding:14px 15px;
+  background:rgba(9,14,25,.7);border:1px solid var(--line);border-left:3px solid var(--dawn)
+}
+.ol-state b{font-size:15px;letter-spacing:.06em}
+.ol-state span{font:600 11px/1 var(--f-data);color:var(--dim);letter-spacing:.1em}
+.ol-state.live{border-left-color:var(--ok)}
+.ol-members{display:grid;gap:1px;background:var(--line);margin-top:1px}
+.ol-mem{display:flex;align-items:center;gap:12px;padding:12px 15px;background:rgba(9,14,25,.7)}
+.ol-mem .sw{width:13px;height:13px;flex:none;border:1px solid rgba(255,255,255,.22)}
+.ol-mem .nm{font-size:14px;font-weight:700;letter-spacing:.04em}
+.ol-mem .ch{font:600 10px/1 var(--f-data);color:var(--faint);letter-spacing:.12em;margin-top:3px}
+.ol-mem .me{margin-left:auto;font:700 9px/1 var(--f-data);letter-spacing:.2em;color:var(--cold)}
+.ol-mem .warn{margin-left:auto;font:700 9px/1 var(--f-data);letter-spacing:.14em;color:var(--dawn)}
+.ol-empty{padding:16px 15px;background:rgba(9,14,25,.7);font-size:12px;color:var(--dim)}
+
+/* 走行中に出す通信の状態 */
+#hud-net{
+  position:absolute;left:20px;top:60px;font:600 11px/1.7 var(--f-data);
+  letter-spacing:.1em;color:var(--dim);text-shadow:0 1px 8px #000
+}
+#hud-net b{color:var(--ok);font-weight:700}
+#hud-net.lost b{color:var(--danger)}
+
 /* ============================ レスポンシブ ============================ */
 @media(max-width:640px){
   .brand-jp{font-size:34px}

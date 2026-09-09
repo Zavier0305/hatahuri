@@ -544,6 +544,44 @@ kbd{
 .res-stats div{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:8px 2px}
 .res-stats span:last-child{font:700 13px/1 var(--f-data);color:var(--dawn);font-variant-numeric:tabular-nums}
 
+/* ============================ オンライン対戦 ============================ */
+.ol-form{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+.ol-row{display:flex;align-items:center;gap:18px;padding:14px 15px;background:rgba(9,14,25,.7);font-size:13px}
+.ol-row>span{flex:1}
+.ol-row i{display:block;margin-top:4px;font-style:normal;font-size:11px;color:var(--faint);line-height:1.6}
+.ol-row input,.ol-row select{
+  width:230px;background:rgba(7,11,19,.95);color:var(--ink);
+  border:1px solid var(--line-strong);padding:9px 11px;
+  font-family:var(--f-display);font-size:13px
+}
+.ol-row input:focus,.ol-row select:focus{outline:none;border-color:var(--dawn)}
+.ol-note{margin:16px 0 0;font-size:12px;line-height:2;color:var(--dim)}
+.ol-note.warn{color:var(--dawn)}
+.ol-note.bad{color:var(--danger)}
+.ol-state{
+  display:flex;align-items:baseline;gap:14px;padding:14px 15px;
+  background:rgba(9,14,25,.7);border:1px solid var(--line);border-left:3px solid var(--dawn)
+}
+.ol-state b{font-size:15px;letter-spacing:.06em}
+.ol-state span{font:600 11px/1 var(--f-data);color:var(--dim);letter-spacing:.1em}
+.ol-state.live{border-left-color:var(--ok)}
+.ol-members{display:grid;gap:1px;background:var(--line);margin-top:1px}
+.ol-mem{display:flex;align-items:center;gap:12px;padding:12px 15px;background:rgba(9,14,25,.7)}
+.ol-mem .sw{width:13px;height:13px;flex:none;border:1px solid rgba(255,255,255,.22)}
+.ol-mem .nm{font-size:14px;font-weight:700;letter-spacing:.04em}
+.ol-mem .ch{font:600 10px/1 var(--f-data);color:var(--faint);letter-spacing:.12em;margin-top:3px}
+.ol-mem .me{margin-left:auto;font:700 9px/1 var(--f-data);letter-spacing:.2em;color:var(--cold)}
+.ol-mem .warn{margin-left:auto;font:700 9px/1 var(--f-data);letter-spacing:.14em;color:var(--dawn)}
+.ol-empty{padding:16px 15px;background:rgba(9,14,25,.7);font-size:12px;color:var(--dim)}
+
+/* 走行中に出す通信の状態 */
+#hud-net{
+  position:absolute;left:20px;top:60px;font:600 11px/1.7 var(--f-data);
+  letter-spacing:.1em;color:var(--dim);text-shadow:0 1px 8px #000
+}
+#hud-net b{color:var(--ok);font-weight:700}
+#hud-net.lost b{color:var(--danger)}
+
 /* ============================ レスポンシブ ============================ */
 @media(max-width:640px){
   .brand-jp{font-size:34px}
@@ -654,6 +692,8 @@ kbd{
     </div>
   </div>
 
+  <div id="hud-net" style="display:none"></div>
+
   <div id="speedvignette"></div>
 
   <div id="first-hint" class="hidden">
@@ -669,6 +709,7 @@ kbd{
         <li>PAで依頼を受けると、別のPAまでの配送で稼げる</li>
         <li>PAをまっすぐ抜けると一般道。信号あり・制限80km/h</li>
         <li>行き止まりは、止まって <kbd>↓</kbd> を踏み直すと後退（R）できる</li>
+        <li>タイトルの「オンライン対戦」で、合言葉を合わせると1対1で走れる</li>
       </ul>
       <span class="fh-close">何かキーを押すと消えます</span>
     </div>
@@ -704,8 +745,9 @@ kbd{
         <button data-go="garage"><span class="mi">04</span><b>ガレージ</b><i>マシン・チューン・カラー</i></button>
         <button data-go="howto"><span class="mi">05</span><b>操作方法</b><i>キーボード / パッド / タッチ</i></button>
         <button data-go="settings"><span class="mi">06</span><b>設定</b><i>画質・操作・サウンド</i></button>
-        <button data-go="records"><span class="mi">07</span><b>走行記録</b><i>積み上げと称号</i></button>
-        <button data-go="credits"><span class="mi">08</span><b>クレジット</b><i>制作について</i></button>
+        <button data-go="online"><span class="mi">07</span><b>オンライン対戦</b><i>合言葉で1対1</i></button>
+        <button data-go="records"><span class="mi">08</span><b>走行記録</b><i>積み上げと称号</i></button>
+        <button data-go="credits"><span class="mi">09</span><b>クレジット</b><i>制作について</i></button>
       </nav>
       <div class="title-foot">
         <span id="build-ver">v1.0</span>
@@ -838,6 +880,15 @@ kbd{
           <b>無傷回送</b>（一度もぶつけない）と<b>逃走</b>（手配度2から始まり、捕まらずに届ける）は
           報酬が上がります。行き先はミニマップに水色の丸で出ます。</p>
 
+          <b>オンライン対戦</b>
+          <p>タイトルの「オンライン対戦」で、名前と<b>合言葉</b>を入れて部屋に入ります。
+          相手が同じ合言葉を入れると、同じ道にその車が出ます。<b>ステージも合わせてください。</b>
+          違うと、同じ部屋にいてもすれ違いません。相手の車には当たり判定があります。</p>
+          <p>位置のやり取りは毎秒10回で、あいだは予測で埋めています。回線の遅れのぶん、
+          自分の画面と相手の画面では車の位置が数十cmずれます。ぶつけ合いは、
+          そのずれを含んだうえでの勝負だと思ってください。
+          オンラインでの走りは、賞金にも記録にも反映されません。</p>
+
           <b>インターで降りる</b>
           <p>出口の標識が出たら左へ寄る。ランプを下りた先はパーキングエリアで、自由に走り回れます。
           走り屋が停まっているので、真横につけて <kbd>F</kbd> でその場で勝負。
@@ -877,6 +928,43 @@ kbd{
           <div class="set-head">データ</div>
           <label><span>セーブデータ<i>所持金・所有車・チューン・記録</i></span><button id="btn-reset">消去する</button></label>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- オンライン対戦 -->
+  <section id="scr-online" class="screen">
+    <div class="panel">
+      <header><h2>オンライン対戦</h2><span class="sub">合言葉を合わせて1対1</span>
+        <button class="back" data-go="title">戻る</button></header>
+
+      <div id="ol-setup">
+        <div class="ol-form">
+          <label class="ol-row"><span>あなたの名前</span>
+            <input id="ol-name" type="text" maxlength="16" placeholder="ザビエル" autocomplete="off"></label>
+          <label class="ol-row"><span>合言葉<i>相手と同じ言葉を入れると同じ部屋に入ります</i></span>
+            <input id="ol-room" type="text" maxlength="24" placeholder="wangan01" autocomplete="off"></label>
+          <label class="ol-row"><span>ステージ<i>相手と違うと、同じ部屋でもすれ違いません</i></span>
+            <select id="ol-course"></select></label>
+        </div>
+        <p id="ol-note" class="ol-note"></p>
+        <footer>
+          <button class="primary" id="ol-join">部屋に入る</button>
+        </footer>
+      </div>
+
+      <div id="ol-lobby" class="hidden">
+        <div class="ol-state"><b id="ol-status">接続しています…</b><span id="ol-detail"></span></div>
+        <div id="ol-members" class="ol-members"></div>
+        <p class="ol-note">
+          相手が入ってくると、同じ道にその車が出ます。名前は車の上に出ます。<br>
+          通信は毎秒10回です。相手の位置は予測で埋めているので、
+          接触の判定は自分の画面での位置が基準になります。
+        </p>
+        <footer>
+          <button id="ol-leave">部屋を出る</button>
+          <button class="primary" id="ol-go">走り出す</button>
+        </footer>
       </div>
     </div>
   </section>
@@ -6855,6 +6943,562 @@ class Skid {
 }
 
 
+// ============================== src/net.js ==============================
+/**
+ * オンライン対戦の通信層。
+ *
+ * Pusher Channels を使います。本来はチャットや通知向けのサービスなので、
+ * レースに使ううえで効いてくる制限が2つあります。
+ *
+ *   1. クライアント間で直接送れるイベントは 1接続あたり毎秒10件まで
+ *   2. 無料枠は 1日20万メッセージ / 同時接続100
+ *
+ * そこで送信は 10Hz に固定し、あいだは受信側で予測して埋めます（remote.js）。
+ * 人数が増えると通信量は人数の2乗で増えるため、部屋は1対1を想定しています。
+ *
+ * 送る中身は「コース上の距離 s・横位置 u・向き」だけです。コースは種から
+ * 手続き生成されるので、地形は一切送りません。1台ぶんが数値7個で済みます。
+ *
+ * 通信の実体は Transport として差し替えられるようにしてあります。テストでは
+ * ブラウザ内で完結する LoopbackTransport を挿し、鍵なしで2台ぶんの
+ * やり取りを再現します。
+ */
+
+const SEND_HZ = 10;
+const SEND_INTERVAL = 1 / SEND_HZ;
+
+/** 合言葉からチャンネル名を作ります。合言葉そのものは外に出しません。 */
+async function roomChannel(passphrase) {
+  const norm = String(passphrase || '').trim().toLowerCase();
+  const bytes = new TextEncoder().encode(`wangan:${norm}`);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const hex = Array.from(new Uint8Array(digest).slice(0, 8))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `presence-wangan-${hex}`;
+}
+
+/** 62KB を読むのはオンラインに入るときだけです */
+let pusherLoading = null;
+function loadPusher(src = './vendor/pusher.min.js') {
+  if (typeof window !== 'undefined' && window.Pusher) return Promise.resolve(window.Pusher);
+  if (pusherLoading) return pusherLoading;
+  pusherLoading = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = () => (window.Pusher ? resolve(window.Pusher) : reject(new Error('Pusher を読み込めませんでした')));
+    el.onerror = () => { pusherLoading = null; reject(new Error('Pusher を読み込めませんでした')); };
+    document.head.appendChild(el);
+  });
+  return pusherLoading;
+}
+
+/** 実際に Pusher へつなぐ経路 */
+class PusherTransport {
+  constructor(opts = {}) {
+    this.key = opts.key;
+    this.cluster = opts.cluster || 'ap3';
+    this.authEndpoint = opts.authEndpoint || '/api/pusher-auth';
+    this.scriptSrc = opts.scriptSrc;
+    this.client = null;
+    this.channel = null;
+  }
+
+  async join(channelName, profile, handlers) {
+    const Pusher = await loadPusher(this.scriptSrc);
+    this.client = new Pusher(this.key, {
+      cluster: this.cluster,
+      channelAuthorization: { endpoint: this.authEndpoint, transport: 'ajax', params: profile },
+      enabledTransports: ['ws', 'wss'],
+      activityTimeout: 30000,
+    });
+    this.client.connection.bind('error', (e) => handlers.onError(describe(e)));
+    this.client.connection.bind('unavailable', () => handlers.onError('接続できません（回線かPusherの設定を確認してください）'));
+
+    const ch = this.client.subscribe(channelName);
+    this.channel = ch;
+    ch.bind('pusher:subscription_succeeded', (members) => {
+      const list = [];
+      members.each((m) => { if (m.id !== members.myID) list.push({ id: m.id, info: m.info }); });
+      handlers.onReady(members.myID, list);
+    });
+    ch.bind('pusher:subscription_error', (e) => {
+      // 認証で落ちるのがいちばん多いので、原因を切り分けられる文言にします
+      const s = (e && (e.status || (e.error && e.error.data && e.error.data.code))) || '';
+      handlers.onError(
+        s === 403 || s === 401
+          ? '部屋に入れませんでした（サーバの鍵の設定を確認してください）'
+          : `部屋に入れませんでした（${s || '原因不明'}）`
+      );
+    });
+    ch.bind('pusher:member_added', (m) => handlers.onJoin({ id: m.id, info: m.info }));
+    ch.bind('pusher:member_removed', (m) => handlers.onLeave(m.id));
+    ch.bind('client-state', (data, meta) => handlers.onState(senderOf(meta), data));
+  }
+
+  send(event, data) {
+    if (!this.channel) return false;
+    return this.channel.trigger(`client-${event}`, data) !== false;
+  }
+
+  leave() {
+    try { if (this.client) this.client.disconnect(); } catch { /* 切断時の例外は無視 */ }
+    this.client = null; this.channel = null;
+  }
+}
+
+function senderOf(meta) {
+  return (meta && (meta.user_id || meta.userId)) || null;
+}
+
+function describe(e) {
+  const d = e && e.error && e.error.data;
+  if (d && d.code === 4001) return 'アプリキーが違います';
+  if (d && d.code >= 4000 && d.code < 4100) return `接続を拒否されました（${d.code}）`;
+  return '接続でエラーが起きました';
+}
+
+/**
+ * 鍵なしで動く経路。テストと、同じ端末での動作確認に使います。
+ * 送ったものが同じページの別インスタンスへそのまま届きます。
+ */
+class LoopbackTransport {
+  static hubs = new Map();
+  static queue = [];
+
+  constructor(opts = {}) {
+    this.id = opts.id || `L${Math.random().toString(36).slice(2, 8)}`;
+    this.lagMs = opts.lagMs || 0;       // 片道の遅延[ms]。遅延の影響を試すため
+    this.dropRate = opts.dropRate || 0; // 落ちる割合 0..1
+    this.hub = null; this.name = null; this.handlers = null; this.info = null;
+  }
+
+  async join(channelName, profile, handlers) {
+    this.name = channelName; this.handlers = handlers;
+    this.info = { name: profile.name, carId: profile.carId, color: profile.color, courseId: profile.courseId };
+    let hub = LoopbackTransport.hubs.get(channelName);
+    if (!hub) { hub = new Set(); LoopbackTransport.hubs.set(channelName, hub); }
+    this.hub = hub;
+    const others = [...hub].map((p) => ({ id: p.id, info: p.info }));
+    hub.add(this);
+    for (const p of hub) if (p !== this) p.handlers.onJoin({ id: this.id, info: this.info });
+    handlers.onReady(this.id, others);
+  }
+
+  send(event, data) {
+    if (!this.hub) return false;
+    if (event !== 'state') return true;
+    LoopbackTransport.pump();
+    for (const p of this.hub) {
+      if (p === this) continue;
+      if (this.dropRate && Math.random() < this.dropRate) continue;
+      if (!this.lagMs) { if (p.handlers) p.handlers.onState(this.id, data); continue; }
+      LoopbackTransport.queue.push({ due: now() + this.lagMs, from: this.id, to: p, data });
+    }
+    return true;
+  }
+
+  /**
+   * 届く時刻になったものを配ります。
+   * setTimeout ではなく now() を見るので、テストが時計を進めれば、実時間を
+   * 待たずに遅延を再現できます。
+   */
+  static pump() {
+    const q = LoopbackTransport.queue;
+    if (!q.length) return;
+    const t = now();
+    let i = 0;
+    while (i < q.length) {
+      const m = q[i];
+      if (m.due > t) { i++; continue; }
+      q.splice(i, 1);
+      if (m.to.handlers) m.to.handlers.onState(m.from, m.data);
+    }
+  }
+
+  leave() {
+    if (!this.hub) return;
+    this.hub.delete(this);
+    for (const p of this.hub) p.handlers.onLeave(this.id);
+    if (!this.hub.size) LoopbackTransport.hubs.delete(this.name);
+    this.hub = null; this.handlers = null;
+  }
+}
+
+/**
+ * 通信の口。ゲーム側はこのクラスだけを見ます。
+ *
+ * 送信は 10Hz に間引きます。Pusher の上限がちょうど毎秒10件なので、
+ * フレームごとに送ると即座に弾かれます。
+ */
+class Net {
+  constructor(transport) {
+    this.tp = transport;
+    this.myId = null;
+    this.members = new Map();   // id -> { info, states: [] }
+    this.status = 'idle';       // idle | joining | joined | error
+    this.error = '';
+    this.acc = 0;
+    this.seq = 0;
+    this.sent = 0;
+    this.recv = 0;
+    this.onChange = null;       // 参加者が増減したときの通知
+  }
+
+  get others() { return [...this.members.values()]; }
+  get count() { return this.members.size; }
+
+  async join(channelName, profile) {
+    this.status = 'joining'; this.error = '';
+    try {
+      await this.tp.join(channelName, profile, {
+        onReady: (myId, list) => {
+          this.myId = myId;
+          for (const m of list) this._add(m);
+          this.status = 'joined';
+          this._changed();
+        },
+        onJoin: (m) => { this._add(m); this._changed(); },
+        onLeave: (id) => { this.members.delete(id); this._changed(); },
+        onState: (id, data) => this._state(id, data),
+        onError: (msg) => { this.status = 'error'; this.error = msg; this._changed(); },
+      });
+    } catch (e) {
+      this.status = 'error';
+      this.error = (e && e.message) || '接続に失敗しました';
+      this._changed();
+    }
+  }
+
+  _add(m) {
+    if (!m || !m.id || m.id === this.myId) return;
+    // offset は「相手の時計 → こちらの時計」のずれ。下の _state で詰めます
+    this.members.set(m.id, { id: m.id, info: m.info || {}, states: [], offset: null });
+  }
+
+  _changed() { if (this.onChange) this.onChange(this); }
+
+  _state(id, data) {
+    const m = this.members.get(id);
+    if (!m || !data) return;
+    this.recv++;
+    // 遅れて届いたものは捨てます。順序が入れ替わると位置が巻き戻ります
+    const last = m.states[m.states.length - 1];
+    if (last && data.n !== undefined && last.n !== undefined && data.n <= last.n) return;
+    const at = now();
+    /*
+     * 相手の時計との差を見積もります。
+     *
+     * 「届いた時刻 − 相手が送った時刻」は、時計のずれ ＋ 片道の遅延です。
+     * このうち遅延は毎回ばらつくので、いちばん小さかった値を採ると
+     * 「時計のずれ ＋ 最短の遅延」に収束します。これを使うと、10Hz の
+     * 送信間隔のばらつき（0〜100ms）を予測から追い出せます。
+     *
+     * 片道の遅延そのものは、往復を測らないと分離できません（往復は
+     * 毎秒10件の枠を食うので測りません）。そのぶんは LAG_COMP で見ます。
+     */
+    if (data.t !== undefined) {
+      const d = at - data.t;
+      if (m.offset === null || d < m.offset) m.offset = d;
+    }
+    m.states.push({ ...data, at, offset: m.offset });
+    if (m.states.length > 6) m.states.shift();
+  }
+
+  /**
+   * 自車の状態を送ります。dt を足していき、10Hz を超えたぶんだけ送信します。
+   * @returns 実際に送ったか
+   */
+  tick(dt, state) {
+    if (this.status !== 'joined') return false;
+    this.acc += dt;
+    if (this.acc < SEND_INTERVAL) return false;
+    // 0 に戻すと余りが毎回切り捨てられ、60fps では 7フレームに1回＝8.6Hz まで
+    // 落ちます。間隔ぶんだけ引いて余りを次に持ち越します。
+    this.acc -= SEND_INTERVAL;
+    if (this.acc > SEND_INTERVAL) this.acc = 0;   // 大きく飛んだときは溜め込まない
+    this.seq++;
+    const ok = this.tp.send('state', { ...state, n: this.seq });
+    if (ok) this.sent++;
+    return ok;
+  }
+
+  leave() {
+    try { this.tp.leave(); } catch { /* 切断時の例外は無視 */ }
+    this.members.clear();
+    this.myId = null;
+    this.status = 'idle';
+    this._changed();
+  }
+}
+
+let clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/**
+ * 時計を差し替えます。テスト専用です。
+ *
+ * 物理を早送りするテストでは実時間がほとんど進まないため、実時計のままだと
+ * 「遅延」も「相手が黙った時間」も再現できません。ここを差し替えられるように
+ * しておくと、遅延やパケット落ちの挙動を毎回同じ結果で確かめられます。
+ */
+function setClock(fn) { clock = fn || (() => performance.now()); }
+
+function now() { return clock(); }
+
+/**
+ * 自車から、送るぶんの数値だけを抜き出します。
+ *
+ * prev には前回この関数が返したものを渡します。s と u の「変化率」を一緒に
+ * 送るためで、受信側はこれをそのまま掛け算するだけで先を読めます。速度と
+ * 向きから毎回起こし直すより、コースに沿った動きを素直に再現できます。
+ *
+ * @param trackLength コース1周の長さ。s の折り返しを跨いだ差分の計算に要ります
+ */
+function sampleState(v, prev, trackLength) {
+  const s = v.s, u = v.u;
+  let ds = 0, du = 0;
+  if (prev && prev.t) {
+    const dt = Math.max(1e-3, (now() - prev.t) / 1000);
+    ds = wrapDelta(s - prev.s, trackLength) / dt;
+    du = (u - prev.u) / dt;
+  }
+  return {
+    s: round(s, 2), u: round(u, 2), h: round(v.heading, 3),
+    ds: round(ds, 2), du: round(du, 2),
+    w: round(v.yawRate, 3), v: round(v.vx, 2),
+    z: v.onAlley ? 3 : v.onSurface ? 2 : v.onRamp ? 1 : 0,
+    t: now(),
+  };
+}
+
+function wrapDelta(d, len) {
+  if (!len) return d;
+  if (d > len / 2) return d - len;
+  if (d < -len / 2) return d + len;
+  return d;
+}
+
+function round(v, n) {
+  const k = 10 ** n;
+  return Math.round(v * k) / k;
+}
+
+
+// ============================== src/remote.js ==============================
+
+/**
+ * 相手の車。
+ *
+ * 届くのは毎秒10回だけで、しかも片道50〜150msの遅れがあります。そのまま
+ * 描くと、相手は 1/10 秒ごとにカクッと動く「100ms前の姿」になります。
+ * そこで2段構えにします。
+ *
+ *   予測 … 最後に届いた位置から、届いた変化率で「いまどこにいるはずか」を伸ばす
+ *   均し … 予測が外れて次の実測が来たとき、差を一気に埋めず数フレームで寄せる
+ *
+ * 均しを入れないと、パケットが1つ飛んだだけで相手が数メートル瞬間移動します。
+ * 当たり判定を入れている以上、その瞬間移動は「当たっていないのに当たった」に
+ * 直結するので、飛んだ直後は当たり判定を止めます（graceTimer）。
+ */
+
+const MAX_EXTRAPOLATE = 0.35;   // 予測で伸ばす上限[s]。これ以上は当てになりません
+/*
+ * 片道の遅延の見込み[s]。
+ *
+ * 相手が送ってからこちらに届くまでの時間は、往復を測らないと分かりません。
+ * 往復を測ると毎秒10件の枠を食うので、Pusher の典型値を置いています。
+ * ここが実際より小さいと相手が後ろにずれ、大きいと前にずれます。
+ */
+const LAG_COMP = 0.06;
+const SNAP_DIST = 18;           // これだけ離れたら均さずに飛ばす[m]
+const EASE = 9;                 // 均しの速さ
+const GRACE = 0.25;             // 飛んだ直後、当たり判定を止める時間[s]
+
+class RemoteCar {
+  constructor(member, scene, track) {
+    this.id = member.id;
+    this.info = member.info || {};
+    this.name = this.info.name || '名無し';
+    const spec = CARS.find((c) => c.id === this.info.carId) || CARS[0];
+    this.actor = new Actor(spec, null, scene, { color: this.info.color || 0x8899aa, isAI: true });
+    this.vehicle = this.actor.vehicle;
+    this.vehicle.isRemote = true;
+    this.track = track;
+    this.spec = spec;
+
+    this.have = false;          // 一度でも位置を受け取ったか
+    this.graceTimer = 0;
+    // 予測と描画の「ずれ」。0 へ減衰させることで、位置そのものを引きずらずに
+    // 補正だけを滑らかにします
+    this.errS = 0; this.errU = 0; this.errH = 0;
+    this.lastSeen = now();
+    this.rtt = 0;
+    // 描画に使う現在値。予測値へ向かって寄せていきます
+    this.s = 0; this.u = 0; this.h = 0; this.v = 0; this.z = 0;
+  }
+
+  /** 相手が黙ってから何秒経ったか。長いと接続が切れたとみなします */
+  get silence() { return (now() - this.lastSeen) / 1000; }
+
+  /**
+   * @param states net.js が溜めている受信履歴（古い順）
+   */
+  update(dt, states) {
+    const last = states && states.length ? states[states.length - 1] : null;
+    if (this.graceTimer > 0) this.graceTimer -= dt;
+    if (!last) return;
+    if (last.at !== this._lastAt) { this._lastAt = last.at; this.lastSeen = now(); }
+
+    // いまどこにいるはずか。
+    // 「届いた時刻」ではなく「相手が撮った時刻」から測ります。届いた時刻を
+    // 起点にすると、通信にかかった時間ぶんまるごと後ろにずれます。
+    const captured = last.offset !== null && last.offset !== undefined && last.t !== undefined
+      ? last.t + last.offset
+      : last.at;
+    const age = clamp((now() - captured) / 1000 + LAG_COMP, 0, MAX_EXTRAPOLATE);
+    const L = this.track.length;
+    let ts = last.s + (last.ds || 0) * age;
+    const tu = last.u + (last.du || 0) * age;
+    const th = last.h + (last.w || 0) * age;
+    ts = ((ts % L) + L) % L;
+
+    /*
+     * 描画位置は「予測 ＋ 残っているずれ」。ずれだけを 0 へ減衰させます。
+     *
+     * 素直に「描画位置を予測位置へ近づける」書き方にすると、相手が走って
+     * いるあいだ予測位置は動き続けるので、いつまでも追いつけません。
+     * 追従の速さを k とすると、速度 V で走る相手には常に V/k だけ遅れます。
+     * 40m/s・k=9 なら 4.4m ＝ ほぼ車1台ぶん後ろにずれたまま描かれます。
+     * 当たり判定を入れている以上、この定常的なずれはそのまま
+     * 「当たっていないのに当たった」になります。
+     *
+     * そこで、新しい位置が届いた瞬間だけ「それまで描いていた場所と予測との
+     * 差」をずれとして記録し、あとはそれを減衰させます。こうすると相手が
+     * 等速で走っているあいだ遅れは 0 になり、補正は滑らかなままです。
+     */
+    const fresh = last.at !== this._usedAt;
+    if (!this.have) {
+      this.have = true;
+      this.errS = this.errU = this.errH = 0;
+      this.graceTimer = GRACE;
+    } else if (fresh) {
+      const gap = wrapDelta(this.s - ts, L);
+      if (Math.abs(gap) > SNAP_DIST) {
+        // 大きく外れたときは繋がずに飛ばします。中途半端に引きずるほうが
+        // 「泳いでくる」ように見えて悪目立ちします
+        this.errS = this.errU = this.errH = 0;
+        this.graceTimer = GRACE;
+      } else {
+        this.errS = gap;
+        this.errU = this.u - tu;
+        this.errH = wrapAngle(this.h - th);
+      }
+    }
+    this._usedAt = last.at;
+    const decay = Math.exp(-EASE * dt);
+    this.errS *= decay; this.errU *= decay; this.errH *= decay;
+    this.s = ts + this.errS;
+    this.u = tu + this.errU;
+    this.h = th + this.errH;
+    this.s = ((this.s % L) + L) % L;
+    this.v = last.v || 0;
+    this.z = last.z || 0;
+
+    // 見た目の車へ反映します。物理は回しません（相手の車は相手のもの）
+    const v = this.vehicle;
+    v.s = this.s; v.u = this.u; v.heading = this.h;
+    v.vx = this.v;
+    v.yawRate = last.w || 0;
+    v.onRamp = this.z === 1; v.onSurface = this.z === 2; v.onAlley = this.z === 3;
+    const sm = this.track.sample(this.s, v._sm || (v._sm = {}));
+    const drop = this.z === 0 ? 0 : dropFor(this.track, this.s, this.z);
+    v.pos.copy(sm.pos).addScaledVector(sm.lat, this.u).addScaledVector(sm.up, drop + 0.02);
+    v.trackIndex = sm.index;
+    this.actor.syncMesh(this.track);
+  }
+
+  dispose(scene) { this.actor.dispose(scene); }
+}
+
+/** ランプ・一般道・路地では路面の高さが本線と違います */
+function dropFor(track, s, z) {
+  if (z === 2 && track.surfaceAt) { const sf = track.surfaceAt(s); return sf ? sf.h : 0; }
+  if (z === 3 && track.alleyAt && track.surfaceAt) { const sf = track.surfaceAt(s); return sf ? sf.h : 0; }
+  if (z === 1 && track.rampAt) { const r = track.rampAt(s); return r ? r.h || 0 : 0; }
+  return 0;
+}
+
+/**
+ * 自車と相手の当たり判定。
+ *
+ * 大事なのは「動かすのは自分の車だけ」という点です。相手の車を押し返すと、
+ * 次に相手から届く位置と喧嘩して、2台がぶるぶる震えます。相手の画面でも
+ * 同じ計算が同時に走っているので、互いに自分のぶんだけ退けば、合計で
+ * ちょうど重なりぶん離れます。
+ *
+ * 押し出す量は相手との重さの比で決めます。軽い車のほうが大きく弾かれる、
+ * という既存の一般車との衝突と同じ考え方です。
+ */
+function collideRemote(game, remote) {
+  if (!remote.have || remote.graceTimer > 0) return 0;
+  const a = game.player.vehicle;
+  const b = remote.vehicle;
+  // 別の道にいるあいだは当たりません（本線と一般道は上下に11m離れています）
+  const za = a.onAlley ? 3 : a.onSurface ? 2 : a.onRamp ? 1 : 0;
+  if (za !== remote.z) return 0;
+
+  const L = game.track.length;
+  const ds = wrapDelta(a.s - remote.s, L);
+  const penL = (a.spec.dims.L + b.spec.dims.L) * 0.5 - Math.abs(ds);
+  if (penL <= 0) return 0;
+  const du = a.u - remote.u;
+  const penW = (a.spec.dims.W + b.spec.dims.W) * 0.5 - Math.abs(du);
+  if (penW <= 0) return 0;
+
+  const ma = a.spec.mass, mb = b.spec.mass;
+  const wa = mb / (ma + mb);      // 自分が退くぶん。相手は相手の画面で残りを退きます
+
+  if (penW < penL * 0.55) {
+    const dir = du >= 0 ? 1 : -1;
+    game.moveOnTrack(a, 0, dir * penW * wa);
+    a.vy = dir * Math.abs(a.vy) * 0.3 + dir * 1.2;
+    a.vx *= 0.995;
+    game.shake = Math.max(game.shake, 0.18);
+  } else {
+    const dir = ds > 0 ? 1 : -1;
+    game.moveOnTrack(a, dir * penL * wa, 0);
+    // 相手の速度は届いた値をそのまま使います
+    const e = 0.22;
+    a.vx = (ma * a.vx + mb * b.vx + mb * e * (b.vx - a.vx)) / (ma + mb);
+    game.shake = Math.max(game.shake, 0.3);
+  }
+  if (a.crashCooldown <= 0) {
+    a.crashCooldown = 0.25;
+    game.emitSparks(a, 10);
+  }
+  return Math.max(penL, penW);
+}
+
+/** 相手の名前を頭の上に出す板。誰と走っているか分からないと対戦になりません */
+function makeTag(text) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const g = cv.getContext('2d');
+  g.font = 'bold 34px "Zen Kaku Gothic New", sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,.85)';
+  g.strokeText(text, 128, 34);
+  g.fillStyle = '#eaf0f8';
+  g.fillText(text, 128, 34);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.anisotropy = 4;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  sp.scale.set(4.2, 1.05, 1);
+  sp.renderOrder = 8;
+  return sp;
+}
+
+
 // ============================== src/audio.js ==============================
 /**
  * 効果音はすべて WebAudio でその場で合成しています（音声ファイルなし）。
@@ -7859,6 +8503,9 @@ const DEFAULT = {
   },
   titles: [],                // 獲得した称号のid
   hintSeen: false,           // 初回の操作ガイドを見たか
+  netName: '',               // オンラインでの表示名
+  netRoom: '',               // 最後に使った合言葉
+  netCourse: '',             // オンラインで走るステージ
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
 
@@ -8075,6 +8722,10 @@ class Game {
     });
     // 依頼（ミッション）。パーキングエリアで受けて、別のPAまで届けます
     this.jobs = new Jobs({ onEvent: (t, p) => this.onEvent(t, p) });
+    // オンライン対戦。部屋に入っているあいだだけ中身が入ります
+    this.net = null;
+    this.remotes = new Map();   // 相手のID -> RemoteCar
+    this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
     this.demo = false;        // メニュー背景の自動走行
     this.autoAI = null;
     this.mode = 'idle';
@@ -8098,6 +8749,85 @@ class Game {
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  // ======================= オンライン対戦 =======================
+
+  /**
+   * 部屋に入ります。中身の通信は net.js が持っていて、ここは
+   * 「相手の車を作る／消す」と「毎フレーム自分の位置を送る」だけを見ます。
+   */
+  attachNet(net) {
+    this.detachNet();
+    this.net = net;
+    net.onChange = () => this.syncRemotes();
+    this.syncRemotes();
+  }
+
+  detachNet() {
+    if (this.net) { this.net.onChange = null; this.net = null; }
+    for (const r of this.remotes.values()) this.disposeRemote(r);
+    this.remotes.clear();
+    this._netPrev = null;
+  }
+
+  /** 参加者の増減を、画面上の車の増減に反映します */
+  syncRemotes() {
+    if (!this.net) return;
+    const live = new Set();
+    for (const m of this.net.others) {
+      live.add(m.id);
+      if (this.remotes.has(m.id)) continue;
+      const r = new RemoteCar(m, this.scene, this.track);
+      r.tag = makeTag(r.name);
+      this.scene.add(r.tag);
+      this.remotes.set(m.id, r);
+      this.onEvent('netjoin', r.name);
+    }
+    for (const [id, r] of this.remotes) {
+      if (live.has(id)) continue;
+      this.onEvent('netleave', r.name);
+      this.disposeRemote(r);
+      this.remotes.delete(id);
+    }
+  }
+
+  disposeRemote(r) {
+    r.dispose(this.scene);
+    if (r.tag) {
+      this.scene.remove(r.tag);
+      if (r.tag.material.map) r.tag.material.map.dispose();
+      r.tag.material.dispose();
+    }
+  }
+
+  /** 自分の位置を送り、相手の位置を進め、当たりを取ります */
+  updateNet(dt) {
+    const net = this.net;
+    if (!net) return;
+    const pv = this.player.vehicle;
+
+    // 送信は net 側で 10Hz に間引かれます
+    const st = sampleState(pv, this._netPrev, this.track.length);
+    if (net.tick(dt, st)) this._netPrev = st;
+
+    for (const m of net.others) {
+      const r = this.remotes.get(m.id);
+      if (!r) continue;
+      r.update(dt, m.states);
+      if (!r.have) continue;
+      // 相手が黙って3秒。回線が切れたか、タブが寝ています。
+      // 当てにいっても仕方がないので、薄くして当たり判定も外します
+      const gone = r.silence > 3;
+      r.actor.mesh.visible = !gone || r.silence < 8;
+      if (r.tag) {
+        r.tag.visible = r.actor.mesh.visible;
+        r.tag.position.copy(r.vehicle.pos);
+        r.tag.position.y += 1.9;
+        r.tag.material.opacity = gone ? 0.35 : 1;
+      }
+      if (!gone) collideRemote(this, r);
+    }
   }
 
   /** コースを切り替えます。前のコースの地形・建物・交通は破棄します。 */
@@ -8800,6 +9530,9 @@ class Game {
       this.collideCars();
     }
 
+    // --- オンラインの相手。自車の位置が確定したあとに当てます
+    if (this.net) this.updateNet(dt);
+
     // --- 高速隊
     if (this.mode === 'racing') {
       this.police.update(dt, this.player, this.buildObstacles(pv));
@@ -9364,6 +10097,7 @@ function show(id) {
   if (id === 'garage') renderGarage();
   if (id === 'story') renderStory();
   if (id === 'records') renderRecords();
+  if (id === 'online') renderOnline();
   if (id === 'settings') syncSettings();
   menuIndex = 0;
   requestAnimationFrame(() => paintMenu(menuButtons()));
@@ -9733,6 +10467,163 @@ function applyCourse(id) {
 
 // ---------------------------------------------------------------- 走行記録
 
+// ---------------------------------------------------------------- オンライン対戦
+
+/*
+ * 合言葉で部屋に入り、同じ道に相手の車を出します。
+ *
+ * 通信の中身は net.js、相手の車の描画と当たりは remote.js が持っています。
+ * ここは画面と、その2つを繋ぐところだけです。
+ */
+
+let net = null;
+let netCfg = null;          // /api/pusher-config の中身
+let netRoom = '';
+
+/** サーバに鍵が入っているか。入っていなければ理由を画面に出します */
+async function loadNetConfig() {
+  if (netCfg) return netCfg;
+  try {
+    const r = await fetch('/api/pusher-config', { cache: 'no-store' });
+    if (!r.ok) throw new Error(String(r.status));
+    netCfg = await r.json();
+  } catch {
+    // 単一ファイル版やファイル直開きには API がありません
+    netCfg = { enabled: false, reason: 'この版にはオンライン対戦のサーバがありません（配信サイト版で遊べます）' };
+  }
+  return netCfg;
+}
+
+function renderOnline() {
+  $('#ol-name').value = data.netName || '';
+  $('#ol-room').value = data.netRoom || '';
+  const sel = $('#ol-course');
+  if (!sel.options.length) {
+    for (const c of COURSES) {
+      const o = document.createElement('option');
+      o.value = c.id; o.textContent = `${c.name}（${(c.length / 1000).toFixed(1)}km）`;
+      sel.appendChild(o);
+    }
+  }
+  sel.value = data.netCourse || game.course.id;
+  $('#ol-setup').classList.toggle('hidden', !!net);
+  $('#ol-lobby').classList.toggle('hidden', !net);
+  const note = $('#ol-note');
+  note.className = 'ol-note';
+  note.textContent = '接続を確認しています…';
+  $('#ol-join').disabled = true;
+  loadNetConfig().then((cfg) => {
+    if (current !== 'online') return;
+    $('#ol-join').disabled = !cfg.enabled;
+    note.className = cfg.enabled ? 'ol-note' : 'ol-note bad';
+    note.textContent = cfg.enabled
+      ? '同じ合言葉を入れた人と同じ部屋になります。相手の車には当たり判定があります。'
+      : cfg.reason;
+  });
+  if (net) renderLobby();
+}
+
+function renderLobby() {
+  if (!net) return;
+  const st = $('#ol-status'), de = $('#ol-detail'), box = $('#ol-members');
+  const live = net.status === 'joined';
+  $('.ol-state').classList.toggle('live', live && net.count > 0);
+  st.textContent = net.status === 'error' ? '入れませんでした'
+    : !live ? '接続しています…'
+    : net.count ? '相手がいます' : '相手を待っています';
+  de.textContent = net.status === 'error' ? net.error : `合言葉「${netRoom}」`;
+  box.innerHTML = '';
+  const rows = [{ name: data.netName || '名無し', carId: data.carId, courseId: data.netCourse, mine: true },
+    ...net.others.map((m) => ({ name: m.info.name, carId: m.info.carId, courseId: m.info.courseId }))];
+  for (const r of rows) {
+    const car = CAR_BY_ID[r.carId];
+    const el = document.createElement('div');
+    el.className = 'ol-mem';
+    const sw = document.createElement('i'); sw.className = 'sw';
+    sw.style.background = '#' + (colorOf(r.carId) || 0x888888).toString(16).padStart(6, '0');
+    const tx = document.createElement('div');
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = r.name || '名無し';
+    const ch = document.createElement('div'); ch.className = 'ch'; ch.textContent = car ? car.chassis : '—';
+    tx.append(nm, ch);
+    el.append(sw, tx);
+    const tail = document.createElement('span');
+    if (r.mine) { tail.className = 'me'; tail.textContent = 'YOU'; }
+    else if (r.courseId && r.courseId !== data.netCourse) {
+      // ここを黙って通すと「部屋には居るのに一生すれ違わない」ことになります
+      tail.className = 'warn';
+      const c = COURSE_BY_ID[r.courseId];
+      tail.textContent = `別のステージ（${c ? c.name : r.courseId}）`;
+    }
+    if (tail.textContent) el.append(tail);
+    box.append(el);
+  }
+  if (!net.others.length) {
+    const e = document.createElement('div');
+    e.className = 'ol-empty';
+    e.textContent = '合言葉を相手に伝えてください。同じ言葉を入れると、ここに出ます。';
+    box.append(e);
+  }
+}
+
+async function joinRoom() {
+  const cfg = await loadNetConfig();
+  if (!cfg.enabled) return;
+  const name = ($('#ol-name').value || '').trim().slice(0, 16) || '名無し';
+  const room = ($('#ol-room').value || '').trim();
+  if (!room) { const n = $('#ol-note'); n.className = 'ol-note bad'; n.textContent = '合言葉を入れてください。'; return; }
+  const courseId = $('#ol-course').value;
+  data.netName = name; data.netRoom = room; data.netCourse = courseId;
+  save(data);
+  netRoom = room;
+
+  const channel = await roomChannel(room);
+  net = new Net(new PusherTransport({ key: cfg.key, cluster: cfg.cluster }));
+  net.onChange = () => { if (current === 'online') renderLobby(); };
+  $('#ol-setup').classList.add('hidden');
+  $('#ol-lobby').classList.remove('hidden');
+  renderLobby();
+  await net.join(channel, { name, carId: data.carId, color: colorOf(data.carId), courseId });
+  renderLobby();
+}
+
+function leaveRoom() {
+  if (net) { net.leave(); net = null; }
+  if (game) game.detachNet();
+  $('#hud-net').style.display = 'none';
+  if (current === 'online') { $('#ol-setup').classList.remove('hidden'); $('#ol-lobby').classList.add('hidden'); }
+}
+
+/** 部屋に入ったまま走り出します */
+function startOnline() {
+  if (!net || net.status !== 'joined') return;
+  mode = 'online';
+  if (data.netCourse && data.netCourse !== game.course.id) game.setCourse(data.netCourse);
+  preparePlayer();
+  game.setRival(null);
+  game.setPaRacers(unlockedRivals());
+  game.start('free', { startS: 0, rollingStart: true });
+  game.attachNet(net);
+  hud.setBattle(false);
+  hud.message('オンライン', net.count ? `${net.others[0].info.name} と同じ道にいます` : '相手を待っています', 2400);
+  hideAll();
+  audio.resume();
+}
+
+/** 走行中、通信の状態を出します */
+function paintNetHud() {
+  const el = $('#hud-net');
+  if (!net || mode !== 'online' || current !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = '';
+  const n = net.count;
+  const r = game && game.remotes.size ? [...game.remotes.values()][0] : null;
+  const lost = !!(r && r.silence > 3);
+  el.classList.toggle('lost', lost || !n);
+  el.innerHTML = '';
+  const b = document.createElement('b');
+  b.textContent = !n ? '相手なし' : lost ? '相手の通信が途切れています' : `${r ? r.name : ''} と対戦中`;
+  el.append(b);
+}
+
 function renderRecords() {
   const st = data.stats;
   const km = (m) => `${(m / 1000).toFixed(1)} km`;
@@ -9958,6 +10849,8 @@ function restart() {
   if (mode === 'battle') startBattle(currentRival, battleOpts);
   else if (mode === 'free') startFree();
   else if (mode === 'ta') startTA();
+  // オンラインは部屋に入ったまま走り直します（入り直すと相手から一度消えます）
+  else if (mode === 'online') startOnline();
 }
 
 // ---------------------------------------------------------------- リザルト
@@ -10097,6 +10990,12 @@ $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   show(go);
 }));
 
+$('#ol-join').addEventListener('click', () => { joinRoom(); });
+$('#ol-leave').addEventListener('click', () => { leaveRoom(); renderOnline(); });
+$('#ol-go').addEventListener('click', () => { startOnline(); });
+// 合言葉は Enter でも入れます
+$('#ol-room').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
+
 input.onAction = (code) => {
   if (code === 'Escape') {
     if (pitStop && current === 'garage') { closePit(); return; }
@@ -10230,6 +11129,7 @@ function loop(now) {
       hud.update(dt, game.hudState(data.money));
       const v = game.player.vehicle;
       $('#speedvignette').style.opacity = String(clamp((v.speedKmh - 130) / 150, 0, 1));
+      if (net) paintNetHud();
     } else if (game.demo && current !== 'loading') {
       game.update(dt, NEUTRAL, null);
     }
@@ -10268,7 +11168,11 @@ async function boot() {
   window.addEventListener('pointerdown', () => audio.resume(), { once: true });
   window.addEventListener('keydown', () => audio.resume(), { once: true });
 
-  if (location.search.includes('debug')) window.__game = game;
+  if (location.search.includes('debug')) {
+    window.__game = game;
+    // テストから通信層を直接叩けるようにします（鍵なしの Loopback を挿すため）
+    window.__net = { Net, LoopbackTransport, PusherTransport, roomChannel, sampleState, setClock };
+  }
 
   // タイトル画面でも背景として走らせておく（デモ走行）
   show('title');
