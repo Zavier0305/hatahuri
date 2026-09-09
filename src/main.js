@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Game, CAM_MODES } from './game.js';
+import { Net, LoopbackTransport, PusherTransport, roomChannel, sampleState, setClock } from './net.js';
 import { HUD } from './hud.js';
 import { Input } from './input.js';
 import { AudioEngine } from './audio.js';
@@ -968,7 +969,11 @@ async function boot() {
   window.addEventListener('pointerdown', () => audio.resume(), { once: true });
   window.addEventListener('keydown', () => audio.resume(), { once: true });
 
-  if (location.search.includes('debug')) window.__game = game;
+  if (location.search.includes('debug')) {
+    window.__game = game;
+    // テストから通信層を直接叩けるようにします（鍵なしの Loopback を挿すため）
+    window.__net = { Net, LoopbackTransport, PusherTransport, roomChannel, sampleState, setClock };
+  }
 
   // タイトル画面でも背景として走らせておく（デモ走行）
   show('title');

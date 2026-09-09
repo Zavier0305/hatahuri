@@ -14,6 +14,8 @@ import { Police } from './police.js';
 import { Jobs } from './jobs.js';
 import { Crossing } from './crossing.js';
 import { Skid } from './skid.js';
+import { Net, sampleState } from './net.js';
+import { RemoteCar, collideRemote, makeTag } from './remote.js';
 import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
@@ -166,6 +168,10 @@ export class Game {
     });
     // 依頼（ミッション）。パーキングエリアで受けて、別のPAまで届けます
     this.jobs = new Jobs({ onEvent: (t, p) => this.onEvent(t, p) });
+    // オンライン対戦。部屋に入っているあいだだけ中身が入ります
+    this.net = null;
+    this.remotes = new Map();   // 相手のID -> RemoteCar
+    this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
     this.demo = false;        // メニュー背景の自動走行
     this.autoAI = null;
     this.mode = 'idle';
@@ -189,6 +195,85 @@ export class Game {
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  // ======================= オンライン対戦 =======================
+
+  /**
+   * 部屋に入ります。中身の通信は net.js が持っていて、ここは
+   * 「相手の車を作る／消す」と「毎フレーム自分の位置を送る」だけを見ます。
+   */
+  attachNet(net) {
+    this.detachNet();
+    this.net = net;
+    net.onChange = () => this.syncRemotes();
+    this.syncRemotes();
+  }
+
+  detachNet() {
+    if (this.net) { this.net.onChange = null; this.net = null; }
+    for (const r of this.remotes.values()) this.disposeRemote(r);
+    this.remotes.clear();
+    this._netPrev = null;
+  }
+
+  /** 参加者の増減を、画面上の車の増減に反映します */
+  syncRemotes() {
+    if (!this.net) return;
+    const live = new Set();
+    for (const m of this.net.others) {
+      live.add(m.id);
+      if (this.remotes.has(m.id)) continue;
+      const r = new RemoteCar(m, this.scene, this.track);
+      r.tag = makeTag(r.name);
+      this.scene.add(r.tag);
+      this.remotes.set(m.id, r);
+      this.onEvent('netjoin', r.name);
+    }
+    for (const [id, r] of this.remotes) {
+      if (live.has(id)) continue;
+      this.onEvent('netleave', r.name);
+      this.disposeRemote(r);
+      this.remotes.delete(id);
+    }
+  }
+
+  disposeRemote(r) {
+    r.dispose(this.scene);
+    if (r.tag) {
+      this.scene.remove(r.tag);
+      if (r.tag.material.map) r.tag.material.map.dispose();
+      r.tag.material.dispose();
+    }
+  }
+
+  /** 自分の位置を送り、相手の位置を進め、当たりを取ります */
+  updateNet(dt) {
+    const net = this.net;
+    if (!net) return;
+    const pv = this.player.vehicle;
+
+    // 送信は net 側で 10Hz に間引かれます
+    const st = sampleState(pv, this._netPrev, this.track.length);
+    if (net.tick(dt, st)) this._netPrev = st;
+
+    for (const m of net.others) {
+      const r = this.remotes.get(m.id);
+      if (!r) continue;
+      r.update(dt, m.states);
+      if (!r.have) continue;
+      // 相手が黙って3秒。回線が切れたか、タブが寝ています。
+      // 当てにいっても仕方がないので、薄くして当たり判定も外します
+      const gone = r.silence > 3;
+      r.actor.mesh.visible = !gone || r.silence < 8;
+      if (r.tag) {
+        r.tag.visible = r.actor.mesh.visible;
+        r.tag.position.copy(r.vehicle.pos);
+        r.tag.position.y += 1.9;
+        r.tag.material.opacity = gone ? 0.35 : 1;
+      }
+      if (!gone) collideRemote(this, r);
+    }
   }
 
   /** コースを切り替えます。前のコースの地形・建物・交通は破棄します。 */
@@ -890,6 +975,9 @@ export class Game {
       this.collideTraffic(this.rival);
       this.collideCars();
     }
+
+    // --- オンラインの相手。自車の位置が確定したあとに当てます
+    if (this.net) this.updateNet(dt);
 
     // --- 高速隊
     if (this.mode === 'racing') {
