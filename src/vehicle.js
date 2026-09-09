@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, wrapAngle, RADS_TO_RPM, KMH } from './util.js';
-import { rampHeightAtU } from './track.js';
+import { rampHeightAtU, ALLEY, levelH } from './track.js';
 
 const G = 9.81;
 const RHO = 1.225;      // 空気密度[kg/m^3]
@@ -223,7 +223,10 @@ export class Vehicle {
       //
       // AI が運転しているとき（メニューのデモ）は掛けません。AI は自分で
       // 道への角度を計算して舵を出しているので、二重に当てると乱れます。
-      if (!this.autoSteer && v > 8 && Math.abs(inp.steer) < 0.10 && this.roadHeading !== undefined) {
+      // 路地は道と直角に走るので、直進復帰補助を効かせると本線の向きへ
+    // 引き戻され、まっすぐ入れません。
+    if (!this.autoSteer && this.zone !== 'alley'
+      && v > 8 && Math.abs(inp.steer) < 0.10 && this.roadHeading !== undefined) {
         const err = wrapAngle(this.roadHeading - this.heading);
         const wantYaw = v * (this.roadCurv || 0);
         const kp = clamp(2.2 / (1 + v * 0.02), 0.85, 2.2);
@@ -438,11 +441,19 @@ export class Vehicle {
       && !!track.rampAt && roam >= 1;
     const ramp = canLeave ? track.rampAt(pr.s) : null;
     const surf = (canLeave && roam >= 2 && track.surfaceAt) ? track.surfaceAt(pr.s) : null;
+    // 路地は一般道から折れて入る、行き止まりの道。高速隊は入ってきません
+    const alley = (surf && !this.offRoadAI && track.alleyAt) ? track.alleyAt(pr.s) : null;
     let rampH = 0;
     const roadLo = lo;
     if (!canLeave) {
       this.zone = 'road';
+    } else if (this.zone === 'alley') {
+      // 一般道の幅に戻ったら、路地から出たことにします
+      if (!alley || !surf || pr.u > surf.u - surf.half + 1.0) this.zone = surf ? 'surf' : 'road';
     } else if (this.zone === 'surf') {
+      // 一般道の外側の縁を越えて、路地の入口にいれば路地へ
+      if (alley && pr.u < surf.u - surf.half && pr.u > alley.uOuter) this.zone = 'alley';
+      else
       // 戻る条件を出る条件より 2m 内側にしています。同じ境目で判定すると、
       // 縁に沿って走っているあいだ毎フレーム行き来して車が暴れます
       // （実際に、広場の端で前後不覚になりました）。
@@ -469,13 +480,27 @@ export class Vehicle {
       if (ramp && pr.u < roadLo && pr.u >= ramp.outerU + half) this.zone = 'ramp';
     }
 
-    if (this.zone === 'ramp' && ramp) {
+    let sLo = -Infinity, sHi = Infinity;
+    if (this.zone === 'alley' && alley) {
+      lo = alley.uOuter + half;
+      hi = surf ? surf.u + surf.half - half : alley.uInner;
+      // 路地は横に長いので、高さは横位置ごとに求めます（水平に保つため）
+      rampH = levelH(track.sample(pr.s, this._sm2 || (this._sm2 = {})), pr.u, alley.drop);
+      // 路地では、見張る向きが入れ替わります（横ではなく前後が壁）
+      const halfL = this.spec.dims.L * 0.5;
+      sLo = alley.s0 - ALLEY.half + halfL * 0.35;
+      sHi = alley.s0 + ALLEY.half - halfL * 0.35;
+    } else if (this.zone === 'ramp' && ramp) {
       lo = ramp.outerU + half;
       hi = Math.min(hi, ramp.innerU - half);
       rampH = rampHeightAtU(ramp, pr.u);
     } else if (this.zone === 'surf' && surf) {
       lo = surf.u - surf.half + half;
       hi = surf.u + surf.half - half;
+      // 路地の口では、外側の縁を開けておきます。
+      // 閉じたままだと当たり判定が車を押し戻し、「外へ出た」という条件が
+      // 永久に成立しません（ランプから一般道へ出るときと同じ落とし穴です）。
+      if (alley && Math.abs(alley.d) < ALLEY.half - 0.4) lo = alley.uOuter + half;
       rampH = surf.h;
     } else if (ramp) {
       // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
@@ -483,7 +508,28 @@ export class Vehicle {
     }
     this.onRamp = this.zone === 'ramp';
     this.onSurface = this.zone === 'surf';
+    this.onAlley = this.zone === 'alley';
     this.rampHeight = rampH;
+
+    // 路地の突き当たりと両側（s方向の壁）
+    if (this.zone === 'alley') {
+      let sh = 0;
+      if (pr.s < sLo) sh = -1; else if (pr.s > sHi) sh = 1;
+      if (sh !== 0) {
+        const targetS = sh < 0 ? sLo + 0.04 : sHi - 0.04;
+        const sm2 = track.sample(targetS, this._sm);
+        this.pos.copy(sm2.pos).addScaledVector(sm2.lat, pr.u).addScaledVector(sm2.up, 0.02 + rampH);
+        this.s = targetS;
+        this.trackIndex = sm2.index;
+        // 路地では車の向きが道と直角なので、前後どちらの成分が壁へ向かって
+        // いるかを一概に決められません。両方をまとめて落とします。
+        const spd = Math.hypot(this.vx, this.vy);
+        this.vx *= 0.42; this.vy *= 0.42;
+        this.yawRate *= 0.5;
+        this.onWall = 1;
+        return Math.min(spd, 8);
+      }
+    }
 
     let hit = 0;
     if (pr.u < lo) hit = -1;
@@ -524,6 +570,9 @@ export class Vehicle {
     if (this.onRamp && track.rampAt) {
       const r = track.rampAt(this.s);
       if (r) hOff = rampHeightAtU(r, this.u);
+    } else if (this.onAlley && track.alleyAt) {
+      const a2 = track.alleyAt(this.s);
+      if (a2) hOff = levelH(sm, this.u, a2.drop);
     } else if (this.onSurface && track.surfaceAt) {
       const sf = track.surfaceAt(this.s);
       if (sf) hOff = sf.h;

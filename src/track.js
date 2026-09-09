@@ -140,6 +140,38 @@ export function signalPoints(track) {
   return out;
 }
 
+/**
+ * 路地。一般道から直角に折れて入る、行き止まりの短い道です。
+ *
+ * ここまでの道はすべて「本線に沿って進む」ものでしたが、路地は本線を横切る
+ * 向きに延びます。s を固定して u が動く帯、と考えれば同じ座標系で書けます。
+ * 走れる範囲の見張り方が、u ではなく s になるだけです。
+ *
+ * 高速隊は路地へ入ってきません。一般道まで追ってくるようにした以上、
+ * 逃げ込む場所が要ります（パーキングエリアだけだと遠すぎます）。
+ */
+// この車には後退ギアがありません。行き止まりで切り返せない幅にすると、
+// 入った時点で詰みます。転回できる幅（18m）にしてあります。
+export const ALLEY = { half: 9.0, len: 46 };
+
+/**
+ * 本線から drop[m] 下がった「水平な」面の高さを返します。
+ *
+ * 位置は pos + lat*u + up*h で決まりますが、バンクのかかった区間では lat が
+ * 傾いています（最大 lat.y = 0.11）。u が大きいほど高さがずれ、一般道は
+ * 本来の落差から最大5.2mずれ、路地は46mで5mの坂になっていました。
+ * lat の傾きぶんを h で打ち消して、水平に保ちます。
+ */
+export function levelH(sm, u, drop) {
+  return (drop - sm.lat.y * u) / (sm.up.y || 1);
+}
+
+/** 路地を作る場所。信号のある交差点の3つに1つ。 */
+export function alleyPoints(track) {
+  const sig = signalPoints(track);
+  return sig.filter((_, i) => i % 3 === 0);
+}
+
 /** 節点のあいだの、つなぎ方。両端は平ら（PAの周りを水平に保つため）。 */
 function surfBlend(k) {
   const x = Math.min(1, Math.max(0, (k - 0.2) / 0.6));
@@ -533,6 +565,26 @@ export function createTrack(course) {
     isTunnel(s) { return this.zoneAt(s) === 'tunnel'; },
 
     /**
+     * その地点に路地があるか。あれば入口と奥の横位置を返します。
+     * 車の中心が路地の幅（s方向）に入っていれば「路地のところにいる」。
+     */
+    alleyAt(s) {
+      const list = this.alleys;
+      if (!list || !list.length) return null;
+      const x = ((s % length) + length) % length;
+      for (const a2 of list) {
+        let d = x - a2.s;
+        if (d < -length / 2) d += length;
+        if (d > length / 2) d -= length;
+        if (Math.abs(d) > ALLEY.half + 3) continue;
+        // 高さは横位置ごとに変わります（水平に保つため）。drop を返して
+        // 呼ぶ側で levelH を使ってもらいます。
+        return { s0: a2.s, d, uInner: a2.uInner, uOuter: a2.uOuter, drop: a2.drop };
+      }
+      return null;
+    },
+
+    /**
      * その地点の一般道（側道）。横位置・高さ・半幅を返します。
      * 節点（＝各パーキングエリアの中心）のあいだを、両端が平らになる
      * つなぎ方で補間します。PAの周りが水平でないと、出入りで段差ができます。
@@ -550,16 +602,17 @@ export function createTrack(course) {
         if (span <= 0) span += length;
         if (d > span) continue;
         const k = surfBlend(d / span);
-        return {
-          u: a2.u + (b2.u - a2.u) * k,
-          h: a2.h + (b2.h - a2.h) * k,
-          half: SURF.half,
-        };
+        const u = a2.u + (b2.u - a2.u) * k;
+        const drop = a2.h + (b2.h - a2.h) * k;
+        // バンクで lat が傾いている区間でも、道が水平に保たれるようにします
+        const sm = this.sample(x, this._surfSm || (this._surfSm = {}));
+        return { u, drop, h: levelH(sm, u, drop), half: SURF.half };
       }
       return null;
     },
   };
 
+  track.alleys = null;
   // 側道の節点＝各パーキングエリアの中心。
   // paSpots は track.rampAt を使うので、track を作ったあとで求めます。
   {
@@ -570,6 +623,15 @@ export function createTrack(course) {
       ? sp.map((n) => ({ s: n.s, u: n.outerU + SURF.offset, h: n.h }))
         .sort((a2, b2) => a2.s - b2.s)
       : null;
+  }
+  // 路地。一般道ができてからでないと位置を決められません
+  if (track.surfaceNodes) {
+    track.alleys = alleyPoints(track).map((s2) => {
+      const sf = track.surfaceAt(s2);
+      return sf
+        ? { s: s2, uInner: sf.u - sf.half, uOuter: sf.u - sf.half - ALLEY.len, drop: sf.drop }
+        : null;
+    }).filter(Boolean);
   }
   return track;
 }

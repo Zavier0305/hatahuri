@@ -307,7 +307,8 @@ export class Police {
     const near = this.nearest(v);
     this._near = near;
     // 一般道もランプと同じで、パトカーは降りてこられません
-    const hidden = v.onRamp || v.onSurface;
+    // 路地とパーキングエリアは、パトカーが入ってこられない逃げ場です
+    const hidden = v.onRamp || v.onAlley;
     const away = over <= 0.001 && (near > 300 || hidden);
     if (this.level > 0 && away) {
       this.evade += dt * (hidden ? 2.4 : 1);
@@ -324,7 +325,7 @@ export class Police {
     // パーキングエリアの中では捕まりません。一般道まで追ってくるようにしたので、
     // どこかに「確実に逃げ込める場所」を残しておかないと、逃げ道のない
     // 鬼ごっこになります。パトカーは広場へは入らず、一般道を通り過ぎます。
-    if (this.level > 0 && !v.onRamp && near < 16 && v.speedKmh < 45) {
+    if (this.level > 0 && !v.onRamp && !v.onAlley && near < 16 && v.speedKmh < 45) {
       this.bust += dt;
       if (this.bust > 2.5) {
         const lv = this.level;

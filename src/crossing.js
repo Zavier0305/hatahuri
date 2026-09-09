@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { rng, clamp } from './util.js';
 import { buildTrafficCar } from './carModel.js';
-import { signalPhase } from './track.js';
+import { signalPhase, levelH } from './track.js';
 
 const CROSS_COLORS = [0xd8dade, 0x1b1d22, 0x5a6068, 0x2a3a5a, 0x8f9298, 0xbfc3c8];
 
@@ -28,7 +28,7 @@ export class Crossing {
       model.root.visible = false;
       this.group.add(model.root);
       this.cars.push({
-        model, active: false, s: 0, u: 0, dir: 1, vx: 0, h: 0,
+        model, active: false, s: 0, u: 0, dir: 1, vx: 0, drop: 0,
         halfL: model.length * 0.5, halfW: model.width * 0.5,
       });
     }
@@ -83,7 +83,7 @@ export class Crossing {
       c.dir = this.rand() < 0.5 ? 1 : -1;
       c.u = sf.u - c.dir * (24 + (c.slot || 0) * 10);
       c.vx = (28 + this.rand() * 16) / 3.6;
-      c.h = sf.h;
+      c.drop = sf.drop;
       c.active = true;
       c.model.root.visible = true;
       this.place(c);
@@ -93,7 +93,9 @@ export class Crossing {
   place(c) {
     const sm = this.track.sample(c.s, this._sm);
     const root = c.model.root;
-    root.position.copy(sm.pos).addScaledVector(sm.lat, c.u).addScaledVector(sm.up, c.h + 0.01);
+    // 横切る車も、道を渡るあいだ水平に保ちます
+    const h = levelH(sm, c.u, c.drop);
+    root.position.copy(sm.pos).addScaledVector(sm.lat, c.u).addScaledVector(sm.up, h + 0.01);
     // 進む向きは横（lat）。右手系（X×Y=Z）になるよう X には tan を取ります
     const fwd = this._f.copy(sm.lat).multiplyScalar(c.dir);
     const left = this._x.copy(sm.tan).multiplyScalar(c.dir);

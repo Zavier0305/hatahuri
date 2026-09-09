@@ -991,7 +991,7 @@ export class Game {
     // カメラが壁やビルにめり込まないよう、道路の内側・路面より上に押し戻します
     // ランプに降りているあいだは、カメラを本線の枠に押し戻してはいけません
     // （押し戻すと、車だけ下のランプにいてカメラが上の本線に残ります）。
-    if (cm.id !== 'hood' && !v.onRamp && !v.onSurface) {
+    if (cm.id !== 'hood' && !v.onRamp && !v.onSurface && !v.onAlley) {
       const pr = this.track.project(this.camPos, v.trackIndex);
       const maxU = ROAD.halfRoad - 1.0;
       const cu = clamp(pr.u, -maxU, maxU);
@@ -1042,7 +1042,7 @@ export class Game {
     // ランプと広場は本線の街灯から40m以上離れて11m下にあるため、真っ暗でした
     // （実際に、降りると車も白線も見えませんでした）。灯りをランプ沿いに
     // 置き直します。置いた照明柱は自己発光しているだけで周りを照らしません。
-    if (v.onSurface && this.track.surfaceAt) {
+    if ((v.onSurface || v.onAlley) && this.track.surfaceAt) {
       // 一般道も本線から離れているので、街灯を沿道へ移します
       const RSTEP = 40;
       const rb = Math.round(v.s / RSTEP);
@@ -1260,7 +1260,9 @@ export class Game {
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
       wet: this.wet,
-      zoneText: v.onSurface
+      zoneText: v.onAlley
+        ? `${this.course.name}  路地  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
+        : v.onSurface
         ? `${this.course.name}  一般道  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
         : v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
         ? `${this.course.name}  ${this.track.rampAt(v.s).name} ${this.track.rampAt(v.s).pad > 0.35 ? 'パーキングエリア' : '出口ランプ'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`

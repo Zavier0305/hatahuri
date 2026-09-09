@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rng, clamp, lerp, TAU } from './util.js';
-import { ROAD, RAMP, rampHeightAtU, PA, paBayZ, SURF, signalPoints } from './track.js';
+import { ROAD, RAMP, rampHeightAtU, PA, paBayZ, SURF, signalPoints, ALLEY, levelH } from './track.js';
 
 // ---------------------------------------------------------------- 空と海
 
@@ -1293,6 +1293,65 @@ export function buildSurfaceRoad(track, scene) {
   strip(OUT, (r) => OUT(r) + 0.5, 0.10, kerb);            // 外側の縁石
   strip((r) => IN(r) - 0.5, IN, 0.10, kerb);              // 内側の縁石
   strip((r) => r.sf.u - 0.09, (r) => r.sf.u + 0.09, 0.012, line);   // センターライン
+
+  // ---- 路地。一般道から直角に折れて入る、行き止まりの短い道
+  for (const a2 of (track.alleys || [])) {
+    track.sample(a2.s, sm);
+    const g7 = new THREE.Group();
+    g7.position.copy(sm.pos);
+    const m7 = new THREE.Matrix4();
+    m7.makeBasis(sm.lat, sm.up, new THREE.Vector3().copy(sm.tan).negate());
+    g7.quaternion.setFromRotationMatrix(m7);
+    const W = ALLEY.half * 2;
+    // 高さは横位置ごとに変わります（バンクを打ち消して水平に保つため）。
+    // 一枚板で置くと、路地が5mの坂になります。
+    const H = (u) => levelH(sm, u, a2.drop);
+    const hIn = H(a2.uInner), hOut = H(a2.uOuter);
+    /** 路地に沿った帯を、両端の高さを合わせて張ります */
+    const slab = (uA, uB, yOff, th, w, mat) => {
+      const pos = [], idx = [];
+      for (let i = 0; i < 2; i++) {
+        const u = i === 0 ? uA : uB;
+        const y = H(u) + yOff;
+        for (let q = 0; q < 2; q++) {
+          const z = (q === 0 ? -1 : 1) * w * 0.5;
+          pos.push(u, y, z);
+        }
+      }
+      idx.push(0, 1, 3, 0, 3, 2);
+      const gg = new THREE.BufferGeometry();
+      gg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      gg.setIndex(idx);
+      gg.computeVertexNormals();
+      gg.computeBoundingSphere();
+      const m = new THREE.Mesh(gg, mat);
+      g7.add(m);
+      return m;
+    };
+    slab(a2.uInner, a2.uOuter, 0.02, 0, W, road);
+    // 両側の縁石（細い帯を2本）
+    for (const dz of [-ALLEY.half + 0.25, ALLEY.half - 0.25]) {
+      const k = new THREE.Mesh(new THREE.BoxGeometry(ALLEY.len, 0.16, 0.5), kerb);
+      k.position.set((a2.uInner + a2.uOuter) * 0.5, (hIn + hOut) * 0.5 + 0.08, dz);
+      k.rotation.z = Math.atan2(hOut - hIn, a2.uOuter - a2.uInner);
+      g7.add(k);
+    }
+    // 突き当たりの壁
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.6, 4.4, W),
+      new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.9, metalness: 0.05 }));
+    wall.position.set(a2.uOuter - 0.3, hOut + 2.2, 0);
+    g7.add(wall);
+    // 奥の街灯（ここに入れることを気づかせる目印）
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.18, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0xffe7bb, emissive: 0xffd79a, emissiveIntensity: 3.4 }));
+    lamp.position.set(a2.uOuter + 3.5, H(a2.uOuter + 3.5) + 5.0, 0);
+    g7.add(lamp);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 5.2, 6),
+      new THREE.MeshStandardMaterial({ color: 0x4a4f57, roughness: 0.7, metalness: 0.3 }));
+    pole.position.set(a2.uOuter + 3.5, H(a2.uOuter + 3.5) + 2.6, ALLEY.half - 0.6);
+    g7.add(pole);
+    group.add(g7);
+  }
 
   // ---- 信号と交差点
   // 色は game 側が毎フレーム決めます（近くの数個だけ）。

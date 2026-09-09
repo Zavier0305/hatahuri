@@ -2496,6 +2496,38 @@ function signalPoints(track) {
   return out;
 }
 
+/**
+ * 路地。一般道から直角に折れて入る、行き止まりの短い道です。
+ *
+ * ここまでの道はすべて「本線に沿って進む」ものでしたが、路地は本線を横切る
+ * 向きに延びます。s を固定して u が動く帯、と考えれば同じ座標系で書けます。
+ * 走れる範囲の見張り方が、u ではなく s になるだけです。
+ *
+ * 高速隊は路地へ入ってきません。一般道まで追ってくるようにした以上、
+ * 逃げ込む場所が要ります（パーキングエリアだけだと遠すぎます）。
+ */
+// この車には後退ギアがありません。行き止まりで切り返せない幅にすると、
+// 入った時点で詰みます。転回できる幅（18m）にしてあります。
+const ALLEY = { half: 9.0, len: 46 };
+
+/**
+ * 本線から drop[m] 下がった「水平な」面の高さを返します。
+ *
+ * 位置は pos + lat*u + up*h で決まりますが、バンクのかかった区間では lat が
+ * 傾いています（最大 lat.y = 0.11）。u が大きいほど高さがずれ、一般道は
+ * 本来の落差から最大5.2mずれ、路地は46mで5mの坂になっていました。
+ * lat の傾きぶんを h で打ち消して、水平に保ちます。
+ */
+function levelH(sm, u, drop) {
+  return (drop - sm.lat.y * u) / (sm.up.y || 1);
+}
+
+/** 路地を作る場所。信号のある交差点の3つに1つ。 */
+function alleyPoints(track) {
+  const sig = signalPoints(track);
+  return sig.filter((_, i) => i % 3 === 0);
+}
+
 /** 節点のあいだの、つなぎ方。両端は平ら（PAの周りを水平に保つため）。 */
 function surfBlend(k) {
   const x = Math.min(1, Math.max(0, (k - 0.2) / 0.6));
@@ -2889,6 +2921,26 @@ function createTrack(course) {
     isTunnel(s) { return this.zoneAt(s) === 'tunnel'; },
 
     /**
+     * その地点に路地があるか。あれば入口と奥の横位置を返します。
+     * 車の中心が路地の幅（s方向）に入っていれば「路地のところにいる」。
+     */
+    alleyAt(s) {
+      const list = this.alleys;
+      if (!list || !list.length) return null;
+      const x = ((s % length) + length) % length;
+      for (const a2 of list) {
+        let d = x - a2.s;
+        if (d < -length / 2) d += length;
+        if (d > length / 2) d -= length;
+        if (Math.abs(d) > ALLEY.half + 3) continue;
+        // 高さは横位置ごとに変わります（水平に保つため）。drop を返して
+        // 呼ぶ側で levelH を使ってもらいます。
+        return { s0: a2.s, d, uInner: a2.uInner, uOuter: a2.uOuter, drop: a2.drop };
+      }
+      return null;
+    },
+
+    /**
      * その地点の一般道（側道）。横位置・高さ・半幅を返します。
      * 節点（＝各パーキングエリアの中心）のあいだを、両端が平らになる
      * つなぎ方で補間します。PAの周りが水平でないと、出入りで段差ができます。
@@ -2906,16 +2958,17 @@ function createTrack(course) {
         if (span <= 0) span += length;
         if (d > span) continue;
         const k = surfBlend(d / span);
-        return {
-          u: a2.u + (b2.u - a2.u) * k,
-          h: a2.h + (b2.h - a2.h) * k,
-          half: SURF.half,
-        };
+        const u = a2.u + (b2.u - a2.u) * k;
+        const drop = a2.h + (b2.h - a2.h) * k;
+        // バンクで lat が傾いている区間でも、道が水平に保たれるようにします
+        const sm = this.sample(x, this._surfSm || (this._surfSm = {}));
+        return { u, drop, h: levelH(sm, u, drop), half: SURF.half };
       }
       return null;
     },
   };
 
+  track.alleys = null;
   // 側道の節点＝各パーキングエリアの中心。
   // paSpots は track.rampAt を使うので、track を作ったあとで求めます。
   {
@@ -2926,6 +2979,15 @@ function createTrack(course) {
       ? sp.map((n) => ({ s: n.s, u: n.outerU + SURF.offset, h: n.h }))
         .sort((a2, b2) => a2.s - b2.s)
       : null;
+  }
+  // 路地。一般道ができてからでないと位置を決められません
+  if (track.surfaceNodes) {
+    track.alleys = alleyPoints(track).map((s2) => {
+      const sf = track.surfaceAt(s2);
+      return sf
+        ? { s: s2, uInner: sf.u - sf.half, uOuter: sf.u - sf.half - ALLEY.len, drop: sf.drop }
+        : null;
+    }).filter(Boolean);
   }
   return track;
 }
@@ -3378,7 +3440,10 @@ class Vehicle {
       //
       // AI が運転しているとき（メニューのデモ）は掛けません。AI は自分で
       // 道への角度を計算して舵を出しているので、二重に当てると乱れます。
-      if (!this.autoSteer && v > 8 && Math.abs(inp.steer) < 0.10 && this.roadHeading !== undefined) {
+      // 路地は道と直角に走るので、直進復帰補助を効かせると本線の向きへ
+    // 引き戻され、まっすぐ入れません。
+    if (!this.autoSteer && this.zone !== 'alley'
+      && v > 8 && Math.abs(inp.steer) < 0.10 && this.roadHeading !== undefined) {
         const err = wrapAngle(this.roadHeading - this.heading);
         const wantYaw = v * (this.roadCurv || 0);
         const kp = clamp(2.2 / (1 + v * 0.02), 0.85, 2.2);
@@ -3593,11 +3658,19 @@ class Vehicle {
       && !!track.rampAt && roam >= 1;
     const ramp = canLeave ? track.rampAt(pr.s) : null;
     const surf = (canLeave && roam >= 2 && track.surfaceAt) ? track.surfaceAt(pr.s) : null;
+    // 路地は一般道から折れて入る、行き止まりの道。高速隊は入ってきません
+    const alley = (surf && !this.offRoadAI && track.alleyAt) ? track.alleyAt(pr.s) : null;
     let rampH = 0;
     const roadLo = lo;
     if (!canLeave) {
       this.zone = 'road';
+    } else if (this.zone === 'alley') {
+      // 一般道の幅に戻ったら、路地から出たことにします
+      if (!alley || !surf || pr.u > surf.u - surf.half + 1.0) this.zone = surf ? 'surf' : 'road';
     } else if (this.zone === 'surf') {
+      // 一般道の外側の縁を越えて、路地の入口にいれば路地へ
+      if (alley && pr.u < surf.u - surf.half && pr.u > alley.uOuter) this.zone = 'alley';
+      else
       // 戻る条件を出る条件より 2m 内側にしています。同じ境目で判定すると、
       // 縁に沿って走っているあいだ毎フレーム行き来して車が暴れます
       // （実際に、広場の端で前後不覚になりました）。
@@ -3624,13 +3697,27 @@ class Vehicle {
       if (ramp && pr.u < roadLo && pr.u >= ramp.outerU + half) this.zone = 'ramp';
     }
 
-    if (this.zone === 'ramp' && ramp) {
+    let sLo = -Infinity, sHi = Infinity;
+    if (this.zone === 'alley' && alley) {
+      lo = alley.uOuter + half;
+      hi = surf ? surf.u + surf.half - half : alley.uInner;
+      // 路地は横に長いので、高さは横位置ごとに求めます（水平に保つため）
+      rampH = levelH(track.sample(pr.s, this._sm2 || (this._sm2 = {})), pr.u, alley.drop);
+      // 路地では、見張る向きが入れ替わります（横ではなく前後が壁）
+      const halfL = this.spec.dims.L * 0.5;
+      sLo = alley.s0 - ALLEY.half + halfL * 0.35;
+      sHi = alley.s0 + ALLEY.half - halfL * 0.35;
+    } else if (this.zone === 'ramp' && ramp) {
       lo = ramp.outerU + half;
       hi = Math.min(hi, ramp.innerU - half);
       rampH = rampHeightAtU(ramp, pr.u);
     } else if (this.zone === 'surf' && surf) {
       lo = surf.u - surf.half + half;
       hi = surf.u + surf.half - half;
+      // 路地の口では、外側の縁を開けておきます。
+      // 閉じたままだと当たり判定が車を押し戻し、「外へ出た」という条件が
+      // 永久に成立しません（ランプから一般道へ出るときと同じ落とし穴です）。
+      if (alley && Math.abs(alley.d) < ALLEY.half - 0.4) lo = alley.uOuter + half;
       rampH = surf.h;
     } else if (ramp) {
       // ゴア（分岐部の三角の舗装）へは本線から自由に出られます
@@ -3638,7 +3725,28 @@ class Vehicle {
     }
     this.onRamp = this.zone === 'ramp';
     this.onSurface = this.zone === 'surf';
+    this.onAlley = this.zone === 'alley';
     this.rampHeight = rampH;
+
+    // 路地の突き当たりと両側（s方向の壁）
+    if (this.zone === 'alley') {
+      let sh = 0;
+      if (pr.s < sLo) sh = -1; else if (pr.s > sHi) sh = 1;
+      if (sh !== 0) {
+        const targetS = sh < 0 ? sLo + 0.04 : sHi - 0.04;
+        const sm2 = track.sample(targetS, this._sm);
+        this.pos.copy(sm2.pos).addScaledVector(sm2.lat, pr.u).addScaledVector(sm2.up, 0.02 + rampH);
+        this.s = targetS;
+        this.trackIndex = sm2.index;
+        // 路地では車の向きが道と直角なので、前後どちらの成分が壁へ向かって
+        // いるかを一概に決められません。両方をまとめて落とします。
+        const spd = Math.hypot(this.vx, this.vy);
+        this.vx *= 0.42; this.vy *= 0.42;
+        this.yawRate *= 0.5;
+        this.onWall = 1;
+        return Math.min(spd, 8);
+      }
+    }
 
     let hit = 0;
     if (pr.u < lo) hit = -1;
@@ -3679,6 +3787,9 @@ class Vehicle {
     if (this.onRamp && track.rampAt) {
       const r = track.rampAt(this.s);
       if (r) hOff = rampHeightAtU(r, this.u);
+    } else if (this.onAlley && track.alleyAt) {
+      const a2 = track.alleyAt(this.s);
+      if (a2) hOff = levelH(sm, this.u, a2.drop);
     } else if (this.onSurface && track.surfaceAt) {
       const sf = track.surfaceAt(this.s);
       if (sf) hOff = sf.h;
@@ -5189,6 +5300,65 @@ function buildSurfaceRoad(track, scene) {
   strip((r) => IN(r) - 0.5, IN, 0.10, kerb);              // 内側の縁石
   strip((r) => r.sf.u - 0.09, (r) => r.sf.u + 0.09, 0.012, line);   // センターライン
 
+  // ---- 路地。一般道から直角に折れて入る、行き止まりの短い道
+  for (const a2 of (track.alleys || [])) {
+    track.sample(a2.s, sm);
+    const g7 = new THREE.Group();
+    g7.position.copy(sm.pos);
+    const m7 = new THREE.Matrix4();
+    m7.makeBasis(sm.lat, sm.up, new THREE.Vector3().copy(sm.tan).negate());
+    g7.quaternion.setFromRotationMatrix(m7);
+    const W = ALLEY.half * 2;
+    // 高さは横位置ごとに変わります（バンクを打ち消して水平に保つため）。
+    // 一枚板で置くと、路地が5mの坂になります。
+    const H = (u) => levelH(sm, u, a2.drop);
+    const hIn = H(a2.uInner), hOut = H(a2.uOuter);
+    /** 路地に沿った帯を、両端の高さを合わせて張ります */
+    const slab = (uA, uB, yOff, th, w, mat) => {
+      const pos = [], idx = [];
+      for (let i = 0; i < 2; i++) {
+        const u = i === 0 ? uA : uB;
+        const y = H(u) + yOff;
+        for (let q = 0; q < 2; q++) {
+          const z = (q === 0 ? -1 : 1) * w * 0.5;
+          pos.push(u, y, z);
+        }
+      }
+      idx.push(0, 1, 3, 0, 3, 2);
+      const gg = new THREE.BufferGeometry();
+      gg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      gg.setIndex(idx);
+      gg.computeVertexNormals();
+      gg.computeBoundingSphere();
+      const m = new THREE.Mesh(gg, mat);
+      g7.add(m);
+      return m;
+    };
+    slab(a2.uInner, a2.uOuter, 0.02, 0, W, road);
+    // 両側の縁石（細い帯を2本）
+    for (const dz of [-ALLEY.half + 0.25, ALLEY.half - 0.25]) {
+      const k = new THREE.Mesh(new THREE.BoxGeometry(ALLEY.len, 0.16, 0.5), kerb);
+      k.position.set((a2.uInner + a2.uOuter) * 0.5, (hIn + hOut) * 0.5 + 0.08, dz);
+      k.rotation.z = Math.atan2(hOut - hIn, a2.uOuter - a2.uInner);
+      g7.add(k);
+    }
+    // 突き当たりの壁
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.6, 4.4, W),
+      new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.9, metalness: 0.05 }));
+    wall.position.set(a2.uOuter - 0.3, hOut + 2.2, 0);
+    g7.add(wall);
+    // 奥の街灯（ここに入れることを気づかせる目印）
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.18, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0xffe7bb, emissive: 0xffd79a, emissiveIntensity: 3.4 }));
+    lamp.position.set(a2.uOuter + 3.5, H(a2.uOuter + 3.5) + 5.0, 0);
+    g7.add(lamp);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 5.2, 6),
+      new THREE.MeshStandardMaterial({ color: 0x4a4f57, roughness: 0.7, metalness: 0.3 }));
+    pole.position.set(a2.uOuter + 3.5, H(a2.uOuter + 3.5) + 2.6, ALLEY.half - 0.6);
+    g7.add(pole);
+    group.add(g7);
+  }
+
   // ---- 信号と交差点
   // 色は game 側が毎フレーム決めます（近くの数個だけ）。
   {
@@ -5765,7 +5935,8 @@ class Police {
     const near = this.nearest(v);
     this._near = near;
     // 一般道もランプと同じで、パトカーは降りてこられません
-    const hidden = v.onRamp || v.onSurface;
+    // 路地とパーキングエリアは、パトカーが入ってこられない逃げ場です
+    const hidden = v.onRamp || v.onAlley;
     const away = over <= 0.001 && (near > 300 || hidden);
     if (this.level > 0 && away) {
       this.evade += dt * (hidden ? 2.4 : 1);
@@ -5782,7 +5953,7 @@ class Police {
     // パーキングエリアの中では捕まりません。一般道まで追ってくるようにしたので、
     // どこかに「確実に逃げ込める場所」を残しておかないと、逃げ道のない
     // 鬼ごっこになります。パトカーは広場へは入らず、一般道を通り過ぎます。
-    if (this.level > 0 && !v.onRamp && near < 16 && v.speedKmh < 45) {
+    if (this.level > 0 && !v.onRamp && !v.onAlley && near < 16 && v.speedKmh < 45) {
       this.bust += dt;
       if (this.bust > 2.5) {
         const lv = this.level;
@@ -6209,7 +6380,7 @@ class Crossing {
       model.root.visible = false;
       this.group.add(model.root);
       this.cars.push({
-        model, active: false, s: 0, u: 0, dir: 1, vx: 0, h: 0,
+        model, active: false, s: 0, u: 0, dir: 1, vx: 0, drop: 0,
         halfL: model.length * 0.5, halfW: model.width * 0.5,
       });
     }
@@ -6264,7 +6435,7 @@ class Crossing {
       c.dir = this.rand() < 0.5 ? 1 : -1;
       c.u = sf.u - c.dir * (24 + (c.slot || 0) * 10);
       c.vx = (28 + this.rand() * 16) / 3.6;
-      c.h = sf.h;
+      c.drop = sf.drop;
       c.active = true;
       c.model.root.visible = true;
       this.place(c);
@@ -6274,7 +6445,9 @@ class Crossing {
   place(c) {
     const sm = this.track.sample(c.s, this._sm);
     const root = c.model.root;
-    root.position.copy(sm.pos).addScaledVector(sm.lat, c.u).addScaledVector(sm.up, c.h + 0.01);
+    // 横切る車も、道を渡るあいだ水平に保ちます
+    const h = levelH(sm, c.u, c.drop);
+    root.position.copy(sm.pos).addScaledVector(sm.lat, c.u).addScaledVector(sm.up, h + 0.01);
     // 進む向きは横（lat）。右手系（X×Y=Z）になるよう X には tan を取ります
     const fwd = this._f.copy(sm.lat).multiplyScalar(c.dir);
     const left = this._x.copy(sm.tan).multiplyScalar(c.dir);
@@ -8184,7 +8357,7 @@ class Game {
     // カメラが壁やビルにめり込まないよう、道路の内側・路面より上に押し戻します
     // ランプに降りているあいだは、カメラを本線の枠に押し戻してはいけません
     // （押し戻すと、車だけ下のランプにいてカメラが上の本線に残ります）。
-    if (cm.id !== 'hood' && !v.onRamp && !v.onSurface) {
+    if (cm.id !== 'hood' && !v.onRamp && !v.onSurface && !v.onAlley) {
       const pr = this.track.project(this.camPos, v.trackIndex);
       const maxU = ROAD.halfRoad - 1.0;
       const cu = clamp(pr.u, -maxU, maxU);
@@ -8235,7 +8408,7 @@ class Game {
     // ランプと広場は本線の街灯から40m以上離れて11m下にあるため、真っ暗でした
     // （実際に、降りると車も白線も見えませんでした）。灯りをランプ沿いに
     // 置き直します。置いた照明柱は自己発光しているだけで周りを照らしません。
-    if (v.onSurface && this.track.surfaceAt) {
+    if ((v.onSurface || v.onAlley) && this.track.surfaceAt) {
       // 一般道も本線から離れているので、街灯を沿道へ移します
       const RSTEP = 40;
       const rb = Math.round(v.s / RSTEP);
@@ -8453,7 +8626,9 @@ class Game {
         : `${this.state.elapsed.toFixed(1)}s`,
       bestText: this.state.bestLap < Infinity ? `BEST ${formatTime(this.state.bestLap)}` : '',
       wet: this.wet,
-      zoneText: v.onSurface
+      zoneText: v.onAlley
+        ? `${this.course.name}  路地  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
+        : v.onSurface
         ? `${this.course.name}  一般道  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
         : v.onRamp && this.track.rampAt && this.track.rampAt(v.s)
         ? `${this.course.name}  ${this.track.rampAt(v.s).name} ${this.track.rampAt(v.s).pad > 0.35 ? 'パーキングエリア' : '出口ランプ'}  ${(v.s / 1000).toFixed(1)}/${(this.track.length / 1000).toFixed(1)} km`
