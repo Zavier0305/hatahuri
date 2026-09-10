@@ -18,6 +18,13 @@ import { Net, sampleState } from './net.js';
 import { RemoteCar, collideRemote, makeTag } from './remote.js';
 import { Race } from './race.js';
 import { GhostRecorder, Ghost } from './ghost.js';
+
+/*
+ * 1周を何区間に割るか。
+ * 「速かった／遅かった」ではなく「どこで落としたか」が見えるようにするための
+ * 仕組みなので、細かすぎても読めません。実際のサーキット表示と同じ3区間にします。
+ */
+export const SECTORS = 3;
 import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
@@ -176,6 +183,7 @@ export class Game {
     this.ghostRec = new GhostRecorder();   // いま走っている周の記録
     this.ghost = null;                     // 自己ベストの再生
     this.ghostData = null;                 // 再生に使う記録（main が入れます）
+    this.bestSectors = null;               // 区間タイムの基準（main が入れます）
     this.remotes = new Map();   // 相手のID -> RemoteCar
     this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
     this.demo = false;        // メニュー背景の自動走行
@@ -621,6 +629,34 @@ export class Game {
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
+  /**
+   * 区間を1つ抜けたときの記録。
+   * @param i    抜けた区間の番号
+   * @param tNow 周回の頭からの経過[ms]
+   */
+  closeSector(i, tNow) {
+    const st = this.state;
+    if (st.sectorAt.length !== i) return;   // 飛ばして来た場合は数えません
+    const prev = i > 0 ? st.sectorAt[i - 1] : 0;
+    const dur = tNow - prev;
+    if (dur <= 0) return;
+    st.sectorAt.push(tNow);
+    const best = this.bestSectors && this.bestSectors[i];
+    st.lastSector = { index: i, time: dur, delta: best ? dur - best : null, shownAt: performance.now() };
+    this.onEvent('sector', st.lastSector);
+  }
+
+  /** いまの周の各区間にかかった時間 */
+  sectorDurations() {
+    const at = this.state.sectorAt;
+    return at.map((t, i) => Math.round(t - (i > 0 ? at[i - 1] : 0)));
+  }
+
+  /** 比較の基準になる区間タイム（ベストの周のもの）を渡します */
+  setBestSectors(list) {
+    this.bestSectors = Array.isArray(list) && list.length === SECTORS ? list : null;
+  }
+
   /** 自己ベストの記録を渡します。null で消えます */
   setGhost(data) {
     this.ghostData = data || null;
@@ -650,8 +686,11 @@ export class Game {
     }
     this.state = {
       life: 1, rivalLife: 1, gap: 0, finished: false, result: null,
-      startTime: performance.now(), lapStart: performance.now(),
+      startTime: performance.now(),
       lapTime: 0, bestLap: opts.bestLap || Infinity, lastLap: 0,
+      sectorAt: [],           // 各区間を抜けた時刻[ms]（周回の頭から）
+      lastSector: null,       // 直前に抜けた区間の記録（HUD 用）
+      _sec: 0,                // いまいる区間
       lapCount: 0, topSpeed: 0, distance: 0, elapsed: 0,
       countdown: kind === 'free' ? 0 : 3.2,
       rollingStart: opts.rollingStart ?? (kind !== 'timeattack'),
@@ -909,7 +948,7 @@ export class Game {
       if (st.countdown <= 0) {
         this.mode = 'racing';
         st.startTime = performance.now();
-        st.lapStart = performance.now();
+        st.lapTime = 0;
         this.onEvent('go');
         audio && audio.beep(1320, 0.3, 0.22);
       }
@@ -1056,25 +1095,51 @@ export class Game {
       st.elapsed += dt;
       st.distance += Math.abs(pv.vx) * dt;
       st.topSpeed = Math.max(st.topSpeed, pv.speedKmh);
-      st.lapTime = performance.now() - st.lapStart;
+      /*
+       * 周回タイムは実時計ではなく、進めた時間を積み上げて測ります。
+       *
+       * ゴーストの記録も、区間の記録も、物理も dt で進んでいます。ここだけ
+       * performance.now() を見ていると、画面がカクついた瞬間に実時計だけが
+       * 進み、ゴーストが自分の記録とずれます（記録は dt で刻んでいるため）。
+       * dt は上限 0.05 で頭打ちにしてあるので、一瞬止まってもタイムに
+       * 大きな穴が空きません。実車のラップタイマーとしてもそのほうが妥当です。
+       */
+      st.lapTime += dt * 1000;
 
       // ゴースト。いまの周を記録しつつ、前回のベストを同じ時刻へ進めます
       this.ghostRec.sample(dt, pv);
       if (this.ghost) this.ghost.seek(st.lapTime);
 
+      // 区間の通過。1つ進んだときだけ数えます。戻ったり飛んだりした回は
+      // 数えません（後退や置き直しで区間タイムが出てしまわないように）
+      const secLen = this.track.length / SECTORS;
+      const sec = Math.min(SECTORS - 1, Math.floor(pv.s / secLen));
+      if (sec !== st._sec) {
+        if (sec === st._sec + 1) this.closeSector(st._sec, st.lapTime);
+        st._sec = sec;
+      }
+
       // 周回判定（0地点をまたいだら1周）
       if (st._lastS !== undefined && pv.s < st._lastS - this.track.length * 0.5) {
+        // 最後の区間は、周回が終わった瞬間に閉じます
+        this.closeSector(SECTORS - 1, st.lapTime);
         st.lapCount++;
         st.lastLap = st.lapTime;
         const isBest = st.lastLap < st.bestLap;
         st.bestLap = Math.min(st.bestLap, st.lastLap);
-        st.lapStart = performance.now();
         // ベストを更新した周だけ、その記録を残します
         if (isBest) {
           const rec = this.ghostRec.take(this.player.vehicle.spec.id, st.lastLap);
           if (rec) this.onEvent('ghost', rec);
+          // ベストの周の区間タイムを、次からの比較の基準にします
+          if (st.sectorAt.length === SECTORS) {
+            this.onEvent('sectors', { list: this.sectorDurations(), lap: st.lastLap });
+          }
         }
         this.ghostRec.reset();
+        st.sectorAt = [];
+        st.lastSector = null;
+        st._sec = 0;
         this.onEvent('lap', { lap: st.lapCount, time: st.lastLap, best: st.bestLap });
         // タイムアタックは1周で終了
         if (this.kind === 'timeattack') this.finish('win');
@@ -1530,6 +1595,7 @@ export class Game {
       // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
       // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
       ghostGap,
+      sector: this.state.lastSector,
       prompt: this.paPrompt,
       actions: this.paActions,
       police: this.police.state(),

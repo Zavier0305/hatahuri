@@ -569,6 +569,7 @@ function startOnline() {
   if (data.netCourse && data.netCourse !== game.course.id) game.setCourse(data.netCourse);
   preparePlayer();
   applyGhost();
+  applySectors();
   game.setRival(null);
   game.setPaRacers(unlockedRivals());
   game.start('free', { startS: 0, rollingStart: true });
@@ -587,6 +588,12 @@ function applyGhost() {
   game.setGhost(rec || null);
 }
 
+/** いまのコースの区間タイムの基準をゲームへ渡します */
+function applySectors() {
+  if (!game) return;
+  game.setBestSectors(data.sectors[game.course.id] || null);
+}
+
 /** ベストを更新したときに呼ばれます */
 function saveGhost(rec) {
   // バトル中は残しません。相手を追う走りは自己ベストの基準になりません
@@ -602,6 +609,15 @@ function saveGhost(rec) {
     save(data);
   }
   applyGhost();
+  applySectors();
+}
+
+/** ベストの周の区間タイムを、次からの基準として残します */
+function saveSectors(payload) {
+  if (mode === 'battle') return;
+  data.sectors[game.course.id] = payload.list;
+  save(data);
+  applySectors();
 }
 
 /** B キー。状況に応じて「申し込む」か「受ける」になります */
@@ -786,6 +802,7 @@ function startFree(opts = {}) {
   battleOpts = {};
   preparePlayer();
   applyGhost();
+  applySectors();
   game.setRival(null);
   // パーキングエリアに走り屋をたむろさせます。
   // メニューへ戻らずに、走っている世界の中で相手を選べるようにするためです。
@@ -805,6 +822,7 @@ function startTA() {
   mode = 'ta';
   preparePlayer();
   applyGhost();
+  applySectors();
   game.setRival(null);
   game.start('timeattack', {
     startS: 0, rollingStart: false,
@@ -1019,6 +1037,7 @@ $('#set-ghost').addEventListener('change', (e) => {
   data.settings.ghost = e.target.checked;
   save(data);
   applyGhost();
+  applySectors();
 });
 $('#btn-reset').addEventListener('click', () => {
   if (!confirm('セーブデータを消去します。よろしいですか？')) return;
@@ -1100,6 +1119,7 @@ function onGameEvent(type, payload) {
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
   // オンラインの勝負
   if (type === 'ghost') saveGhost(payload);
+  if (type === 'sectors') saveSectors(payload);
   if (type === 'racemsg') hud.message(payload.text, payload.sub || '', payload.ms || 1800);
   if (type === 'race') {
     if (payload.state === 'invited') audio.beep(980, 0.10, 0.12);

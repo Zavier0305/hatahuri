@@ -48,6 +48,17 @@ export class GhostRecorder {
 
   /** 保存できる形にして返します */
   take(carId, lapMs) {
+    /*
+     * 周回線を跨いだ直後の点が末尾に紛れ込むことがあります。
+     * 記録は 100ms ごと（60fps なら6フレームに1回）で、その回がちょうど
+     * ゴール通過のフレームに当たると、s が 4197 から 0 付近へ戻った値が
+     * 最後に入ります。そのまま残すと、ゴーストが最後の一瞬だけ
+     * スタート地点へワープして見えます。
+     * 1周のあいだ s は増えていくので、後ろへ戻った点は落とします。
+     */
+    while (this.s.length >= 2 && this.s[this.s.length - 1] < this.s[this.s.length - 2]) {
+      this.s.pop(); this.u.pop(); this.h.pop(); this.z.pop();
+    }
     if (this.s.length < 4) return null;
     return { v: 1, carId, lap: Math.round(lapMs), step: STEP_MS,
       s: this.s.slice(), u: this.u.slice(), h: this.h.slice(), z: this.z.slice() };

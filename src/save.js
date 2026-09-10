@@ -29,6 +29,7 @@ const DEFAULT = {
   netRoom: '',               // 最後に使った合言葉
   netCourse: '',             // オンラインで走るステージ
   ghosts: {},                // コースごとの自己ベストの走り（ゴースト用）
+  sectors: {},               // コースごとの区間タイム（ベストの周のもの）
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
 
@@ -46,6 +47,7 @@ export function load() {
       stats: { ...structuredClone(DEFAULT.stats), ...(d.stats || {}) },
       titles: Array.isArray(d.titles) ? d.titles : [],
       ghosts: (d.ghosts && typeof d.ghosts === 'object') ? d.ghosts : {},
+      sectors: (d.sectors && typeof d.sectors === 'object') ? d.sectors : {},
     };
   } catch (e) {
     return structuredClone(DEFAULT);

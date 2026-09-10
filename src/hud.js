@@ -1,4 +1,4 @@
-import { clamp, lerp, formatMoney } from './util.js';
+import { clamp, lerp, formatMoney, formatTime } from './util.js';
 /** 画面表示（スピードメーター・タコメーター・バトルゲージ・ミニマップ）をまとめて更新します。 */
 export class HUD {
   constructor(root, track) {
@@ -22,6 +22,7 @@ export class HUD {
       sub: root.querySelector('#hud-sub'),
       zone: root.querySelector('#hud-zone'),
       ghost: root.querySelector('#hud-ghost'),
+      sector: root.querySelector('#hud-sector'),
       clock: root.querySelector('#hud-clock'),
       money: root.querySelector('#hud-money'),
       wanted: root.querySelector('#hud-wanted'),
@@ -379,6 +380,22 @@ export class HUD {
     if (this.el.time) this.el.time.textContent = st.timeText || '';
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
+    if (this.el.sector) {
+      // 抜けた直後の数秒だけ出します。出しっぱなしだと、どの区間の話か
+      // 分からなくなります
+      const sc = st.sector;
+      const age = sc ? (performance.now() - sc.shownAt) / 1000 : 99;
+      if (sc && age < 3.5) {
+        const d = sc.delta;
+        const sign = d === null ? '' : d < 0 ? '−' : '＋';
+        const diff = d === null ? '' : ` ${sign}${(Math.abs(d) / 1000).toFixed(2)}`;
+        this.el.sector.textContent = `S${sc.index + 1} ${formatTime(sc.time)}${diff}`;
+        this.el.sector.className = d === null ? '' : (d < 0 ? 'gain' : 'loss');
+      } else {
+        this.el.sector.textContent = '';
+        this.el.sector.className = '';
+      }
+    }
     if (this.el.ghost) {
       const g = st.ghostGap;
       // 自己ベストとの差。符号で色を変えます（数字だけだと前後が読み取りにくい）

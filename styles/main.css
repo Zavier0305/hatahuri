@@ -572,6 +572,11 @@ kbd{
 #hud-ghost.ahead{color:var(--cold)}
 #hud-ghost.behind{color:var(--dawn)}
 
+/* 区間タイム。抜けた直後だけ出ます */
+#hud-sector{transition:opacity .25s}
+#hud-sector.gain{color:var(--ok)}
+#hud-sector.loss{color:var(--dawn)}
+
 /* 走行中に出す通信の状態 */
 #hud-net{
   position:absolute;left:20px;top:60px;font:600 11px/1.7 var(--f-data);
