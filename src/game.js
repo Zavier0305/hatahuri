@@ -16,6 +16,7 @@ import { Crossing } from './crossing.js';
 import { Skid } from './skid.js';
 import { Net, sampleState } from './net.js';
 import { RemoteCar, collideRemote, makeTag } from './remote.js';
+import { Race } from './race.js';
 import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
@@ -170,6 +171,7 @@ export class Game {
     this.jobs = new Jobs({ onEvent: (t, p) => this.onEvent(t, p) });
     // オンライン対戦。部屋に入っているあいだだけ中身が入ります
     this.net = null;
+    this.race = null;           // オンラインでの勝負
     this.remotes = new Map();   // 相手のID -> RemoteCar
     this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
     this.demo = false;        // メニュー背景の自動走行
@@ -206,12 +208,22 @@ export class Game {
   attachNet(net) {
     this.detachNet();
     this.net = net;
-    net.onChange = () => this.syncRemotes();
+    this.race = new Race(net, {
+      onState: (r) => this.onEvent('race', r),
+      onMessage: (text, sub, ms) => this.onEvent('racemsg', { text, sub, ms }),
+    });
+    net.onChange = () => {
+      this.syncRemotes();
+      // 相手が居なくなったら勝負は成立しません
+      if (!net.count && this.race && this.race.state !== 'idle') this.race.abort(true);
+    };
+    net.onControl = (from, msg) => this.race && this.race.onMessage(from, msg);
     this.syncRemotes();
   }
 
   detachNet() {
-    if (this.net) { this.net.onChange = null; this.net = null; }
+    if (this.net) { this.net.onChange = null; this.net.onControl = null; this.net = null; }
+    this.race = null;
     for (const r of this.remotes.values()) this.disposeRemote(r);
     this.remotes.clear();
     this._netPrev = null;
@@ -253,8 +265,14 @@ export class Game {
     if (!net) return;
     const pv = this.player.vehicle;
 
-    // 送信は net 側で 10Hz に間引かれます
+    // 勝負の進行。位置より先に進めます（ゴール判定が1フレーム遅れないように）
+    if (this.race) this.race.update(dt, pv, this.track.length);
+
+    // 送信は net 側で 10Hz に間引かれます。
+    // 勝負中は走った距離も一緒に送ります。別便にすると毎秒10件の枠を食うので、
+    // すでに流れている位置の便へ相乗りさせます。
     const st = sampleState(pv, this._netPrev, this.track.length);
+    if (this.race && this.race.active) st.p = Math.round(this.race.prog);
     if (net.tick(dt, st)) this._netPrev = st;
 
     for (const m of net.others) {
@@ -262,6 +280,11 @@ export class Game {
       if (!r) continue;
       r.update(dt, m.states);
       if (!r.have) continue;
+      // 勝負中は、相手の走った距離が位置と一緒に届きます
+      if (this.race && m.states.length) {
+        const last = m.states[m.states.length - 1];
+        if (last.p !== undefined) this.race.setTheirProgress(last.p);
+      }
       // 相手が黙って3秒。回線が切れたか、タブが寝ています。
       // 当てにいっても仕方がないので、薄くして当たり判定も外します
       const gone = r.silence > 3;

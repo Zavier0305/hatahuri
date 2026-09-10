@@ -577,6 +577,15 @@ function startOnline() {
   audio.resume();
 }
 
+/** B キー。状況に応じて「申し込む」か「受ける」になります */
+function raceKey() {
+  const r = game && game.race;
+  if (!r || mode !== 'online' || current !== 'none') return;
+  if (r.state === 'invited') { r.accept(); return; }
+  if (r.state === 'idle' && net && net.count) { r.offer(); return; }
+  if (r.active) { r.abort(); return; }
+}
+
 /** 走行中、通信の状態を出します */
 function paintNetHud() {
   const el = $('#hud-net');
@@ -590,6 +599,26 @@ function paintNetHud() {
   const b = document.createElement('b');
   b.textContent = !n ? '相手なし' : lost ? '相手の通信が途切れています' : `${r ? r.name : ''} と対戦中`;
   el.append(b);
+
+  const race = game.race;
+  if (!race || !n || lost) return;
+  const line = document.createElement('div');
+  if (race.state === 'racing') {
+    const g = Math.round(race.gap);
+    const side = g >= 0 ? '前' : '後ろ';
+    line.textContent = `残り ${(race.left / 1000).toFixed(2)} km ／ ${Math.abs(g)}m ${side}`;
+  } else if (race.state === 'countdown') {
+    line.textContent = 'まもなくスタート';
+  } else if (race.state === 'offered') {
+    line.textContent = '返事を待っています（B で取り消し）';
+  } else if (race.state === 'invited') {
+    line.textContent = `${race.peerName} から勝負（B で受ける）`;
+  } else if (race.state === 'done' && race.result === null) {
+    line.textContent = '相手のゴールを待っています';
+  } else {
+    line.textContent = 'B で勝負を申し込む';
+  }
+  el.append(line);
 }
 
 function renderRecords() {
@@ -991,6 +1020,8 @@ input.onAction = (code) => {
     return;
   }
   if (current !== 'none') { menuKey(code); return; }
+  // B で勝負の申し込み／承諾。オンラインで相手がいるときだけ効きます
+  if (code === 'KeyB') { raceKey(); return; }
   if (code === 'KeyF') { doPaAction(0); return; }
   if (code === 'KeyG') { doPaAction(1); return; }
   if (code === 'KeyH') { doPaAction(2); return; }
@@ -1032,6 +1063,14 @@ function onGameEvent(type, payload) {
     }
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
+  // オンラインの勝負
+  if (type === 'racemsg') hud.message(payload.text, payload.sub || '', payload.ms || 1800);
+  if (type === 'race') {
+    if (payload.state === 'invited') audio.beep(980, 0.10, 0.12);
+    if (payload.state === 'racing') audio.beep(1180, 0.14, 0.14);
+    if (payload.result) audio.beep(payload.result === 'win' ? 1320 : 380, 0.20, 0.16);
+    paintNetHud();
+  }
   // 何かできる場所に来たことを、音でも知らせます
   if (type === 'prompt') audio.beep(payload.kind === 'battle' ? 980 : 660, 0.07, 0.09);
   if (type === 'overtake') {

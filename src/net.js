@@ -88,6 +88,8 @@ export class PusherTransport {
     ch.bind('pusher:member_added', (m) => handlers.onJoin({ id: m.id, info: m.info }));
     ch.bind('pusher:member_removed', (m) => handlers.onLeave(m.id));
     ch.bind('client-state', (data, meta) => handlers.onState(senderOf(meta), data));
+    // 勝負の申し込みや結果。数は少ないので 10Hz の枠をほとんど食いません
+    ch.bind('client-race', (data, meta) => handlers.onControl(senderOf(meta), data));
   }
 
   send(event, data) {
@@ -99,6 +101,12 @@ export class PusherTransport {
     try { if (this.client) this.client.disconnect(); } catch { /* 切断時の例外は無視 */ }
     this.client = null; this.channel = null;
   }
+}
+
+function deliver(peer, from, event, data) {
+  if (!peer.handlers) return;
+  if (event === 'state') peer.handlers.onState(from, data);
+  else peer.handlers.onControl(from, data);
 }
 
 function senderOf(meta) {
@@ -141,13 +149,13 @@ export class LoopbackTransport {
 
   send(event, data) {
     if (!this.hub) return false;
-    if (event !== 'state') return true;
     LoopbackTransport.pump();
     for (const p of this.hub) {
       if (p === this) continue;
-      if (this.dropRate && Math.random() < this.dropRate) continue;
-      if (!this.lagMs) { if (p.handlers) p.handlers.onState(this.id, data); continue; }
-      LoopbackTransport.queue.push({ due: now() + this.lagMs, from: this.id, to: p, data });
+      // 勝負のやり取りは落としません。位置は次が来ますが、これは来ないので
+      if (event === 'state' && this.dropRate && Math.random() < this.dropRate) continue;
+      if (!this.lagMs) { deliver(p, this.id, event, data); continue; }
+      LoopbackTransport.queue.push({ due: now() + this.lagMs, from: this.id, to: p, event, data });
     }
     return true;
   }
@@ -166,7 +174,7 @@ export class LoopbackTransport {
       const m = q[i];
       if (m.due > t) { i++; continue; }
       q.splice(i, 1);
-      if (m.to.handlers) m.to.handlers.onState(m.from, m.data);
+      deliver(m.to, m.from, m.event, m.data);
     }
   }
 
@@ -197,6 +205,7 @@ export class Net {
     this.sent = 0;
     this.recv = 0;
     this.onChange = null;       // 参加者が増減したときの通知
+    this.onControl = null;      // 勝負のやり取りが届いたとき (from, msg)
   }
 
   get others() { return [...this.members.values()]; }
@@ -215,6 +224,7 @@ export class Net {
         onJoin: (m) => { this._add(m); this._changed(); },
         onLeave: (id) => { this.members.delete(id); this._changed(); },
         onState: (id, data) => this._state(id, data),
+        onControl: (id, msg) => { if (this.onControl) this.onControl(id, msg); },
         onError: (msg) => { this.status = 'error'; this.error = msg; this._changed(); },
       });
     } catch (e) {
@@ -275,6 +285,12 @@ export class Net {
     const ok = this.tp.send('state', { ...state, n: this.seq });
     if (ok) this.sent++;
     return ok;
+  }
+
+  /** 勝負の申し込みなど、数の少ないやり取り。10Hz の間引きは通しません */
+  control(msg) {
+    if (this.status !== 'joined') return false;
+    return this.tp.send('race', msg);
   }
 
   leave() {

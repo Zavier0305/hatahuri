@@ -851,6 +851,7 @@ kbd{
           <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
           <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
           <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
+          <tr><th>勝負を挑む</th><td><kbd>B</kbd> <span class="pad">オンラインで相手がいるとき。もう一度押すと取り消し</span></td></tr>
           <tr><th>後退（R）</th><td>止まってからブレーキを踏み直す。<kbd>↓</kbd> <kbd>S</kbd> でそのまま下がる<br><span class="pad">前へ戻すときは <kbd>↑</kbd> <kbd>W</kbd></span></td></tr>
           <tr><th>PAでの行動</th><td><kbd>F</kbd> <kbd>G</kbd> <kbd>H</kbd> <span class="pad">画面のボタンでも可</span></td></tr>
           <tr><th>カメラ切替</th><td><kbd>C</kbd></td></tr>
@@ -884,6 +885,10 @@ kbd{
           <p>タイトルの「オンライン対戦」で、名前と<b>合言葉</b>を入れて部屋に入ります。
           相手が同じ合言葉を入れると、同じ道にその車が出ます。<b>ステージも合わせてください。</b>
           違うと、同じ部屋にいてもすれ違いません。相手の車には当たり判定があります。</p>
+          <p><b>走行中に <kbd>B</kbd> を押すと勝負を申し込めます。</b>相手も <kbd>B</kbd> で受けると
+          カウントダウンが始まり、合図から5km先に着いたほうが勝ちです。
+          勝敗は「合図から何秒で走りきったか」で決まります。お互いの時計は合っていないので、
+          絶対の時刻ではなく各自の経過時間を比べています。</p>
           <p>位置のやり取りは毎秒10回で、あいだは予測で埋めています。回線の遅れのぶん、
           自分の画面と相手の画面では車の位置が数十cmずれます。ぶつけ合いは、
           そのずれを含んだうえでの勝負だと思ってください。
@@ -7034,6 +7039,8 @@ class PusherTransport {
     ch.bind('pusher:member_added', (m) => handlers.onJoin({ id: m.id, info: m.info }));
     ch.bind('pusher:member_removed', (m) => handlers.onLeave(m.id));
     ch.bind('client-state', (data, meta) => handlers.onState(senderOf(meta), data));
+    // 勝負の申し込みや結果。数は少ないので 10Hz の枠をほとんど食いません
+    ch.bind('client-race', (data, meta) => handlers.onControl(senderOf(meta), data));
   }
 
   send(event, data) {
@@ -7045,6 +7052,12 @@ class PusherTransport {
     try { if (this.client) this.client.disconnect(); } catch { /* 切断時の例外は無視 */ }
     this.client = null; this.channel = null;
   }
+}
+
+function deliver(peer, from, event, data) {
+  if (!peer.handlers) return;
+  if (event === 'state') peer.handlers.onState(from, data);
+  else peer.handlers.onControl(from, data);
 }
 
 function senderOf(meta) {
@@ -7087,13 +7100,13 @@ class LoopbackTransport {
 
   send(event, data) {
     if (!this.hub) return false;
-    if (event !== 'state') return true;
     LoopbackTransport.pump();
     for (const p of this.hub) {
       if (p === this) continue;
-      if (this.dropRate && Math.random() < this.dropRate) continue;
-      if (!this.lagMs) { if (p.handlers) p.handlers.onState(this.id, data); continue; }
-      LoopbackTransport.queue.push({ due: now() + this.lagMs, from: this.id, to: p, data });
+      // 勝負のやり取りは落としません。位置は次が来ますが、これは来ないので
+      if (event === 'state' && this.dropRate && Math.random() < this.dropRate) continue;
+      if (!this.lagMs) { deliver(p, this.id, event, data); continue; }
+      LoopbackTransport.queue.push({ due: now() + this.lagMs, from: this.id, to: p, event, data });
     }
     return true;
   }
@@ -7112,7 +7125,7 @@ class LoopbackTransport {
       const m = q[i];
       if (m.due > t) { i++; continue; }
       q.splice(i, 1);
-      if (m.to.handlers) m.to.handlers.onState(m.from, m.data);
+      deliver(m.to, m.from, m.event, m.data);
     }
   }
 
@@ -7143,6 +7156,7 @@ class Net {
     this.sent = 0;
     this.recv = 0;
     this.onChange = null;       // 参加者が増減したときの通知
+    this.onControl = null;      // 勝負のやり取りが届いたとき (from, msg)
   }
 
   get others() { return [...this.members.values()]; }
@@ -7161,6 +7175,7 @@ class Net {
         onJoin: (m) => { this._add(m); this._changed(); },
         onLeave: (id) => { this.members.delete(id); this._changed(); },
         onState: (id, data) => this._state(id, data),
+        onControl: (id, msg) => { if (this.onControl) this.onControl(id, msg); },
         onError: (msg) => { this.status = 'error'; this.error = msg; this._changed(); },
       });
     } catch (e) {
@@ -7221,6 +7236,12 @@ class Net {
     const ok = this.tp.send('state', { ...state, n: this.seq });
     if (ok) this.sent++;
     return ok;
+  }
+
+  /** 勝負の申し込みなど、数の少ないやり取り。10Hz の間引きは通しません */
+  control(msg) {
+    if (this.status !== 'joined') return false;
+    return this.tp.send('race', msg);
   }
 
   leave() {
@@ -7496,6 +7517,226 @@ function makeTag(text) {
   sp.scale.set(4.2, 1.05, 1);
   sp.renderOrder = 8;
   return sp;
+}
+
+
+// ============================== src/race.js ==============================
+
+/**
+ * オンラインでの勝負。
+ *
+ * 「同じ道に相手がいる」だけでは勝負になりません。合図と、ゴールと、
+ * 勝ち負けが要ります。ここはその3つだけを持ちます。
+ *
+ * ■ 形式は「合図から一定距離の先着」
+ * ゴール地点を決める形にすると、2人が同じ場所に並んでいないと成立しません。
+ * 合図の瞬間からの走行距離で競えば、どこに居ても始められます。並んでから
+ * 始めれば、そのまま並走の勝負になります。
+ *
+ * ■ 勝敗は「絶対時刻」ではなく「経過時間」で比べます
+ * 相手の時計とこちらの時計は合っていません（合わせるには往復の計測が要り、
+ * 毎秒10件の枠を食います）。そこで各自が「合図から何秒で走りきったか」を
+ * 測り、その秒数だけを送って短いほうを勝ちにします。時計のずれは
+ * 結果に影響しません。残るずれは合図が届くまでの片道ぶんだけです。
+ */
+
+const DEFAULT_DIST = 5000;   // 勝負の距離[m]
+const COUNT = 4.0;                  // カウントダウン[s]
+const WAIT_LIMIT = 90;              // 相手のゴールを待つ上限[s]
+
+class Race {
+  /**
+   * @param net  Net（通信）
+   * @param on   { onState(race), onMessage(text, sub, ms) } 画面へ伝えるための呼び出し
+   */
+  constructor(net, on = {}) {
+    this.net = net;
+    this.on = on;
+    this.reset();
+  }
+
+  reset() {
+    this.state = 'idle';   // idle | offered | invited | countdown | racing | done
+    this.dist = DEFAULT_DIST;
+    this.count = 0;
+    this.t = 0;            // 合図からの経過[s]
+    this.prog = 0;         // 合図からの走行距離[m]
+    this.theirProg = 0;
+    this.myTime = null;
+    this.theirTime = null;
+    this.result = null;    // 'win' | 'lose' | 'abort'
+    this.peer = null;      // 相手のID
+    this.peerName = '';
+    this._lastS = null;
+    this._wait = 0;
+  }
+
+  get active() { return this.state === 'countdown' || this.state === 'racing'; }
+  /** 残り距離[m] */
+  get left() { return Math.max(0, this.dist - this.prog); }
+  /** 相手との差[m]。正なら自分が前 */
+  get gap() { return this.prog - this.theirProg; }
+
+  _say(text, sub, ms) { if (this.on.onMessage) this.on.onMessage(text, sub, ms); }
+  _changed() { if (this.on.onState) this.on.onState(this); }
+
+  /** 勝負を申し込みます */
+  offer(dist) {
+    if (this.state !== 'idle') return false;
+    const other = this.net.others[0];
+    if (!other) return false;
+    this.dist = dist || DEFAULT_DIST;
+    this.peer = other.id;
+    this.peerName = (other.info && other.info.name) || '相手';
+    this.state = 'offered';
+    this.net.control({ type: 'offer', dist: this.dist });
+    this._say('申し込み中', `${this.peerName} の返事を待っています`, 2600);
+    this._changed();
+    return true;
+  }
+
+  /** 申し込みを受けます */
+  accept() {
+    if (this.state !== 'invited') return false;
+    this.net.control({ type: 'accept' });
+    this._start();
+    return true;
+  }
+
+  decline() {
+    if (this.state !== 'invited') return false;
+    this.net.control({ type: 'decline' });
+    this.reset();
+    this._changed();
+    return true;
+  }
+
+  /** 走行中にやめる／相手が居なくなった */
+  abort(silent) {
+    if (this.state === 'idle') return;
+    if (!silent) this.net.control({ type: 'abort' });
+    const wasRacing = this.active;
+    this.reset();
+    if (wasRacing) this._say('中止', '勝負は取りやめになりました', 2200);
+    this._changed();
+  }
+
+  _start() {
+    this.state = 'countdown';
+    this.count = COUNT;
+    this.t = 0;
+    this.prog = 0;
+    this.theirProg = 0;
+    this.myTime = null;
+    this.theirTime = null;
+    this.result = null;
+    this._lastS = null;
+    this._wait = 0;
+    this._changed();
+  }
+
+  /** 相手から届いたやり取り */
+  onMessage(from, msg) {
+    if (!msg || !msg.type) return;
+    switch (msg.type) {
+      case 'offer': {
+        // すでに何かしているときは断ります
+        if (this.state !== 'idle') { this.net.control({ type: 'decline' }); return; }
+        const m = this.net.members.get(from);
+        this.peer = from;
+        this.peerName = (m && m.info && m.info.name) || '相手';
+        this.dist = Math.max(500, Math.min(30000, Number(msg.dist) || DEFAULT_DIST));
+        this.state = 'invited';
+        this._say('勝負を申し込まれました', `${this.peerName} ／ ${(this.dist / 1000).toFixed(1)} km`, 4000);
+        this._changed();
+        break;
+      }
+      case 'accept':
+        if (this.state !== 'offered') return;
+        this._start();
+        break;
+      case 'decline':
+        if (this.state !== 'offered') return;
+        this._say('断られました', `${this.peerName} は今は走らないようです`, 2400);
+        this.reset();
+        this._changed();
+        break;
+      case 'finish':
+        // ゴールの知らせは、走っている最中でも終わったあとでも受け取ります
+        if (this.state !== 'racing' && this.state !== 'done') return;
+        this.theirTime = Number(msg.t) || 0;
+        this._decide();
+        break;
+      case 'abort':
+        this.abort(true);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * @param dt 経過時間
+   * @param v  自車
+   * @param trackLength コース1周の長さ
+   */
+  update(dt, v, trackLength) {
+    if (this.state === 'countdown') {
+      const before = Math.ceil(this.count);
+      this.count -= dt;
+      const now = Math.ceil(this.count);
+      if (now !== before && now > 0) this._say(String(now), '', 900);
+      if (this.count <= 0) {
+        this.state = 'racing';
+        this._lastS = v.s;
+        this._say('GO', `${(this.dist / 1000).toFixed(1)} km 先着`, 1400);
+        this._changed();
+      }
+      return;
+    }
+
+    if (this.state === 'racing') {
+      this.t += dt;
+      // 走った距離を足していきます。s の差をそのまま使うと、1周を跨いだ
+      // ところで大きく飛びます。また、PAからの復帰などで場所が飛んだ回は
+      // 数えません（進んだことにすると、瞬間移動が近道になってしまいます）
+      if (this._lastS !== null) {
+        const d = wrapDelta(v.s - this._lastS, trackLength);
+        if (Math.abs(d) < 200) this.prog += d;
+      }
+      this._lastS = v.s;
+
+      if (this.prog >= this.dist && this.myTime === null) {
+        this.myTime = this.t;
+        this.net.control({ type: 'finish', t: +this.t.toFixed(2) });
+        this.state = 'done';
+        this._decide();
+      }
+      return;
+    }
+
+    if (this.state === 'done' && this.result === null) {
+      // 相手のゴールを待ちます。居なくなったらこちらの勝ちにします
+      this._wait += dt;
+      if (!this.net.members.has(this.peer)) { this.theirTime = Infinity; this._decide(); return; }
+      if (this._wait > WAIT_LIMIT) { this.theirTime = Infinity; this._decide(); }
+    }
+  }
+
+  /** 相手が受け取った進捗（10Hz の位置と一緒に届きます） */
+  setTheirProgress(p) {
+    if (typeof p === 'number' && this.active) this.theirProg = p;
+  }
+
+  _decide() {
+    if (this.myTime === null || this.theirTime === null) return;
+    const win = this.myTime <= this.theirTime;
+    this.result = win ? 'win' : 'lose';
+    const mine = this.myTime.toFixed(2);
+    const theirs = this.theirTime === Infinity ? '—' : this.theirTime.toFixed(2);
+    this._say(win ? 'WIN' : 'LOSE', `${mine} 秒 ／ ${this.peerName} ${theirs} 秒`, 5200);
+    this._changed();
+  }
 }
 
 
@@ -8724,6 +8965,7 @@ class Game {
     this.jobs = new Jobs({ onEvent: (t, p) => this.onEvent(t, p) });
     // オンライン対戦。部屋に入っているあいだだけ中身が入ります
     this.net = null;
+    this.race = null;           // オンラインでの勝負
     this.remotes = new Map();   // 相手のID -> RemoteCar
     this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
     this.demo = false;        // メニュー背景の自動走行
@@ -8760,12 +9002,22 @@ class Game {
   attachNet(net) {
     this.detachNet();
     this.net = net;
-    net.onChange = () => this.syncRemotes();
+    this.race = new Race(net, {
+      onState: (r) => this.onEvent('race', r),
+      onMessage: (text, sub, ms) => this.onEvent('racemsg', { text, sub, ms }),
+    });
+    net.onChange = () => {
+      this.syncRemotes();
+      // 相手が居なくなったら勝負は成立しません
+      if (!net.count && this.race && this.race.state !== 'idle') this.race.abort(true);
+    };
+    net.onControl = (from, msg) => this.race && this.race.onMessage(from, msg);
     this.syncRemotes();
   }
 
   detachNet() {
-    if (this.net) { this.net.onChange = null; this.net = null; }
+    if (this.net) { this.net.onChange = null; this.net.onControl = null; this.net = null; }
+    this.race = null;
     for (const r of this.remotes.values()) this.disposeRemote(r);
     this.remotes.clear();
     this._netPrev = null;
@@ -8807,8 +9059,14 @@ class Game {
     if (!net) return;
     const pv = this.player.vehicle;
 
-    // 送信は net 側で 10Hz に間引かれます
+    // 勝負の進行。位置より先に進めます（ゴール判定が1フレーム遅れないように）
+    if (this.race) this.race.update(dt, pv, this.track.length);
+
+    // 送信は net 側で 10Hz に間引かれます。
+    // 勝負中は走った距離も一緒に送ります。別便にすると毎秒10件の枠を食うので、
+    // すでに流れている位置の便へ相乗りさせます。
     const st = sampleState(pv, this._netPrev, this.track.length);
+    if (this.race && this.race.active) st.p = Math.round(this.race.prog);
     if (net.tick(dt, st)) this._netPrev = st;
 
     for (const m of net.others) {
@@ -8816,6 +9074,11 @@ class Game {
       if (!r) continue;
       r.update(dt, m.states);
       if (!r.have) continue;
+      // 勝負中は、相手の走った距離が位置と一緒に届きます
+      if (this.race && m.states.length) {
+        const last = m.states[m.states.length - 1];
+        if (last.p !== undefined) this.race.setTheirProgress(last.p);
+      }
       // 相手が黙って3秒。回線が切れたか、タブが寝ています。
       // 当てにいっても仕方がないので、薄くして当たり判定も外します
       const gone = r.silence > 3;
@@ -10609,6 +10872,15 @@ function startOnline() {
   audio.resume();
 }
 
+/** B キー。状況に応じて「申し込む」か「受ける」になります */
+function raceKey() {
+  const r = game && game.race;
+  if (!r || mode !== 'online' || current !== 'none') return;
+  if (r.state === 'invited') { r.accept(); return; }
+  if (r.state === 'idle' && net && net.count) { r.offer(); return; }
+  if (r.active) { r.abort(); return; }
+}
+
 /** 走行中、通信の状態を出します */
 function paintNetHud() {
   const el = $('#hud-net');
@@ -10622,6 +10894,26 @@ function paintNetHud() {
   const b = document.createElement('b');
   b.textContent = !n ? '相手なし' : lost ? '相手の通信が途切れています' : `${r ? r.name : ''} と対戦中`;
   el.append(b);
+
+  const race = game.race;
+  if (!race || !n || lost) return;
+  const line = document.createElement('div');
+  if (race.state === 'racing') {
+    const g = Math.round(race.gap);
+    const side = g >= 0 ? '前' : '後ろ';
+    line.textContent = `残り ${(race.left / 1000).toFixed(2)} km ／ ${Math.abs(g)}m ${side}`;
+  } else if (race.state === 'countdown') {
+    line.textContent = 'まもなくスタート';
+  } else if (race.state === 'offered') {
+    line.textContent = '返事を待っています（B で取り消し）';
+  } else if (race.state === 'invited') {
+    line.textContent = `${race.peerName} から勝負（B で受ける）`;
+  } else if (race.state === 'done' && race.result === null) {
+    line.textContent = '相手のゴールを待っています';
+  } else {
+    line.textContent = 'B で勝負を申し込む';
+  }
+  el.append(line);
 }
 
 function renderRecords() {
@@ -11023,6 +11315,8 @@ input.onAction = (code) => {
     return;
   }
   if (current !== 'none') { menuKey(code); return; }
+  // B で勝負の申し込み／承諾。オンラインで相手がいるときだけ効きます
+  if (code === 'KeyB') { raceKey(); return; }
   if (code === 'KeyF') { doPaAction(0); return; }
   if (code === 'KeyG') { doPaAction(1); return; }
   if (code === 'KeyH') { doPaAction(2); return; }
@@ -11064,6 +11358,14 @@ function onGameEvent(type, payload) {
     }
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
+  // オンラインの勝負
+  if (type === 'racemsg') hud.message(payload.text, payload.sub || '', payload.ms || 1800);
+  if (type === 'race') {
+    if (payload.state === 'invited') audio.beep(980, 0.10, 0.12);
+    if (payload.state === 'racing') audio.beep(1180, 0.14, 0.14);
+    if (payload.result) audio.beep(payload.result === 'win' ? 1320 : 380, 0.20, 0.16);
+    paintNetHud();
+  }
   // 何かできる場所に来たことを、音でも知らせます
   if (type === 'prompt') audio.beep(payload.kind === 'battle' ? 980 : 660, 0.07, 0.09);
   if (type === 'overtake') {
