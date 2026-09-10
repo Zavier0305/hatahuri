@@ -11,7 +11,7 @@ import { RAMP } from './track.js';
 import { load, save, resetSave, emptyTune } from './save.js';
 import { TITLES, newTitles } from './titles.js';
 import { trimGhosts } from './ghost.js';
-import { applyTune } from './vehicle.js';
+import { applyTune, predictSpec } from './vehicle.js';
 import { buildCar } from './carModel.js';
 import { formatMoney, formatTime, clamp } from './util.js';
 // ---------------------------------------------------------------- 状態
@@ -37,6 +37,13 @@ const COLOR_SWATCH = [
 ];
 
 const VERSION = 'v1.0.0';
+
+/** 差を「＋3」「−0.2」の形にします。0 は空欄 */
+function diffStr(v, dec = 0) {
+  if (!v) return '';
+  const n = Math.abs(v).toFixed(dec);
+  return (v > 0 ? '＋' : '−') + n;
+}
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -293,20 +300,40 @@ function renderGarage() {
     specRow('WEIGHT', ms, ' kg'),
     specRow('P/W', (ms / pw).toFixed(2), ' kg/ps'),
     specRow('DRIVE', c.layout),
-    specRow('TOP', Math.round(eff.topSpeed), ' km/h'),
   ].join('');
 
   // チューン
+  // いまの性能と、1段上げたときの性能。買う前に効き目が分かるようにします
+  const nowSpec = predictSpec(c, t);
+  // 実際に出る値を出します。カタログ値（spec.topSpeed）は目標であって、
+  // 実際の最高速は出力と空気抵抗の釣り合いで決まります。
+  $('#d-specs').innerHTML += [
+    specRow('TOP', nowSpec.topKmh, ' km/h'),
+    specRow('0-100', nowSpec.accel.toFixed(1), ' 秒'),
+    specRow('CORNER', nowSpec.cornerKmh, ' km/h'),
+  ].join('');
   $('#tune-list').innerHTML = TUNE_KEYS.map(({ k, label }) => {
     const lv = t[k];
     const cost = lv < 5 ? TUNE_COST[lv] : 0;
     const pips = Array.from({ length: 5 }, (_, i) => `<i class="${i < lv ? 'on' : ''}"></i>`).join('');
+    // 1段上げた仮の状態で計算し、差だけを出します
+    let hint = '';
+    if (lv < 5) {
+      const next = predictSpec(c, { ...t, [k]: lv + 1 });
+      const parts = [];
+      if (next.topKmh !== nowSpec.topKmh) parts.push(`最高速 ${diffStr(next.topKmh - nowSpec.topKmh)}km/h`);
+      if (Math.abs(next.accel - nowSpec.accel) >= 0.05) parts.push(`0-100 ${diffStr(-(next.accel - nowSpec.accel), 1)}秒`);
+      if (next.cornerKmh !== nowSpec.cornerKmh) parts.push(`コーナー ${diffStr(next.cornerKmh - nowSpec.cornerKmh)}km/h`);
+      if (next.mass !== nowSpec.mass) parts.push(`重量 ${diffStr(next.mass - nowSpec.mass)}kg`);
+      hint = parts.slice(0, 2).join(' ／ ');
+    }
     return `<div class="tune-row">
       <span class="k">${label}</span>
       <span class="pips">${pips}</span>
       <button data-dn="${k}" ${lv <= 0 ? 'disabled' : ''}>−</button>
       <button data-up="${k}" ${lv >= 5 || data.money < cost || !owned(c.id) ? 'disabled' : ''}>＋</button>
       <span class="cost">${lv >= 5 ? 'MAX' : `¥${formatMoney(cost)}`}</span>
+      <span class="gainv">${hint}</span>
     </div>`;
   }).join('');
   $$('#tune-list [data-up]').forEach((b) => b.addEventListener('click', () => {
@@ -1251,6 +1278,7 @@ async function boot() {
     window.__game = game;
     // テストから通信層を直接叩けるようにします（鍵なしの Loopback を挿すため）
     window.__net = { Net, LoopbackTransport, PusherTransport, roomChannel, sampleState, setClock };
+    window.__cars = { CAR_BY_ID, CARS, applyTune, predictSpec };
   }
 
   // タイトル画面でも背景として走らせておく（デモ走行）

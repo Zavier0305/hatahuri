@@ -25,6 +25,99 @@ export function applyTune(spec, tune) {
   return { ...spec, power, torque, mass, grip, downforce, topSpeed, turbo, lag };
 }
 
+/**
+ * チューニングの効き目を、走らせずに見積もります。
+ *
+ * ガレージでは効果が分からないまま金を払うことになっていました。
+ *
+ * ■ 走行中と同じ式で、前後方向だけを積分します
+ * はじめは「出力と空気抵抗が釣り合う速度」を数式で解いていましたが、
+ * 0-100km/h が実測より3割も速く出ました。理想的に出力が出る前提で、
+ * ギア比・トルクの出方・ターボの立ち上がりを無視していたためです。
+ *
+ * ここでは step() と同じ式（torqueShape・ギア比・過給・摩擦円の前後成分）を
+ * そのまま短い刻みで回します。同じ物理を使うので、数字が実際の走りと
+ * 合います。合っていない数字を画面に出すくらいなら、出さないほうがましです。
+ */
+export function predictSpec(spec, tune) {
+  const S = applyTune(spec, tune);
+  const final = finalDrive(S);
+  const dragK = 0.5 * RHO * S.cd * S.area;
+  const rollK = 0.0135 * S.mass * G;
+  const maxPowerW = S.power * 735.49875;
+  const splitF = DRIVE_SPLIT[S.layout] ?? 0;
+  const lr = WEIGHT_BIAS[S.layout] ?? 0.5;
+
+  const h = 0.004;
+  let v = 0, gear = 1, boost = 0, t = 0, accel = null, lastAx = 0;
+  const target100 = 100 / KMH;
+
+  // 惰性で伸びきるまで回します。頭打ちに達したところが最高速です
+  for (let i = 0; i < 40000; i++) {
+    const gr = S.gears[gear - 1];
+    const rpmRaw = (v / S.wheelR) * gr * final * RADS_TO_RPM;
+    const rpm = clamp(rpmRaw, S.idle, S.redline * 1.07);
+    const x = rpm / S.redline;
+
+    // 過給の立ち上がり（step() と同じ考え方）
+    const bTarget = clamp((rpm - S.redline * 0.22) / (S.redline * 0.36), 0, 1);
+    const lag = bTarget > boost ? S.lag : S.lag * 0.35;
+    boost += (bTarget - boost) * (1 - Math.exp(-h / Math.max(0.05, lag)));
+    const boostMul = S.turbo > 0 ? (1 - 0.42 * S.turbo) + 0.42 * S.turbo * boost : 1;
+
+    let engineTq = S.torque * torqueShape(x) * boostMul;
+    const wRad = Math.max(1, rpm / RADS_TO_RPM);
+    engineTq = Math.min(engineTq, maxPowerW / wRad);
+    let F = (engineTq * gr * final * DRIVE_EFF) / S.wheelR;
+
+    /*
+     * 駆動輪が支えられるぶんで頭打ちにします。低速ではここが効きます。
+     *
+     * 静的な重量配分だけで見ると、後輪駆動を実際より遅く見積もります
+     * （s15 で予測5.5秒／実測3.7秒）。加速すると荷重は後ろへ移り、
+     * 後輪が支えられる力はその場で増えるためです。step() と同じように
+     * 前フレームの加速度から移動ぶんを足します。
+     */
+    const downforce = 0.5 * RHO * S.downforce * 1.6 * S.area * v * v;
+    const Wtot = S.mass * G + downforce;
+    const L = S.dims.WB;
+    const shift = (S.mass * lastAx * 0.42) / L;    // 荷重が後ろへ移るぶん
+    const Nf = Math.max(Wtot * 0.12, Wtot * lr - shift);
+    const Nr = Math.max(Wtot * 0.12, Wtot * (1 - lr) + shift);
+    const tract = splitF > 0
+      ? Math.min(S.grip * Nf / splitF, S.grip * Nr / (1 - splitF))
+      : S.grip * Nr;
+    F = Math.min(F, tract);
+
+    const acc = (F - dragK * v * v - rollK) / S.mass;
+    lastAx = acc;
+    v += acc * h;
+    t += h;
+    if (accel === null && v >= target100) accel = t;
+    // レッド手前でシフトアップ
+    if (gear < S.gears.length && rpmRaw > S.redline * 0.97) gear++;
+    // 加速がほぼ止まったら頭打ち
+    if (i > 400 && acc < 0.02) break;
+  }
+  const topMs = Math.min(v, S.topSpeed / KMH * 1.02);
+
+  // コーナー速度（半径120m）。ダウンフォースが速度で増えるので収束させます
+  const R = 120;
+  let vc = 20;
+  for (let i = 0; i < 40; i++) {
+    const df = 0.5 * RHO * S.downforce * 1.6 * S.area * vc * vc;
+    vc = Math.sqrt((S.grip * (S.mass * G + df) * R) / S.mass);
+  }
+
+  return {
+    topKmh: Math.round(topMs * KMH),
+    accel: accel === null ? 99 : Math.round(accel * 10) / 10,
+    cornerKmh: Math.round(vc * KMH),
+    mass: Math.round(S.mass),
+    power: Math.round(S.power),
+  };
+}
+
 /** 最終減速比を「目標最高速で最終ギアがレッドに当たる」ように逆算します。 */
 function finalDrive(spec) {
   const topMs = spec.topSpeed / KMH;

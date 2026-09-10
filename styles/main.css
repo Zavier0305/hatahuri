@@ -463,6 +463,12 @@ button:disabled{opacity:.34;cursor:not-allowed}
   font:600 14px/1 var(--f-data)
 }
 .tune-row button:hover:not(:disabled){border-color:var(--dawn)}
+.tune-row .gainv{
+  flex-basis:100%;order:9;
+  font:600 10px/1.5 var(--f-data);letter-spacing:.06em;color:var(--cold);
+  padding-left:80px;margin-top:-2px
+}
+.tune-row{flex-wrap:wrap}
 .tune-row .cost{width:80px;text-align:right;font:700 11px/1 var(--f-data);color:var(--dawn);font-variant-numeric:tabular-nums}
 
 .colors{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}
