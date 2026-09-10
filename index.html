@@ -42,6 +42,7 @@
       <span id="hud-zone"></span>
       <span id="hud-time"></span>
       <span id="hud-best"></span>
+      <span id="hud-ghost"></span>
       <span id="hud-money"></span>
     </div>
   </div>
@@ -269,6 +270,11 @@
           <p>レッドゾーン手前でシフトアップ。コーナーはブレーキで前に荷重をかけてから曲げる。
           前車の40m以内に入るとスリップストリームが効き、空気抵抗が約4割減ります。
           追越車線には一般車が出てこないので、全開で使えます。</p>
+          <b>ゴースト</b>
+          <p>そのコースで<b>自己ベストを出した周の走り</b>が、水色の半透明の車として
+          一緒に走ります。画面上部に「自己ベスト ＋◯m」と差が出て、地図にも水色の点で位置が出ます。
+          設定から切れます。バトル中は出ません（相手を追う走りは自己ベストの基準にならないため）。</p>
+
           <b>高速隊</b>
           <p>フリーラン中だけ、140km/h を大きく超えて走りつづけると手配度が上がり、
           星の数だけパトカーが追ってきます。ぶつける・壁を擦るのも見咎められます。
@@ -330,6 +336,7 @@
           <label><span>オートマチック変速</span><input type="checkbox" id="set-at"></label>
           <label><span>ドライビングアシスト<i>滑ったぶんのカウンター、舵を戻したときの直進復帰、車線への復帰を助けます</i></span><input type="checkbox" id="set-assist"></label>
           <label><span>タッチ操作パネル</span><input type="checkbox" id="set-touch"></label>
+          <label><span>ゴースト<i>自己ベストの走りが半透明の車として一緒に走ります</i></span><input type="checkbox" id="set-ghost"></label>
         </div>
         <div class="set-group">
           <div class="set-head">サウンド</div>

@@ -574,6 +574,10 @@ kbd{
 .ol-mem .warn{margin-left:auto;font:700 9px/1 var(--f-data);letter-spacing:.14em;color:var(--dawn)}
 .ol-empty{padding:16px 15px;background:rgba(9,14,25,.7);font-size:12px;color:var(--dim)}
 
+/* 自己ベストとの差。前なら冷たい色、後ろなら夜明け色 */
+#hud-ghost.ahead{color:var(--cold)}
+#hud-ghost.behind{color:var(--dawn)}
+
 /* 走行中に出す通信の状態 */
 #hud-net{
   position:absolute;left:20px;top:60px;font:600 11px/1.7 var(--f-data);
@@ -636,6 +640,7 @@ kbd{
       <span id="hud-zone"></span>
       <span id="hud-time"></span>
       <span id="hud-best"></span>
+      <span id="hud-ghost"></span>
       <span id="hud-money"></span>
     </div>
   </div>
@@ -863,6 +868,11 @@ kbd{
           <p>レッドゾーン手前でシフトアップ。コーナーはブレーキで前に荷重をかけてから曲げる。
           前車の40m以内に入るとスリップストリームが効き、空気抵抗が約4割減ります。
           追越車線には一般車が出てこないので、全開で使えます。</p>
+          <b>ゴースト</b>
+          <p>そのコースで<b>自己ベストを出した周の走り</b>が、水色の半透明の車として
+          一緒に走ります。画面上部に「自己ベスト ＋◯m」と差が出て、地図にも水色の点で位置が出ます。
+          設定から切れます。バトル中は出ません（相手を追う走りは自己ベストの基準にならないため）。</p>
+
           <b>高速隊</b>
           <p>フリーラン中だけ、140km/h を大きく超えて走りつづけると手配度が上がり、
           星の数だけパトカーが追ってきます。ぶつける・壁を擦るのも見咎められます。
@@ -924,6 +934,7 @@ kbd{
           <label><span>オートマチック変速</span><input type="checkbox" id="set-at"></label>
           <label><span>ドライビングアシスト<i>滑ったぶんのカウンター、舵を戻したときの直進復帰、車線への復帰を助けます</i></span><input type="checkbox" id="set-assist"></label>
           <label><span>タッチ操作パネル</span><input type="checkbox" id="set-touch"></label>
+          <label><span>ゴースト<i>自己ベストの走りが半透明の車として一緒に走ります</i></span><input type="checkbox" id="set-ghost"></label>
         </div>
         <div class="set-group">
           <div class="set-head">サウンド</div>
@@ -7740,6 +7751,166 @@ class Race {
 }
 
 
+// ============================== src/ghost.js ==============================
+
+/**
+ * ゴースト（自己ベストとの並走）。
+ *
+ * 位置が「コース上の距離 s と横位置 u」で表されているので、1周ぶんの走りは
+ * 数値の並びで丸ごと残せます。地形も入力も再現する必要がなく、走った跡だけを
+ * 置き直す形です。
+ *
+ * ■ 一定間隔で記録します
+ * 時刻を一緒に持たず、100ms ごとの並びとして持ちます。こうすると
+ * 「何秒地点か」から添字が直接出るので、探索が要りません。保存する量も減ります。
+ *
+ * ■ オンラインの相手とは作りが違います
+ * 相手の車（remote.js）は、届いていない先を予測で埋めています。ゴーストは
+ * 1周ぶんが手元に揃っているので予測は要らず、前後の記録をそのまま補間します。
+ * 共通しているのは車の見た目（Actor）と、道の高さの求め方だけです。
+ */
+
+const STEP_MS = 100;          // 記録の間隔
+const MAX_SAMPLES = 6000;     // 1周ぶんの上限（10分ぶん）
+const MAX_GHOSTS = 6;  // 保存しておくコース数
+
+/** 走りを記録します */
+class GhostRecorder {
+  constructor() { this.reset(); }
+
+  reset() {
+    this.acc = 0;
+    this.s = []; this.u = []; this.h = []; this.z = [];
+  }
+
+  get length() { return this.s.length; }
+
+  /** @param v 自車 */
+  sample(dt, v) {
+    this.acc += dt * 1000;
+    if (this.acc < STEP_MS && this.s.length) return;
+    if (this.s.length) this.acc -= STEP_MS;
+    if (this.s.length >= MAX_SAMPLES) return;
+    this.s.push(Math.round(v.s * 10) / 10);
+    this.u.push(Math.round(v.u * 100) / 100);
+    this.h.push(Math.round(v.heading * 1000) / 1000);
+    this.z.push(v.onAlley ? 3 : v.onSurface ? 2 : v.onRamp ? 1 : 0);
+  }
+
+  /** 保存できる形にして返します */
+  take(carId, lapMs) {
+    if (this.s.length < 4) return null;
+    return { v: 1, carId, lap: Math.round(lapMs), step: STEP_MS,
+      s: this.s.slice(), u: this.u.slice(), h: this.h.slice(), z: this.z.slice() };
+  }
+}
+
+/** 記録を車として走らせます */
+class Ghost {
+  constructor(data, scene, track) {
+    this.data = data;
+    this.track = track;
+    const spec = CAR_BY_ID[data.carId] || CARS[0];
+    this.actor = new Actor(spec, null, scene, { color: 0x6fd5ff, isAI: true });
+    this.vehicle = this.actor.vehicle;
+    this.spec = spec;
+    fade(this.actor.mesh, 0.34);
+    // 接地影まで薄くすると浮いて見えるので、影は少しだけ残します
+    if (this.actor.shadow) this.actor.shadow.material.opacity = 0.18;
+    this.visible = true;
+    this.seek(0);
+  }
+
+  get lapMs() { return this.data.lap; }
+
+  /** @param tMs 周回内の経過時間[ms] */
+  seek(tMs) {
+    const d = this.data;
+    const n = d.s.length;
+    if (!n) return;
+    const step = d.step || STEP_MS;
+    const x = Math.max(0, tMs / step);
+    const i = Math.min(n - 1, Math.floor(x));
+    const j = Math.min(n - 1, i + 1);
+    const f = j > i ? x - i : 0;
+
+    const s = d.s[i] + (d.s[j] - d.s[i]) * f;
+    const u = d.u[i] + (d.u[j] - d.u[i]) * f;
+    // 向きは -PI..PI をまたぐので、素直に混ぜると1周ぶん回ります
+    let dh = d.h[j] - d.h[i];
+    if (dh > Math.PI) dh -= Math.PI * 2;
+    if (dh < -Math.PI) dh += Math.PI * 2;
+    const h = d.h[i] + dh * f;
+    const z = d.z[i];
+
+    // 記録を使い切ったら消えます（自分のほうが遅いと、先にゴールされた状態）
+    const done = tMs > (n - 1) * step + step;
+    this.actor.mesh.visible = this.visible && !done;
+    if (this.actor.shadow) this.actor.shadow.visible = this.actor.mesh.visible;
+    if (!this.actor.mesh.visible) return;
+
+    const v = this.vehicle;
+    v.s = s; v.u = u; v.heading = h;
+    v.onRamp = z === 1; v.onSurface = z === 2; v.onAlley = z === 3;
+    const sm = this.track.sample(s, v._sm || (v._sm = {}));
+    const drop = z === 0 ? 0 : dropFor(this.track, s, z);
+    v.pos.copy(sm.pos).addScaledVector(sm.lat, u).addScaledVector(sm.up, drop + 0.02);
+    v.trackIndex = sm.index;
+    this.actor.syncMesh(this.track);
+  }
+
+  /** いまの時刻で、自分より何メートル前にいるか */
+  gapAt(tMs, playerS, trackLength) {
+    const d = this.data;
+    const step = d.step || STEP_MS;
+    const i = Math.min(d.s.length - 1, Math.max(0, Math.round(tMs / step)));
+    let g = d.s[i] - playerS;
+    if (g > trackLength / 2) g -= trackLength;
+    if (g < -trackLength / 2) g += trackLength;
+    return g;
+  }
+
+  dispose(scene) { this.actor.dispose(scene); }
+}
+
+/**
+ * 車体を半透明にします。マテリアルは車ごとに作られるので他車には影響しません。
+ *
+ * 1台の中では同じマテリアルが複数の部位で共有されています（4本のタイヤが
+ * 1つのゴムを使う、など）。traverse は部位ごとに回るので、素直に掛け算すると
+ * 同じマテリアルに何度も掛かります。5か所で共有していれば 0.34^5 ＝ ほぼ透明で、
+ * 「ゴーストが出ているのに見えない」ことになります。一度処理したものは飛ばします。
+ */
+function fade(root, opacity) {
+  const done = new Set();
+  root.traverse((o) => {
+    if (!o.material) return;
+    const list = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of list) {
+      if (done.has(m)) continue;
+      done.add(m);
+      m.transparent = true;
+      m.opacity = (m.opacity ?? 1) * opacity;
+      m.depthWrite = false;
+    }
+  });
+}
+
+/**
+ * 保存しておくゴーストを選びます。
+ * 1周ぶんで数十KBあるので、全コースぶん貯めると保存領域を圧迫します。
+ * 新しいものから MAX_GHOSTS 件だけ残します。
+ */
+function trimGhosts(ghosts) {
+  const keys = Object.keys(ghosts);
+  if (keys.length <= MAX_GHOSTS) return ghosts;
+  keys.sort((a, b) => (ghosts[b].at || 0) - (ghosts[a].at || 0));
+  const out = {};
+  for (const k of keys.slice(0, MAX_GHOSTS)) out[k] = ghosts[k];
+  return out;
+}
+
+
 // ============================== src/audio.js ==============================
 /**
  * 効果音はすべて WebAudio でその場で合成しています（音声ファイルなし）。
@@ -8137,6 +8308,7 @@ class HUD {
       msg: root.querySelector('#hud-msg'),
       sub: root.querySelector('#hud-sub'),
       zone: root.querySelector('#hud-zone'),
+      ghost: root.querySelector('#hud-ghost'),
       clock: root.querySelector('#hud-clock'),
       money: root.querySelector('#hud-money'),
       wanted: root.querySelector('#hud-wanted'),
@@ -8494,6 +8666,13 @@ class HUD {
     if (this.el.time) this.el.time.textContent = st.timeText || '';
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
+    if (this.el.ghost) {
+      const g = st.ghostGap;
+      // 自己ベストとの差。符号で色を変えます（数字だけだと前後が読み取りにくい）
+      this.el.ghost.textContent = g === null || g === undefined
+        ? '' : `自己ベスト ${g >= 0 ? '+' : '−'}${Math.abs(Math.round(g))}m`;
+      this.el.ghost.className = g === null || g === undefined ? '' : (g >= 0 ? 'ahead' : 'behind');
+    }
     if (this.el.clock) this.el.clock.textContent = st.clock || '';
     if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
     this.setPrompt(st.actions);
@@ -8747,6 +8926,7 @@ const DEFAULT = {
   netName: '',               // オンラインでの表示名
   netRoom: '',               // 最後に使った合言葉
   netCourse: '',             // オンラインで走るステージ
+  ghosts: {},                // コースごとの自己ベストの走り（ゴースト用）
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
 
@@ -8763,6 +8943,7 @@ function load() {
       // 古いセーブには stats が無いので、足りないものを補います
       stats: { ...structuredClone(DEFAULT.stats), ...(d.stats || {}) },
       titles: Array.isArray(d.titles) ? d.titles : [],
+      ghosts: (d.ghosts && typeof d.ghosts === 'object') ? d.ghosts : {},
     };
   } catch (e) {
     return structuredClone(DEFAULT);
@@ -8966,6 +9147,9 @@ class Game {
     // オンライン対戦。部屋に入っているあいだだけ中身が入ります
     this.net = null;
     this.race = null;           // オンラインでの勝負
+    this.ghostRec = new GhostRecorder();   // いま走っている周の記録
+    this.ghost = null;                     // 自己ベストの再生
+    this.ghostData = null;                 // 再生に使う記録（main が入れます）
     this.remotes = new Map();   // 相手のID -> RemoteCar
     this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
     this.demo = false;        // メニュー背景の自動走行
@@ -9411,6 +9595,23 @@ class Game {
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
+  /** 自己ベストの記録を渡します。null で消えます */
+  setGhost(data) {
+    this.ghostData = data || null;
+    this.spawnGhost();
+  }
+
+  spawnGhost() {
+    if (this.ghost) { this.ghost.dispose(this.scene); this.ghost = null; }
+    if (!this.ghostData || this.kind === 'battle') return;
+    try {
+      this.ghost = new Ghost(this.ghostData, this.scene, this.track);
+    } catch {
+      // 記録が壊れていても走行は続けます
+      this.ghost = null;
+    }
+  }
+
   start(kind, opts = {}) {
     const startS = opts.startS ?? 0;
     this.kind = kind;
@@ -9438,6 +9639,9 @@ class Game {
     this.paPrompt = null;
     this.paActions = null;
     if (this.skid) this.skid.clear();
+    // ゴーストは走り出しに合わせて置き直します
+    this.ghostRec.reset();
+    this.spawnGhost();
     this._paSig = '';
     this._offer = null;
     // 高速隊と依頼はフリーランだけ。バトルやタイムアタックに割り込ませると
@@ -9828,12 +10032,23 @@ class Game {
       st.topSpeed = Math.max(st.topSpeed, pv.speedKmh);
       st.lapTime = performance.now() - st.lapStart;
 
+      // ゴースト。いまの周を記録しつつ、前回のベストを同じ時刻へ進めます
+      this.ghostRec.sample(dt, pv);
+      if (this.ghost) this.ghost.seek(st.lapTime);
+
       // 周回判定（0地点をまたいだら1周）
       if (st._lastS !== undefined && pv.s < st._lastS - this.track.length * 0.5) {
         st.lapCount++;
         st.lastLap = st.lapTime;
+        const isBest = st.lastLap < st.bestLap;
         st.bestLap = Math.min(st.bestLap, st.lastLap);
         st.lapStart = performance.now();
+        // ベストを更新した周だけ、その記録を残します
+        if (isBest) {
+          const rec = this.ghostRec.take(this.player.vehicle.spec.id, st.lastLap);
+          if (rec) this.onEvent('ghost', rec);
+        }
+        this.ghostRec.reset();
         this.onEvent('lap', { lap: st.lapCount, time: st.lastLap, best: st.bestLap });
         // タイムアタックは1周で終了
         if (this.kind === 'timeattack') this.finish('win');
@@ -10272,6 +10487,14 @@ class Game {
   hudState(money) {
     const v = this.player.vehicle;
     const others = this.rival ? [{ s: this.rival.vehicle.s, color: '#ff5a4d' }] : [];
+    // ゴーストも地図に出します。どこで離されたかが見えないと比べようがありません
+    if (this.ghost && this.ghost.actor.mesh.visible) {
+      others.push({ s: this.ghost.vehicle.s, color: '#6fd5ff' });
+    }
+    // 自己ベストとの差[m]。正なら自分が前
+    const ghostGap = this.ghost && this.ghost.actor.mesh.visible
+      ? -this.ghost.gapAt(this.state.lapTime, v.s, this.track.length)
+      : null;
     const zoneNames = { bay: '湾岸', city: '市街', tunnel: 'トンネル', bridge: '橋梁' };
     return {
       player: v,
@@ -10280,6 +10503,7 @@ class Game {
       // バトル中の体力・車間。これを渡していなかったため、HUD の
       // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
       // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
+      ghostGap,
       prompt: this.paPrompt,
       actions: this.paActions,
       police: this.police.state(),
@@ -10862,6 +11086,7 @@ function startOnline() {
   mode = 'online';
   if (data.netCourse && data.netCourse !== game.course.id) game.setCourse(data.netCourse);
   preparePlayer();
+  applyGhost();
   game.setRival(null);
   game.setPaRacers(unlockedRivals());
   game.start('free', { startS: 0, rollingStart: true });
@@ -10870,6 +11095,31 @@ function startOnline() {
   hud.message('オンライン', net.count ? `${net.others[0].info.name} と同じ道にいます` : '相手を待っています', 2400);
   hideAll();
   audio.resume();
+}
+
+/** いまのコースの自己ベストをゲームへ渡します */
+function applyGhost() {
+  if (!game) return;
+  const on = data.settings.ghost !== false;
+  const rec = on ? data.ghosts[game.course.id] : null;
+  game.setGhost(rec || null);
+}
+
+/** ベストを更新したときに呼ばれます */
+function saveGhost(rec) {
+  // バトル中は残しません。相手を追う走りは自己ベストの基準になりません
+  if (mode === 'battle') return;
+  rec.at = Date.now();
+  data.ghosts[game.course.id] = rec;
+  data.ghosts = trimGhosts(data.ghosts);
+  try {
+    save(data);
+  } catch {
+    // 保存領域が足りないときは、ゴーストを捨てて他のデータを守ります
+    data.ghosts = {};
+    save(data);
+  }
+  applyGhost();
 }
 
 /** B キー。状況に応じて「申し込む」か「受ける」になります */
@@ -11053,6 +11303,7 @@ function startFree(opts = {}) {
   mode = 'free';
   battleOpts = {};
   preparePlayer();
+  applyGhost();
   game.setRival(null);
   // パーキングエリアに走り屋をたむろさせます。
   // メニューへ戻らずに、走っている世界の中で相手を選べるようにするためです。
@@ -11071,6 +11322,7 @@ function startFree(opts = {}) {
 function startTA() {
   mode = 'ta';
   preparePlayer();
+  applyGhost();
   game.setRival(null);
   game.start('timeattack', {
     startS: 0, rollingStart: false,
@@ -11257,6 +11509,7 @@ function syncSettings() {
   $('#set-assist').checked = data.settings.assist !== false;
   $('#set-quality').value = data.settings.quality;
   $('#set-touch').checked = !$('#touch').classList.contains('hidden');
+  $('#set-ghost').checked = data.settings.ghost !== false;
 }
 $('#set-bloom').addEventListener('change', (e) => {
   data.settings.bloom = e.target.checked; game.setBloom(e.target.checked); save(data);
@@ -11279,6 +11532,11 @@ $('#set-quality').addEventListener('change', (e) => {
 });
 $('#set-touch').addEventListener('change', (e) => {
   $('#touch').classList.toggle('hidden', !e.target.checked);
+});
+$('#set-ghost').addEventListener('change', (e) => {
+  data.settings.ghost = e.target.checked;
+  save(data);
+  applyGhost();
 });
 $('#btn-reset').addEventListener('click', () => {
   if (!confirm('セーブデータを消去します。よろしいですか？')) return;
@@ -11359,6 +11617,7 @@ function onGameEvent(type, payload) {
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
   // オンラインの勝負
+  if (type === 'ghost') saveGhost(payload);
   if (type === 'racemsg') hud.message(payload.text, payload.sub || '', payload.ms || 1800);
   if (type === 'race') {
     if (payload.state === 'invited') audio.beep(980, 0.10, 0.12);

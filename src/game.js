@@ -17,6 +17,7 @@ import { Skid } from './skid.js';
 import { Net, sampleState } from './net.js';
 import { RemoteCar, collideRemote, makeTag } from './remote.js';
 import { Race } from './race.js';
+import { GhostRecorder, Ghost } from './ghost.js';
 import { CAR_BY_ID } from './cars.js';
 import { Actor, Particles, disposeTree, softDot } from './actors.js';
 import { buildCar } from './carModel.js';
@@ -172,6 +173,9 @@ export class Game {
     // オンライン対戦。部屋に入っているあいだだけ中身が入ります
     this.net = null;
     this.race = null;           // オンラインでの勝負
+    this.ghostRec = new GhostRecorder();   // いま走っている周の記録
+    this.ghost = null;                     // 自己ベストの再生
+    this.ghostData = null;                 // 再生に使う記録（main が入れます）
     this.remotes = new Map();   // 相手のID -> RemoteCar
     this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
     this.demo = false;        // メニュー背景の自動走行
@@ -617,6 +621,23 @@ export class Game {
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
+  /** 自己ベストの記録を渡します。null で消えます */
+  setGhost(data) {
+    this.ghostData = data || null;
+    this.spawnGhost();
+  }
+
+  spawnGhost() {
+    if (this.ghost) { this.ghost.dispose(this.scene); this.ghost = null; }
+    if (!this.ghostData || this.kind === 'battle') return;
+    try {
+      this.ghost = new Ghost(this.ghostData, this.scene, this.track);
+    } catch {
+      // 記録が壊れていても走行は続けます
+      this.ghost = null;
+    }
+  }
+
   start(kind, opts = {}) {
     const startS = opts.startS ?? 0;
     this.kind = kind;
@@ -644,6 +665,9 @@ export class Game {
     this.paPrompt = null;
     this.paActions = null;
     if (this.skid) this.skid.clear();
+    // ゴーストは走り出しに合わせて置き直します
+    this.ghostRec.reset();
+    this.spawnGhost();
     this._paSig = '';
     this._offer = null;
     // 高速隊と依頼はフリーランだけ。バトルやタイムアタックに割り込ませると
@@ -1034,12 +1058,23 @@ export class Game {
       st.topSpeed = Math.max(st.topSpeed, pv.speedKmh);
       st.lapTime = performance.now() - st.lapStart;
 
+      // ゴースト。いまの周を記録しつつ、前回のベストを同じ時刻へ進めます
+      this.ghostRec.sample(dt, pv);
+      if (this.ghost) this.ghost.seek(st.lapTime);
+
       // 周回判定（0地点をまたいだら1周）
       if (st._lastS !== undefined && pv.s < st._lastS - this.track.length * 0.5) {
         st.lapCount++;
         st.lastLap = st.lapTime;
+        const isBest = st.lastLap < st.bestLap;
         st.bestLap = Math.min(st.bestLap, st.lastLap);
         st.lapStart = performance.now();
+        // ベストを更新した周だけ、その記録を残します
+        if (isBest) {
+          const rec = this.ghostRec.take(this.player.vehicle.spec.id, st.lastLap);
+          if (rec) this.onEvent('ghost', rec);
+        }
+        this.ghostRec.reset();
         this.onEvent('lap', { lap: st.lapCount, time: st.lastLap, best: st.bestLap });
         // タイムアタックは1周で終了
         if (this.kind === 'timeattack') this.finish('win');
@@ -1478,6 +1513,14 @@ export class Game {
   hudState(money) {
     const v = this.player.vehicle;
     const others = this.rival ? [{ s: this.rival.vehicle.s, color: '#ff5a4d' }] : [];
+    // ゴーストも地図に出します。どこで離されたかが見えないと比べようがありません
+    if (this.ghost && this.ghost.actor.mesh.visible) {
+      others.push({ s: this.ghost.vehicle.s, color: '#6fd5ff' });
+    }
+    // 自己ベストとの差[m]。正なら自分が前
+    const ghostGap = this.ghost && this.ghost.actor.mesh.visible
+      ? -this.ghost.gapAt(this.state.lapTime, v.s, this.track.length)
+      : null;
     const zoneNames = { bay: '湾岸', city: '市街', tunnel: 'トンネル', bridge: '橋梁' };
     return {
       player: v,
@@ -1486,6 +1529,7 @@ export class Game {
       // バトル中の体力・車間。これを渡していなかったため、HUD の
       // updateBattle() が一度も呼ばれず、ゲージが100%・車間が0mのまま
       // 固まっていました（勝敗は内部で進むので、予兆なく負けて見える）。
+      ghostGap,
       prompt: this.paPrompt,
       actions: this.paActions,
       police: this.police.state(),

@@ -21,6 +21,7 @@ export class HUD {
       msg: root.querySelector('#hud-msg'),
       sub: root.querySelector('#hud-sub'),
       zone: root.querySelector('#hud-zone'),
+      ghost: root.querySelector('#hud-ghost'),
       clock: root.querySelector('#hud-clock'),
       money: root.querySelector('#hud-money'),
       wanted: root.querySelector('#hud-wanted'),
@@ -378,6 +379,13 @@ export class HUD {
     if (this.el.time) this.el.time.textContent = st.timeText || '';
     if (this.el.best) this.el.best.textContent = st.bestText || '';
     if (this.el.zone) this.el.zone.textContent = st.zoneText || '';
+    if (this.el.ghost) {
+      const g = st.ghostGap;
+      // 自己ベストとの差。符号で色を変えます（数字だけだと前後が読み取りにくい）
+      this.el.ghost.textContent = g === null || g === undefined
+        ? '' : `自己ベスト ${g >= 0 ? '+' : '−'}${Math.abs(Math.round(g))}m`;
+      this.el.ghost.className = g === null || g === undefined ? '' : (g >= 0 ? 'ahead' : 'behind');
+    }
     if (this.el.clock) this.el.clock.textContent = st.clock || '';
     if (st.battle) this.updateBattle(st.battle.life, st.battle.rivalLife, st.battle.gap);
     this.setPrompt(st.actions);

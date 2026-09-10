@@ -10,6 +10,7 @@ import { COURSES, COURSE_BY_ID, DEFAULT_COURSE } from './courses.js';
 import { RAMP } from './track.js';
 import { load, save, resetSave, emptyTune } from './save.js';
 import { TITLES, newTitles } from './titles.js';
+import { trimGhosts } from './ghost.js';
 import { applyTune } from './vehicle.js';
 import { buildCar } from './carModel.js';
 import { formatMoney, formatTime, clamp } from './util.js';
@@ -567,6 +568,7 @@ function startOnline() {
   mode = 'online';
   if (data.netCourse && data.netCourse !== game.course.id) game.setCourse(data.netCourse);
   preparePlayer();
+  applyGhost();
   game.setRival(null);
   game.setPaRacers(unlockedRivals());
   game.start('free', { startS: 0, rollingStart: true });
@@ -575,6 +577,31 @@ function startOnline() {
   hud.message('オンライン', net.count ? `${net.others[0].info.name} と同じ道にいます` : '相手を待っています', 2400);
   hideAll();
   audio.resume();
+}
+
+/** いまのコースの自己ベストをゲームへ渡します */
+function applyGhost() {
+  if (!game) return;
+  const on = data.settings.ghost !== false;
+  const rec = on ? data.ghosts[game.course.id] : null;
+  game.setGhost(rec || null);
+}
+
+/** ベストを更新したときに呼ばれます */
+function saveGhost(rec) {
+  // バトル中は残しません。相手を追う走りは自己ベストの基準になりません
+  if (mode === 'battle') return;
+  rec.at = Date.now();
+  data.ghosts[game.course.id] = rec;
+  data.ghosts = trimGhosts(data.ghosts);
+  try {
+    save(data);
+  } catch {
+    // 保存領域が足りないときは、ゴーストを捨てて他のデータを守ります
+    data.ghosts = {};
+    save(data);
+  }
+  applyGhost();
 }
 
 /** B キー。状況に応じて「申し込む」か「受ける」になります */
@@ -758,6 +785,7 @@ function startFree(opts = {}) {
   mode = 'free';
   battleOpts = {};
   preparePlayer();
+  applyGhost();
   game.setRival(null);
   // パーキングエリアに走り屋をたむろさせます。
   // メニューへ戻らずに、走っている世界の中で相手を選べるようにするためです。
@@ -776,6 +804,7 @@ function startFree(opts = {}) {
 function startTA() {
   mode = 'ta';
   preparePlayer();
+  applyGhost();
   game.setRival(null);
   game.start('timeattack', {
     startS: 0, rollingStart: false,
@@ -962,6 +991,7 @@ function syncSettings() {
   $('#set-assist').checked = data.settings.assist !== false;
   $('#set-quality').value = data.settings.quality;
   $('#set-touch').checked = !$('#touch').classList.contains('hidden');
+  $('#set-ghost').checked = data.settings.ghost !== false;
 }
 $('#set-bloom').addEventListener('change', (e) => {
   data.settings.bloom = e.target.checked; game.setBloom(e.target.checked); save(data);
@@ -984,6 +1014,11 @@ $('#set-quality').addEventListener('change', (e) => {
 });
 $('#set-touch').addEventListener('change', (e) => {
   $('#touch').classList.toggle('hidden', !e.target.checked);
+});
+$('#set-ghost').addEventListener('change', (e) => {
+  data.settings.ghost = e.target.checked;
+  save(data);
+  applyGhost();
 });
 $('#btn-reset').addEventListener('click', () => {
   if (!confirm('セーブデータを消去します。よろしいですか？')) return;
@@ -1064,6 +1099,7 @@ function onGameEvent(type, payload) {
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
   // オンラインの勝負
+  if (type === 'ghost') saveGhost(payload);
   if (type === 'racemsg') hud.message(payload.text, payload.sub || '', payload.ms || 1800);
   if (type === 'race') {
     if (payload.state === 'invited') audio.beep(980, 0.10, 0.12);

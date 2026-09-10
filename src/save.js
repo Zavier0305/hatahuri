@@ -28,6 +28,7 @@ const DEFAULT = {
   netName: '',               // オンラインでの表示名
   netRoom: '',               // 最後に使った合言葉
   netCourse: '',             // オンラインで走るステージ
+  ghosts: {},                // コースごとの自己ベストの走り（ゴースト用）
   settings: { bloom: true, sound: true, at: true, assist: true, quality: 'high', cam: 0 },
 };
 
@@ -44,6 +45,7 @@ export function load() {
       // 古いセーブには stats が無いので、足りないものを補います
       stats: { ...structuredClone(DEFAULT.stats), ...(d.stats || {}) },
       titles: Array.isArray(d.titles) ? d.titles : [],
+      ghosts: (d.ghosts && typeof d.ghosts === 'object') ? d.ghosts : {},
     };
   } catch (e) {
     return structuredClone(DEFAULT);

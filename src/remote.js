@@ -139,7 +139,7 @@ export class RemoteCar {
 }
 
 /** ランプ・一般道・路地では路面の高さが本線と違います */
-function dropFor(track, s, z) {
+export function dropFor(track, s, z) {
   if (z === 2 && track.surfaceAt) { const sf = track.surfaceAt(s); return sf ? sf.h : 0; }
   if (z === 3 && track.alleyAt && track.surfaceAt) { const sf = track.surfaceAt(s); return sf ? sf.h : 0; }
   if (z === 1 && track.rampAt) { const r = track.rampAt(s); return r ? r.h || 0 : 0; }
