@@ -114,7 +114,18 @@ export class Game {
     this.track = null;
     this.course = null;
     this.traffic = null;
-    this.wet = false;
+    this.wet = false;         // 0.5 を超えたら「濡れている」扱い
+    /*
+     * 天気。走行中に変わります。
+     *   wetness … 0で乾き、1で本降り。見た目もグリップもこの値で連続に変わります
+     *   target  … いま向かっている天気
+     *   next    … 次に天気が変わるまでの残り時間[s]
+     * 段階的に変えるのは、切り替えた瞬間に路面が別物になると
+     * 「知らないうちに滑る道になっていた」という理不尽が出るためです。
+     */
+    this.weather = { wetness: 0, target: 0, next: 120 };
+    this.fixedWet = false;    // コース自体が雨のときは変えません
+    this._roadMat = null;
 
     // --- 雨。降っているコースでだけ表示します。
     this.rain = (() => {
@@ -375,23 +386,13 @@ export class Game {
       this.sea.position.y = Math.min(-2, minY - 6);
     }
 
-    this.wet = !!course.wet;
-    this.rain.lines.visible = this.wet;
-    const roadMat = w.children[0] && w.children[0].userData.roadMat;
-    if (roadMat) {
-      // 濡れたアスファルトも「金属」ではありません。metalness を上げると
-      // 反射が路面の色に染まってしまい、ただ明るい灰色の道になります。
-      // metalness 0・粗さをごく低くすると、正面は暗いまま浅い角度でだけ
-      // 強く映り込む（フレネル反射）＝濡れた路面そのものの見え方になります。
-      roadMat.roughness = this.wet ? 0.10 : 0.60;
-      // 乾いていてもアスファルトは金属ではありません。metalness を残すと
-      // 拡散色が削られ、環境の色に染まった灰色の板になります。
-      roadMat.metalness = 0.0;
-      // 乾いた側の 0.55 は、根拠なく 0.75 へ上げて画が白っぽくなったので戻しました
-      roadMat.envMapIntensity = this.wet ? 1.7 : 0.55;
-      roadMat.color.setHex(this.wet ? 0x6e747e : 0xffffff);
-    }
-    this.scene.fog.density = this.wet ? 0.0042 : 0.0021;
+    // 天気。コースが雨なら降りっぱなし、それ以外は乾いた状態から始めます
+    this.fixedWet = !!course.wet;
+    this.weather.wetness = this.fixedWet ? 1 : 0;
+    this.weather.target = this.weather.wetness;
+    this.weather.next = 90 + Math.random() * 150;
+    this._roadMat = w.children[0] && w.children[0].userData.roadMat;
+    this.applyWeather(true);
 
     const base = this.settings.quality === 'low' ? 26 : 44;
     const count = clamp(Math.round(base * (course.traffic ?? 1)), 12, 96);
@@ -635,6 +636,64 @@ export class Game {
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
+  // ======================= 天気 =======================
+
+  /**
+   * いまの濡れ具合を、路面・霧・雨粒・グリップへ反映します。
+   * @param force 変化が小さくても反映するか（コースを切り替えた直後など）
+   */
+  applyWeather(force) {
+    const w = clamp(this.weather.wetness, 0, 1);
+    if (!force && Math.abs(w - (this._appliedWet ?? -1)) < 0.02) return;
+    this._appliedWet = w;
+    this.wet = w > 0.5;
+
+    const mat = this._roadMat;
+    if (mat) {
+      // 濡れたアスファルトも「金属」ではありません。metalness を上げると
+      // 反射が路面の色に染まってしまい、ただ明るい灰色の道になります。
+      // metalness 0・粗さをごく低くすると、正面は暗いまま浅い角度でだけ
+      // 強く映り込む（フレネル反射）＝濡れた路面そのものの見え方になります。
+      mat.roughness = lerp(0.60, 0.10, w);
+      mat.metalness = 0.0;
+      mat.envMapIntensity = lerp(0.55, 1.7, w);
+      // 乾いた白から、濡れた灰へ。間の色も破綻しないよう成分ごとに混ぜます
+      const r = lerp(1.0, 0x6e / 255, w), gg = lerp(1.0, 0x74 / 255, w), b = lerp(1.0, 0x7e / 255, w);
+      mat.color.setRGB(r, gg, b);
+    }
+    if (this.scene.fog) this.scene.fog.density = lerp(0.0021, 0.0042, w);
+    if (this.rain && this.rain.lines) {
+      this.rain.lines.visible = w > 0.05;
+      if (this.rain.lines.material) this.rain.lines.material.opacity = 0.42 * w;
+    }
+    const grip = lerp(1, 0.78, w);
+    if (this.autoAI) this.autoAI.gripScale = grip;
+    if (this.rivalAI) this.rivalAI.gripScale = grip;
+  }
+
+  /**
+   * 天気を進めます。
+   *
+   * 変わるのはフリーラン（とオンライン）だけです。バトルとタイムアタックで
+   * 途中から降り出すと、同じ条件で競っていないことになります。
+   */
+  updateWeather(dt) {
+    if (this.fixedWet || this.kind === 'battle' || this.kind === 'timeattack') return;
+    const wx = this.weather;
+    wx.next -= dt;
+    if (wx.next <= 0) {
+      // 乾いていれば降り出す、降っていれば上がる。強さもその都度決めます
+      wx.target = wx.target > 0.3 ? 0 : 0.55 + Math.random() * 0.45;
+      wx.next = 150 + Math.random() * 210;
+      this.onEvent('weather', wx.target > 0.3 ? 'rain' : 'clear');
+    }
+    // 30秒ほどかけて変わります。急に切り替わると理不尽になります
+    const rate = dt / 30;
+    if (wx.wetness < wx.target) wx.wetness = Math.min(wx.target, wx.wetness + rate);
+    else if (wx.wetness > wx.target) wx.wetness = Math.max(wx.target, wx.wetness - rate);
+    this.applyWeather(false);
+  }
+
   // ======================= フォトモード =======================
 
   setPhoto(on) {
@@ -1099,7 +1158,7 @@ export class Game {
       pv.laneU = clamp(lane, -10.6, -3.4);
     }
 
-    pv.update(dt, { wet: this.wet });
+    pv.update(dt, { wet: this.weather.wetness });
     const wallHit = pv.resolveWalls(this.track, { outer: ROAD.halfRoad - 0.35, inner: ROAD.medianHalf + 0.25 }, dt);
     if (wallHit > 1.5) {
       this.police.scrape(dt, wallHit);
@@ -1289,6 +1348,7 @@ export class Game {
 
     // --- 演出
     this.updateCamera(dt);
+    this.updateWeather(dt);
     this.updateRain(dt);
     this.updateEffects(dt);
     this.player.wet = this.wet;

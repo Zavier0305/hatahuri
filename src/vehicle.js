@@ -314,7 +314,10 @@ export class Vehicle {
     // ここでは 必要舵角 = ホイールベース × 使える横G ÷ 速度² を基準にし、
     // 過渡やドリフトのぶんだけ余裕（人間2.1倍 / AI 3.0倍）を上乗せします。
     const v = Math.abs(this.vx);
-    const wetK = env && env.wet ? 0.78 : 1;
+    // 濡れ具合は 0〜1 の連続値です（true は 1 として扱います）。
+    // 段階的に降り出すので、グリップも段階的に落ちる必要があります
+    const wetAmt = env && env.wet ? (typeof env.wet === 'number' ? clamp(env.wet, 0, 1) : 1) : 0;
+    const wetK = 1 - 0.22 * wetAmt;
     const dfAccel = (0.5 * RHO * S.downforce * 1.6 * S.area * v * v) / S.mass;
     const latCap = S.grip * wetK * (G + dfAccel);
     const needed = (S.dims.WB * latCap) / Math.max(36, v * v);
@@ -445,7 +448,7 @@ export class Vehicle {
     Nf = Math.max(Wtot * 0.12, Nf);
     Nr = Math.max(Wtot * 0.12, Nr);
 
-    const mu = S.grip * (env && env.wet ? 0.78 : 1);
+    const mu = S.grip * (1 - 0.22 * wetAmt);
     const muF = mu, muR = mu * (inp.handbrake > 0.5 ? 0.42 : 1);
 
     // --- タイヤのスリップ角と横力

@@ -1228,6 +1228,10 @@ function onGameEvent(type, payload) {
   }
   if (type === 'crash' && payload > 0.55) hud.message('CRASH', '', 700);
   // オンラインの勝負
+  if (type === 'weather') {
+    hud.message(payload === 'rain' ? '降ってきた' : '雨が上がった',
+      payload === 'rain' ? '路面が滑りやすくなります' : '', 2600);
+  }
   if (type === 'ghost') saveGhost(payload);
   if (type === 'sectors') saveSectors(payload);
   if (type === 'racemsg') hud.message(payload.text, payload.sub || '', payload.ms || 1800);
