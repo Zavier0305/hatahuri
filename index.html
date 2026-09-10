@@ -103,6 +103,14 @@
   <div id="hud-net" style="display:none"></div>
 
   <!-- フォトモードの操作案内。撮る直前に H で消せます -->
+  <!-- リプレイ中の操作 -->
+  <div id="replay-bar" class="hidden">
+    <b>REPLAY</b>
+    <span id="replay-shot"></span>
+    <span id="replay-time"></span>
+    <span class="rp-keys"><kbd>Space</kbd> 一時停止　<kbd>←</kbd><kbd>→</kbd> 早送り　<kbd>P</kbd> 写真　<kbd>Esc</kbd> 終了</span>
+  </div>
+
   <div id="photo-hint" class="hidden">
     <b>フォトモード</b>
     <span><kbd>←</kbd><kbd>→</kbd> まわす　<kbd>↑</kbd><kbd>↓</kbd> 高さ　<kbd>W</kbd><kbd>S</kbd> 寄る/引く　<kbd>Q</kbd><kbd>E</kbd> 画角</span>
@@ -266,6 +274,7 @@
           <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
           <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
           <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
+          <tr><th>リプレイ</th><td>リザルトの「リプレイを見る」から。<span class="pad">見どころで自動的にカメラが切り替わります</span></td></tr>
           <tr><th>フォトモード</th><td><kbd>P</kbd> <span class="pad">止めて構図を作る。Space で保存</span></td></tr>
           <tr><th>勝負を挑む</th><td><kbd>B</kbd> <span class="pad">オンラインで相手がいるとき。もう一度押すと取り消し</span></td></tr>
           <tr><th>後退（R）</th><td>止まってからブレーキを踏み直す。<kbd>↓</kbd> <kbd>S</kbd> でそのまま下がる<br><span class="pad">前へ戻すときは <kbd>↑</kbd> <kbd>W</kbd></span></td></tr>
@@ -463,6 +472,7 @@
       <div class="res-stats" id="res-stats"></div>
       <nav class="menu compact">
         <button class="primary" id="res-next"><b>次へ</b></button>
+        <button id="res-replay"><b>リプレイを見る</b><i>自動のカメラワークで見返します</i></button>
         <button id="res-card"><b>記録カードを保存</b><i>1枚の画像にして残します</i></button>
         <button id="res-retry"><b>もう一度</b></button>
         <button id="res-title"><b>タイトルへ</b></button>

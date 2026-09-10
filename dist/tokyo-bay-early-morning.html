@@ -589,6 +589,19 @@ kbd{
 #hud-sector.gain{color:var(--ok)}
 #hud-sector.loss{color:var(--dawn)}
 
+/* リプレイ中の帯 */
+#replay-bar{
+  position:absolute;left:50%;bottom:30px;transform:translateX(-50%);
+  display:flex;align-items:baseline;gap:18px;
+  padding:12px 22px;background:rgba(7,12,23,.82);
+  border:1px solid var(--line-strong);border-left:3px solid var(--dawn);
+  backdrop-filter:blur(6px);white-space:nowrap
+}
+#replay-bar b{font:700 10px/1 var(--f-data);letter-spacing:.3em;color:var(--dawn)}
+#replay-bar span{font:600 12px/1 var(--f-data);letter-spacing:.1em;color:#c3d1e3;font-variant-numeric:tabular-nums}
+#replay-bar .rp-keys{color:var(--faint);font-size:11px}
+@media(max-width:640px){ #replay-bar .rp-keys{display:none} }
+
 /* フォトモードの案内 */
 #photo-hint{
   position:absolute;left:50%;bottom:34px;transform:translateX(-50%);
@@ -722,6 +735,14 @@ kbd{
   <div id="hud-net" style="display:none"></div>
 
   <!-- フォトモードの操作案内。撮る直前に H で消せます -->
+  <!-- リプレイ中の操作 -->
+  <div id="replay-bar" class="hidden">
+    <b>REPLAY</b>
+    <span id="replay-shot"></span>
+    <span id="replay-time"></span>
+    <span class="rp-keys"><kbd>Space</kbd> 一時停止　<kbd>←</kbd><kbd>→</kbd> 早送り　<kbd>P</kbd> 写真　<kbd>Esc</kbd> 終了</span>
+  </div>
+
   <div id="photo-hint" class="hidden">
     <b>フォトモード</b>
     <span><kbd>←</kbd><kbd>→</kbd> まわす　<kbd>↑</kbd><kbd>↓</kbd> 高さ　<kbd>W</kbd><kbd>S</kbd> 寄る/引く　<kbd>Q</kbd><kbd>E</kbd> 画角</span>
@@ -885,6 +906,7 @@ kbd{
           <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
           <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
           <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
+          <tr><th>リプレイ</th><td>リザルトの「リプレイを見る」から。<span class="pad">見どころで自動的にカメラが切り替わります</span></td></tr>
           <tr><th>フォトモード</th><td><kbd>P</kbd> <span class="pad">止めて構図を作る。Space で保存</span></td></tr>
           <tr><th>勝負を挑む</th><td><kbd>B</kbd> <span class="pad">オンラインで相手がいるとき。もう一度押すと取り消し</span></td></tr>
           <tr><th>後退（R）</th><td>止まってからブレーキを踏み直す。<kbd>↓</kbd> <kbd>S</kbd> でそのまま下がる<br><span class="pad">前へ戻すときは <kbd>↑</kbd> <kbd>W</kbd></span></td></tr>
@@ -1082,6 +1104,7 @@ kbd{
       <div class="res-stats" id="res-stats"></div>
       <nav class="menu compact">
         <button class="primary" id="res-next"><b>次へ</b></button>
+        <button id="res-replay"><b>リプレイを見る</b><i>自動のカメラワークで見返します</i></button>
         <button id="res-card"><b>記録カードを保存</b><i>1枚の画像にして残します</i></button>
         <button id="res-retry"><b>もう一度</b></button>
         <button id="res-title"><b>タイトルへ</b></button>
@@ -8062,6 +8085,175 @@ function trimGhosts(ghosts) {
 }
 
 
+// ============================== src/replay.js ==============================
+
+/**
+ * リプレイ。走った内容を、自動のカメラワークで見返します。
+ *
+ * ■ 記録はゴーストと同じ形です
+ * 位置が s と u なので、走りは数値の並びとして残せます（ghost.js と同じ）。
+ * 違うのは「自車として見せる」ことと、速度と入力も残して、カメラの
+ * 切り替えどころを決める材料にすることです。
+ *
+ * ■ カメラは「何が起きたか」で切り替えます
+ * 一定間隔で機械的に切り替えると、何でもない直線で寄りの絵になったり、
+ * いちばん見せたい場面で引いたりします。そこで、記録から
+ *   ・大きく滑った
+ *   ・強く減速した
+ *   ・最高速に近い
+ * ところを先に拾い、その前後だけ寄りや低い位置のカメラを当てます。
+ */
+
+const REPLAY_STEP_MS = 100;
+const MAX_REPLAY_SAMPLES = 9000;      // 15分ぶん
+
+/** カメラの型。どれも車を見ますが、置き方が違います */
+const SHOTS = [
+  { id: 'chase',  label: '追走',   dist: 7.5,  height: 2.4,  side: 0,    fov: 58 },
+  { id: 'low',    label: 'ロー',   dist: 5.0,  height: 0.45, side: 1.6,  fov: 52 },
+  { id: 'side',   label: '流し',   dist: 2.0,  height: 1.5,  side: 11,   fov: 42 },
+  { id: 'front',  label: '前',     dist: -9.5, height: 1.7,  side: 2.2,  fov: 50 },
+  { id: 'high',   label: 'ハイ',   dist: 12,   height: 9.5,  side: 4,    fov: 46 },
+];
+
+class ReplayRecorder {
+  constructor() { this.reset(); }
+
+  reset() {
+    this.acc = 0;
+    this.s = []; this.u = []; this.h = []; this.z = []; this.v = []; this.k = [];
+  }
+
+  get length() { return this.s.length; }
+
+  /** @param v 自車 */
+  sample(dt, veh) {
+    this.acc += dt * 1000;
+    if (this.acc < REPLAY_STEP_MS && this.s.length) return;
+    if (this.s.length) this.acc -= REPLAY_STEP_MS;
+    if (this.s.length >= MAX_REPLAY_SAMPLES) return;
+    this.s.push(Math.round(veh.s * 10) / 10);
+    this.u.push(Math.round(veh.u * 100) / 100);
+    this.h.push(Math.round(veh.heading * 1000) / 1000);
+    this.z.push(veh.onAlley ? 3 : veh.onSurface ? 2 : veh.onRamp ? 1 : 0);
+    this.v.push(Math.round(veh.speedKmh));
+    // 滑り具合。カメラの切り替えどころを決めるのに使います
+    this.k.push(Math.round(clamp(Math.max(veh.slipRear, veh.slipFront), 0, 1) * 100));
+  }
+
+  take(carId) {
+    if (this.s.length < 20) return null;
+    return { v: 1, carId, step: REPLAY_STEP_MS,
+      s: this.s.slice(), u: this.u.slice(), h: this.h.slice(),
+      z: this.z.slice(), sp: this.v.slice(), k: this.k.slice() };
+  }
+}
+
+/**
+ * 記録から、カメラの切り替え表を作ります。
+ *
+ * 「見どころ」を先に拾い、そこへ寄りの絵を当てます。残りは追走とハイを
+ * 交互に置いて、単調にならないようにします。
+ */
+function buildShots(data) {
+  const n = data.s.length;
+  const step = data.step || REPLAY_STEP_MS;
+  const top = Math.max(1, ...data.sp);
+  const marks = [];
+
+  // 見どころ拾い
+  for (let i = 2; i < n - 2; i++) {
+    const slip = data.k[i] / 100;
+    const decel = (data.sp[i - 2] - data.sp[i]) / 10;      // 0.2秒での減速[km/h]/10
+    const fast = data.sp[i] / top;
+    let score = 0, kind = null;
+    if (slip > 0.35) { score = slip * 2.2; kind = 'low'; }
+    if (decel > 2.2 && decel * 0.5 > score) { score = decel * 0.5; kind = 'front'; }
+    if (fast > 0.94 && 1.3 > score) { score = 1.3; kind = 'side'; }
+    if (kind) marks.push({ i, score, kind });
+  }
+  marks.sort((a, b) => b.score - a.score);
+
+  // 近すぎる見どころは間引きます。細かく切り替わると何も見えません
+  const minGap = Math.round(2500 / step);
+  const picked = [];
+  for (const m of marks) {
+    if (picked.some((p) => Math.abs(p.i - m.i) < minGap)) continue;
+    picked.push(m);
+    if (picked.length >= 12) break;
+  }
+  picked.sort((a, b) => a.i - b.i);
+
+  // 見どころの前後に割り当て、隙間は追走とハイで埋めます
+  const shots = [];
+  let at = 0, fill = 0;
+  const lead = Math.round(1200 / step);
+  for (const m of picked) {
+    const from = Math.max(at, m.i - lead);
+    if (from > at) {
+      shots.push({ from: at, to: from, id: fill % 3 === 2 ? 'high' : 'chase' });
+      fill++;
+    }
+    shots.push({ from, to: Math.min(n - 1, m.i + lead), id: m.kind });
+    at = Math.min(n - 1, m.i + lead);
+  }
+  if (at < n - 1) shots.push({ from: at, to: n - 1, id: 'chase' });
+  return shots.filter((sh) => sh.to > sh.from);
+}
+
+/** 再生の進行と、いま当てるカメラを持ちます */
+class Replay {
+  constructor(data) {
+    this.data = data;
+    this.shots = buildShots(data);
+    this.t = 0;                       // 再生位置[ms]
+    this.speed = 1;
+    this.playing = true;
+  }
+
+  get step() { return this.data.step || REPLAY_STEP_MS; }
+  get duration() { return (this.data.s.length - 1) * this.step; }
+  get index() { return clamp(Math.round(this.t / this.step), 0, this.data.s.length - 1); }
+  get done() { return this.t >= this.duration; }
+
+  update(dt) {
+    if (!this.playing) return;
+    this.t = clamp(this.t + dt * 1000 * this.speed, 0, this.duration);
+    if (this.t >= this.duration) this.playing = false;
+  }
+
+  seek(ms) { this.t = clamp(ms, 0, this.duration); }
+
+  /** その時刻の位置。前後の記録を混ぜます */
+  sampleAt(tMs) {
+    const d = this.data;
+    const n = d.s.length;
+    const x = clamp(tMs / this.step, 0, n - 1);
+    const i = Math.floor(x);
+    const j = Math.min(n - 1, i + 1);
+    const f = x - i;
+    let dh = d.h[j] - d.h[i];
+    if (dh > Math.PI) dh -= Math.PI * 2;
+    if (dh < -Math.PI) dh += Math.PI * 2;
+    return {
+      s: d.s[i] + (d.s[j] - d.s[i]) * f,
+      u: d.u[i] + (d.u[j] - d.u[i]) * f,
+      h: d.h[i] + dh * f,
+      z: d.z[i],
+      kmh: d.sp[i],
+    };
+  }
+
+  /** いま当てるカメラ */
+  shotAt(tMs) {
+    const i = clamp(Math.round(tMs / this.step), 0, this.data.s.length - 1);
+    const sh = this.shots.find((x) => i >= x.from && i < x.to) || this.shots[this.shots.length - 1];
+    const id = sh ? sh.id : 'chase';
+    return SHOTS.find((x) => x.id === id) || SHOTS[0];
+  }
+}
+
+
 // ============================== src/card.js ==============================
 
 /**
@@ -9527,6 +9719,8 @@ class Game {
     this.ghostRec = new GhostRecorder();   // いま走っている周の記録
     this.ghost = null;                     // 自己ベストの再生
     this.ghostData = null;                 // 再生に使う記録（main が入れます）
+    this.replayRec = new ReplayRecorder();  // 走行そのものの記録（リプレイ用）
+    this.replay = null;                     // 再生中のリプレイ
     this.bestSectors = null;               // 区間タイムの基準（main が入れます）
     this.remotes = new Map();   // 相手のID -> RemoteCar
     this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
@@ -9963,6 +10157,70 @@ class Game {
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
+  // ======================= リプレイ =======================
+
+  /** 直前の走行を再生します。記録が短ければ何もしません */
+  startReplay() {
+    const rec = this.replayRec.take(this.player.vehicle.spec.id);
+    if (!rec) return false;
+    this.replay = new Replay(rec);
+    this.mode = 'replay';
+    this.onEvent('replay', { on: true, duration: this.replay.duration, shots: this.replay.shots.length });
+    return true;
+  }
+
+  stopReplay() {
+    if (!this.replay) return;
+    this.replay = null;
+    this.mode = 'racing';
+    this.onEvent('replay', { on: false });
+  }
+
+  /**
+   * 再生を進め、記録どおりの位置に自車を置いて、カメラを当てます。
+   * 物理は回しません。記録を再現するだけです。
+   */
+  updateReplay(dt) {
+    const r = this.replay;
+    if (!r) return;
+    r.update(dt);
+    const p = r.sampleAt(r.t);
+    const v = this.player.vehicle;
+    v.s = p.s; v.u = p.u; v.heading = p.h;
+    v.vx = p.kmh / 3.6;
+    v.onRamp = p.z === 1; v.onSurface = p.z === 2; v.onAlley = p.z === 3;
+    const sm = this.track.sample(p.s, this._tmpA);
+    const drop = p.z === 0 ? 0 : dropFor(this.track, p.s, p.z);
+    v.pos.copy(sm.pos).addScaledVector(sm.lat, p.u).addScaledVector(sm.up, drop + 0.02);
+    v.trackIndex = sm.index;
+    this.player.syncMesh(this.track);
+    this.placeReplayCamera(r.shotAt(r.t), v, dt);
+  }
+
+  /**
+   * カメラを、いまの型に合わせて置きます。
+   * 型が切り替わった瞬間だけ飛ばし、あいだは滑らかに追わせます。
+   * 常に滑らかに動かすと、切り替えたことが伝わりません。
+   */
+  placeReplayCamera(shot, v, dt) {
+    const fwd = this._camDir.set(Math.sin(v.heading), 0, Math.cos(v.heading)).normalize();
+    const right = this._camMix.set(fwd.z, 0, -fwd.x);
+    const ideal = this._camIdeal.copy(v.pos)
+      .addScaledVector(fwd, -shot.dist)
+      .addScaledVector(right, shot.side);
+    ideal.y = v.pos.y + shot.height;
+
+    const cut = shot.id !== this._lastShot;
+    this._lastShot = shot.id;
+    if (cut) this.camera.position.copy(ideal);
+    else this.camera.position.lerp(ideal, 1 - Math.exp(-4.5 * dt));
+
+    const look = this._camTarget.copy(v.pos);
+    look.y += 0.6;
+    this.camera.lookAt(look);
+    if (this.camera.fov !== shot.fov) { this.camera.fov = shot.fov; this.camera.updateProjectionMatrix(); }
+  }
+
   // ======================= 天気 =======================
 
   /**
@@ -10153,6 +10411,7 @@ class Game {
     if (this.skid) this.skid.clear();
     // ゴーストは走り出しに合わせて置き直します
     this.ghostRec.reset();
+    this.replayRec.reset();
     this.spawnGhost();
     this._paSig = '';
     this._offer = null;
@@ -10387,6 +10646,9 @@ class Game {
     // 撮りたい場面が過ぎてしまいます
     if (this.photo.on) { this.updatePhotoCamera(); return; }
 
+    // リプレイ中は記録を再現するだけで、物理は回しません
+    if (this.replay) { this.updateReplay(dt); return; }
+
     const pv = this.player.vehicle;
 
     if (this.mode === 'countdown') {
@@ -10559,6 +10821,7 @@ class Game {
 
       // ゴースト。いまの周を記録しつつ、前回のベストを同じ時刻へ進めます
       this.ghostRec.sample(dt, pv);
+      this.replayRec.sample(dt, pv);
       if (this.ghost) this.ghost.seek(st.lapTime);
 
       // 区間の通過。1つ進んだときだけ数えます。戻ったり飛んだりした回は
@@ -11713,6 +11976,40 @@ function saveSectors(payload) {
   applySectors();
 }
 
+// ---------------------------------------------------------------- リプレイ
+
+/** 直前の走行を再生します */
+function startReplay() {
+  if (!game) return;
+  if (!game.startReplay()) { hud.message('記録がありません', '', 1600); return; }
+  hideAll();
+  $('#hud').classList.add('hidden');
+  $('#replay-bar').classList.remove('hidden');
+  paintReplayBar();
+}
+
+function stopReplay() {
+  if (!game || !game.replay) return;
+  game.stopReplay();
+  $('#replay-bar').classList.add('hidden');
+  showResultAgain();
+}
+
+/** リプレイを抜けたらリザルトへ戻します */
+function showResultAgain() {
+  $('#hud').classList.add('hidden');
+  show('result');
+}
+
+function paintReplayBar() {
+  const r = game && game.replay;
+  if (!r) return;
+  const shot = r.shotAt(r.t);
+  $('#replay-shot').textContent = shot.label;
+  $('#replay-time').textContent = `${(r.t / 1000).toFixed(1)} / ${(r.duration / 1000).toFixed(1)} 秒`
+    + (r.playing ? '' : '（停止中）');
+}
+
 // ---------------------------------------------------------------- フォトモード
 
 /** フォトモードの出入り */
@@ -12219,6 +12516,7 @@ $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   show(go);
 }));
 
+$('#res-replay').addEventListener('click', () => { startReplay(); });
 $('#res-card').addEventListener('click', () => { saveCard(); });
 $('#ol-join').addEventListener('click', () => { joinRoom(); });
 $('#ol-leave').addEventListener('click', () => { leaveRoom(); renderOnline(); });
@@ -12238,6 +12536,17 @@ input.onAction = (code) => {
   }
   if (current !== 'none') { menuKey(code); return; }
   // B で勝負の申し込み／承諾。オンラインで相手がいるときだけ効きます
+  // リプレイ中の操作
+  if (game && game.replay && !game.photo.on) {
+    const r = game.replay;
+    if (code === 'Escape') { stopReplay(); return; }
+    if (code === 'Space') { r.playing = !r.playing; paintReplayBar(); return; }
+    if (code === 'ArrowRight') { r.seek(r.t + 2000); paintReplayBar(); return; }
+    if (code === 'ArrowLeft') { r.seek(r.t - 2000); paintReplayBar(); return; }
+    if (code === 'KeyP') { togglePhoto(true); return; }
+    return;
+  }
+
   // フォトモード中は、走行の操作を横取りします
   if (game && game.photo.on) {
     if (code === 'KeyP' || code === 'Escape') { togglePhoto(false); return; }
@@ -12380,7 +12689,11 @@ function loop(now) {
 
   if (game) {
     const inGame = (current === 'none') && !paused;
-    if (inGame && game.photo.on) {
+    if (inGame && game.replay && !game.photo.on) {
+      game.update(dt, NEUTRAL, null);
+      paintReplayBar();
+      if (game.replay.done && game.replay.playing === false) { /* 終端で止まります */ }
+    } else if (inGame && game.photo.on) {
       // 止まっているあいだも、カメラだけは動かします
       photoControls(dt);
       game.update(dt, NEUTRAL, null);

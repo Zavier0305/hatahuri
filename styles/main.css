@@ -583,6 +583,19 @@ kbd{
 #hud-sector.gain{color:var(--ok)}
 #hud-sector.loss{color:var(--dawn)}
 
+/* リプレイ中の帯 */
+#replay-bar{
+  position:absolute;left:50%;bottom:30px;transform:translateX(-50%);
+  display:flex;align-items:baseline;gap:18px;
+  padding:12px 22px;background:rgba(7,12,23,.82);
+  border:1px solid var(--line-strong);border-left:3px solid var(--dawn);
+  backdrop-filter:blur(6px);white-space:nowrap
+}
+#replay-bar b{font:700 10px/1 var(--f-data);letter-spacing:.3em;color:var(--dawn)}
+#replay-bar span{font:600 12px/1 var(--f-data);letter-spacing:.1em;color:#c3d1e3;font-variant-numeric:tabular-nums}
+#replay-bar .rp-keys{color:var(--faint);font-size:11px}
+@media(max-width:640px){ #replay-bar .rp-keys{display:none} }
+
 /* フォトモードの案内 */
 #photo-hint{
   position:absolute;left:50%;bottom:34px;transform:translateX(-50%);

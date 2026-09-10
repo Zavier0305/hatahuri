@@ -15,9 +15,10 @@ import { Jobs } from './jobs.js';
 import { Crossing } from './crossing.js';
 import { Skid } from './skid.js';
 import { Net, sampleState } from './net.js';
-import { RemoteCar, collideRemote, makeTag } from './remote.js';
+import { RemoteCar, collideRemote, makeTag, dropFor } from './remote.js';
 import { Race } from './race.js';
 import { GhostRecorder, Ghost } from './ghost.js';
+import { ReplayRecorder, Replay } from './replay.js';
 
 /*
  * 1周を何区間に割るか。
@@ -200,6 +201,8 @@ export class Game {
     this.ghostRec = new GhostRecorder();   // いま走っている周の記録
     this.ghost = null;                     // 自己ベストの再生
     this.ghostData = null;                 // 再生に使う記録（main が入れます）
+    this.replayRec = new ReplayRecorder();  // 走行そのものの記録（リプレイ用）
+    this.replay = null;                     // 再生中のリプレイ
     this.bestSectors = null;               // 区間タイムの基準（main が入れます）
     this.remotes = new Map();   // 相手のID -> RemoteCar
     this._netPrev = null;       // 前回送った状態（変化率の計算に使います）
@@ -636,6 +639,70 @@ export class Game {
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
+  // ======================= リプレイ =======================
+
+  /** 直前の走行を再生します。記録が短ければ何もしません */
+  startReplay() {
+    const rec = this.replayRec.take(this.player.vehicle.spec.id);
+    if (!rec) return false;
+    this.replay = new Replay(rec);
+    this.mode = 'replay';
+    this.onEvent('replay', { on: true, duration: this.replay.duration, shots: this.replay.shots.length });
+    return true;
+  }
+
+  stopReplay() {
+    if (!this.replay) return;
+    this.replay = null;
+    this.mode = 'racing';
+    this.onEvent('replay', { on: false });
+  }
+
+  /**
+   * 再生を進め、記録どおりの位置に自車を置いて、カメラを当てます。
+   * 物理は回しません。記録を再現するだけです。
+   */
+  updateReplay(dt) {
+    const r = this.replay;
+    if (!r) return;
+    r.update(dt);
+    const p = r.sampleAt(r.t);
+    const v = this.player.vehicle;
+    v.s = p.s; v.u = p.u; v.heading = p.h;
+    v.vx = p.kmh / 3.6;
+    v.onRamp = p.z === 1; v.onSurface = p.z === 2; v.onAlley = p.z === 3;
+    const sm = this.track.sample(p.s, this._tmpA);
+    const drop = p.z === 0 ? 0 : dropFor(this.track, p.s, p.z);
+    v.pos.copy(sm.pos).addScaledVector(sm.lat, p.u).addScaledVector(sm.up, drop + 0.02);
+    v.trackIndex = sm.index;
+    this.player.syncMesh(this.track);
+    this.placeReplayCamera(r.shotAt(r.t), v, dt);
+  }
+
+  /**
+   * カメラを、いまの型に合わせて置きます。
+   * 型が切り替わった瞬間だけ飛ばし、あいだは滑らかに追わせます。
+   * 常に滑らかに動かすと、切り替えたことが伝わりません。
+   */
+  placeReplayCamera(shot, v, dt) {
+    const fwd = this._camDir.set(Math.sin(v.heading), 0, Math.cos(v.heading)).normalize();
+    const right = this._camMix.set(fwd.z, 0, -fwd.x);
+    const ideal = this._camIdeal.copy(v.pos)
+      .addScaledVector(fwd, -shot.dist)
+      .addScaledVector(right, shot.side);
+    ideal.y = v.pos.y + shot.height;
+
+    const cut = shot.id !== this._lastShot;
+    this._lastShot = shot.id;
+    if (cut) this.camera.position.copy(ideal);
+    else this.camera.position.lerp(ideal, 1 - Math.exp(-4.5 * dt));
+
+    const look = this._camTarget.copy(v.pos);
+    look.y += 0.6;
+    this.camera.lookAt(look);
+    if (this.camera.fov !== shot.fov) { this.camera.fov = shot.fov; this.camera.updateProjectionMatrix(); }
+  }
+
   // ======================= 天気 =======================
 
   /**
@@ -826,6 +893,7 @@ export class Game {
     if (this.skid) this.skid.clear();
     // ゴーストは走り出しに合わせて置き直します
     this.ghostRec.reset();
+    this.replayRec.reset();
     this.spawnGhost();
     this._paSig = '';
     this._offer = null;
@@ -1060,6 +1128,9 @@ export class Game {
     // 撮りたい場面が過ぎてしまいます
     if (this.photo.on) { this.updatePhotoCamera(); return; }
 
+    // リプレイ中は記録を再現するだけで、物理は回しません
+    if (this.replay) { this.updateReplay(dt); return; }
+
     const pv = this.player.vehicle;
 
     if (this.mode === 'countdown') {
@@ -1232,6 +1303,7 @@ export class Game {
 
       // ゴースト。いまの周を記録しつつ、前回のベストを同じ時刻へ進めます
       this.ghostRec.sample(dt, pv);
+      this.replayRec.sample(dt, pv);
       if (this.ghost) this.ghost.seek(st.lapTime);
 
       // 区間の通過。1つ進んだときだけ数えます。戻ったり飛んだりした回は

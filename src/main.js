@@ -648,6 +648,40 @@ function saveSectors(payload) {
   applySectors();
 }
 
+// ---------------------------------------------------------------- リプレイ
+
+/** 直前の走行を再生します */
+function startReplay() {
+  if (!game) return;
+  if (!game.startReplay()) { hud.message('記録がありません', '', 1600); return; }
+  hideAll();
+  $('#hud').classList.add('hidden');
+  $('#replay-bar').classList.remove('hidden');
+  paintReplayBar();
+}
+
+function stopReplay() {
+  if (!game || !game.replay) return;
+  game.stopReplay();
+  $('#replay-bar').classList.add('hidden');
+  showResultAgain();
+}
+
+/** リプレイを抜けたらリザルトへ戻します */
+function showResultAgain() {
+  $('#hud').classList.add('hidden');
+  show('result');
+}
+
+function paintReplayBar() {
+  const r = game && game.replay;
+  if (!r) return;
+  const shot = r.shotAt(r.t);
+  $('#replay-shot').textContent = shot.label;
+  $('#replay-time').textContent = `${(r.t / 1000).toFixed(1)} / ${(r.duration / 1000).toFixed(1)} 秒`
+    + (r.playing ? '' : '（停止中）');
+}
+
 // ---------------------------------------------------------------- フォトモード
 
 /** フォトモードの出入り */
@@ -1154,6 +1188,7 @@ $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   show(go);
 }));
 
+$('#res-replay').addEventListener('click', () => { startReplay(); });
 $('#res-card').addEventListener('click', () => { saveCard(); });
 $('#ol-join').addEventListener('click', () => { joinRoom(); });
 $('#ol-leave').addEventListener('click', () => { leaveRoom(); renderOnline(); });
@@ -1173,6 +1208,17 @@ input.onAction = (code) => {
   }
   if (current !== 'none') { menuKey(code); return; }
   // B で勝負の申し込み／承諾。オンラインで相手がいるときだけ効きます
+  // リプレイ中の操作
+  if (game && game.replay && !game.photo.on) {
+    const r = game.replay;
+    if (code === 'Escape') { stopReplay(); return; }
+    if (code === 'Space') { r.playing = !r.playing; paintReplayBar(); return; }
+    if (code === 'ArrowRight') { r.seek(r.t + 2000); paintReplayBar(); return; }
+    if (code === 'ArrowLeft') { r.seek(r.t - 2000); paintReplayBar(); return; }
+    if (code === 'KeyP') { togglePhoto(true); return; }
+    return;
+  }
+
   // フォトモード中は、走行の操作を横取りします
   if (game && game.photo.on) {
     if (code === 'KeyP' || code === 'Escape') { togglePhoto(false); return; }
@@ -1315,7 +1361,11 @@ function loop(now) {
 
   if (game) {
     const inGame = (current === 'none') && !paused;
-    if (inGame && game.photo.on) {
+    if (inGame && game.replay && !game.photo.on) {
+      game.update(dt, NEUTRAL, null);
+      paintReplayBar();
+      if (game.replay.done && game.replay.playing === false) { /* 終端で止まります */ }
+    } else if (inGame && game.photo.on) {
       // 止まっているあいだも、カメラだけは動かします
       photoControls(dt);
       game.update(dt, NEUTRAL, null);
