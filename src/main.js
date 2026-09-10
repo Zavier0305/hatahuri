@@ -11,6 +11,7 @@ import { RAMP } from './track.js';
 import { load, save, resetSave, emptyTune } from './save.js';
 import { TITLES, newTitles } from './titles.js';
 import { trimGhosts } from './ghost.js';
+import { drawResultCard, cardData } from './card.js';
 import { applyTune, predictSpec } from './vehicle.js';
 import { buildCar } from './carModel.js';
 import { formatMoney, formatTime, clamp } from './util.js';
@@ -933,6 +934,27 @@ function restart() {
 
 // ---------------------------------------------------------------- リザルト
 
+let lastResult = null;   // 記録カードを作るために覚えておきます
+
+/** 記録カードを画像として保存します */
+function saveCard() {
+  if (!lastResult) return;
+  const cv = drawResultCard(lastResult);
+  cv.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+    a.download = `wangan-${stamp}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // すぐ消すと保存前に無効になる環境があるので、少し置いてから開放します
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }, 'image/png');
+}
+
 function showResult(result, state) {
   const win = result === 'win';
   // PAへ逃げ込んで自分から降りた場合。負けとは分けて扱います
@@ -981,6 +1003,15 @@ function showResult(result, state) {
     ['獲得金額', `¥${formatMoney(reward)}`],
     ['所持金', `¥${formatMoney(data.money)}`],
   ].map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join('');
+
+  // 記録カードの中身。画面に出したのと同じ数字を使います
+  const car = CAR_BY_ID[data.carId];
+  lastResult = cardData({
+    state, course: game.course, car, color: colorOf(data.carId),
+    headline: abort ? 'GIVE UP' : win ? 'WIN' : 'LOSE',
+    money: data.money, reward,
+    note: quote || undefined,
+  });
 
   const next = $('#res-next');
   // パーキングエリアで挑んだ勝負は、フリーランの途中の出来事です。
@@ -1084,6 +1115,7 @@ $$('[data-go]').forEach((b) => b.addEventListener('click', () => {
   show(go);
 }));
 
+$('#res-card').addEventListener('click', () => { saveCard(); });
 $('#ol-join').addEventListener('click', () => { joinRoom(); });
 $('#ol-leave').addEventListener('click', () => { leaveRoom(); renderOnline(); });
 $('#ol-go').addEventListener('click', () => { startOnline(); });
@@ -1279,6 +1311,7 @@ async function boot() {
     // テストから通信層を直接叩けるようにします（鍵なしの Loopback を挿すため）
     window.__net = { Net, LoopbackTransport, PusherTransport, roomChannel, sampleState, setClock };
     window.__cars = { CAR_BY_ID, CARS, applyTune, predictSpec };
+    window.__card = { drawResultCard, cardData };
   }
 
   // タイトル画面でも背景として走らせておく（デモ走行）
