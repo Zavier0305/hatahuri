@@ -13,8 +13,12 @@ import { createHmac } from 'node:crypto';
  * 「ビルド不要の素の ES Modules」という構成が崩れるためです。
  */
 
-const KEY = process.env.PUSHER_KEY;
-const SECRET = process.env.PUSHER_SECRET;
+// 前後の空白を落とします。貼り付けたときに紛れ込んだ改行やタブが
+// そのまま署名に入ると、鍵は正しいのに認証だけが通りません。
+const env = (name) => (process.env[name] || '').trim();
+
+const KEY = env('PUSHER_KEY');
+const SECRET = env('PUSHER_SECRET');
 
 /**
  * 表示名は相手の画面に出ます。制御文字と山かっこを落としてから丸めます。

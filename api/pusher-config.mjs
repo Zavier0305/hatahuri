@@ -10,9 +10,19 @@
  *     取り違えると、原因を探すのに時間がかかります
  */
 
-const KEY = process.env.PUSHER_KEY;
-const CLUSTER = process.env.PUSHER_CLUSTER || 'ap3';
-const READY = !!(KEY && process.env.PUSHER_SECRET);
+/*
+ * 環境変数は前後の空白を落としてから使います。
+ *
+ * 管理画面へ貼り付けるとき、コピー元のタブや改行が一緒に入ることがあります。
+ * 実際、最初の設定では key の先頭にタブ、cluster の末尾に改行が入っていました。
+ * 見た目では気づけず、症状は「アプリキーが違います」と出るだけなので、
+ * 原因にたどり着くのに時間がかかります。ここで吸収します。
+ */
+const env = (name) => (process.env[name] || '').trim();
+
+const KEY = env('PUSHER_KEY');
+const CLUSTER = env('PUSHER_CLUSTER') || 'ap3';
+const READY = !!(KEY && env('PUSHER_SECRET'));
 
 export default function handler(req, res) {
   res.setHeader('Cache-Control', 'public, max-age=60');
