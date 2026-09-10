@@ -8224,6 +8224,17 @@ class Replay {
 
   seek(ms) { this.t = clamp(ms, 0, this.duration); }
 
+  /**
+   * 再生と停止を切り替えます。終端で押したときは頭から流し直します。
+   *
+   * 終端では playing を立て直しても、次の update が「もう終わっている」と
+   * 見て即座に倒すので、押しても何も起きない状態になります。
+   */
+  toggle() {
+    if (!this.playing && this.done) this.t = 0;
+    this.playing = !this.playing;
+  }
+
   /** その時刻の位置。前後の記録を混ぜます */
   sampleAt(tMs) {
     const d = this.data;
@@ -10164,7 +10175,14 @@ class Game {
     const rec = this.replayRec.take(this.player.vehicle.spec.id);
     if (!rec) return false;
     this.replay = new Replay(rec);
+    // 抜けたときに戻す先を覚えます。リプレイは決着後に見ることがほとんどで、
+    // 決め打ちで 'racing' へ戻すと「決着済みなのに走行中」という食い違った
+    // 状態になります（PAの案内など mode === 'racing' を見る箇所が誤動作します）
+    if (this.mode !== 'replay') this._modeBeforeReplay = this.mode;
     this.mode = 'replay';
+    // 最初のこまはカメラを飛ばします。前回の型が残っていると、2回目以降は
+    // 「切り替わっていない」と見なされ、前のカメラ位置から滑って入ってきます
+    this._lastShot = null;
     this.onEvent('replay', { on: true, duration: this.replay.duration, shots: this.replay.shots.length });
     return true;
   }
@@ -10172,7 +10190,7 @@ class Game {
   stopReplay() {
     if (!this.replay) return;
     this.replay = null;
-    this.mode = 'racing';
+    this.mode = this._modeBeforeReplay || 'result';
     this.onEvent('replay', { on: false });
   }
 
@@ -12017,7 +12035,10 @@ function togglePhoto(on) {
   if (!game || current !== 'none') return;
   const next = on === undefined ? !game.photo.on : on;
   game.setPhoto(next);
-  $('#hud').classList.toggle('hidden', next);
+  // リプレイ中に構図を作って戻ってきたとき、走行用の HUD が出てくると
+  // リプレイの上に速度計が重なります。リプレイ中は出したままにしません
+  $('#hud').classList.toggle('hidden', next || !!game.replay);
+  if (game.replay) $('#replay-bar').classList.toggle('hidden', next);
   $('#photo-hint').classList.toggle('hidden', !next || !game.photo.hint);
 }
 
@@ -12524,7 +12545,39 @@ $('#ol-go').addEventListener('click', () => { startOnline(); });
 // 合言葉は Enter でも入れます
 $('#ol-room').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
 
+/**
+ * リプレイ中の操作。走行の操作もポーズも、こちらが受け取ります。
+ * @param code 押されたキー
+ */
+function replayKey(code) {
+  const r = game.replay;
+  if (code === 'Escape') { stopReplay(); return; }
+  if (code === 'Space') { r.toggle(); paintReplayBar(); return; }
+  if (code === 'ArrowRight') { r.seek(r.t + 2000); paintReplayBar(); return; }
+  if (code === 'ArrowLeft') { r.seek(r.t - 2000); paintReplayBar(); return; }
+  if (code === 'KeyP') { togglePhoto(true); }
+}
+
+/** フォトモード中の操作。走行の操作を横取りします */
+function photoKey(code) {
+  if (code === 'KeyP' || code === 'Escape') { togglePhoto(false); return; }
+  if (code === 'Space') { savePhoto(); return; }
+  if (code === 'KeyH') {
+    game.photo.hint = !game.photo.hint;
+    $('#photo-hint').classList.toggle('hidden', !game.photo.hint);
+  }
+}
+
 input.onAction = (code) => {
+  /*
+   * リプレイとフォトモードは、Escape も含めてキーを横取りします。
+   *
+   * ポーズより先に見ないと、「抜ける」つもりの Escape が一時停止になり、
+   * リプレイからもフォトモードからも抜ける手段が無くなります。
+   */
+  if (current === 'none' && game && game.photo.on) { photoKey(code); return; }
+  if (current === 'none' && game && game.replay) { replayKey(code); return; }
+
   if (code === 'Escape') {
     if (pitStop && current === 'garage') { closePit(); return; }
     if (current !== 'none' && current !== 'pause' && current !== 'title' && current !== 'loading') {
@@ -12535,30 +12588,8 @@ input.onAction = (code) => {
     return;
   }
   if (current !== 'none') { menuKey(code); return; }
-  // B で勝負の申し込み／承諾。オンラインで相手がいるときだけ効きます
-  // リプレイ中の操作
-  if (game && game.replay && !game.photo.on) {
-    const r = game.replay;
-    if (code === 'Escape') { stopReplay(); return; }
-    if (code === 'Space') { r.playing = !r.playing; paintReplayBar(); return; }
-    if (code === 'ArrowRight') { r.seek(r.t + 2000); paintReplayBar(); return; }
-    if (code === 'ArrowLeft') { r.seek(r.t - 2000); paintReplayBar(); return; }
-    if (code === 'KeyP') { togglePhoto(true); return; }
-    return;
-  }
-
-  // フォトモード中は、走行の操作を横取りします
-  if (game && game.photo.on) {
-    if (code === 'KeyP' || code === 'Escape') { togglePhoto(false); return; }
-    if (code === 'Space') { savePhoto(); return; }
-    if (code === 'KeyH') {
-      game.photo.hint = !game.photo.hint;
-      $('#photo-hint').classList.toggle('hidden', !game.photo.hint);
-      return;
-    }
-    return;
-  }
   if (code === 'KeyP') { togglePhoto(true); return; }
+  // B で勝負の申し込み／承諾。オンラインで相手がいるときだけ効きます
   if (code === 'KeyB') { raceKey(); return; }
   if (code === 'KeyF') { doPaAction(0); return; }
   if (code === 'KeyG') { doPaAction(1); return; }

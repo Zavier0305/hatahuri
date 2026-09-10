@@ -646,7 +646,14 @@ export class Game {
     const rec = this.replayRec.take(this.player.vehicle.spec.id);
     if (!rec) return false;
     this.replay = new Replay(rec);
+    // 抜けたときに戻す先を覚えます。リプレイは決着後に見ることがほとんどで、
+    // 決め打ちで 'racing' へ戻すと「決着済みなのに走行中」という食い違った
+    // 状態になります（PAの案内など mode === 'racing' を見る箇所が誤動作します）
+    if (this.mode !== 'replay') this._modeBeforeReplay = this.mode;
     this.mode = 'replay';
+    // 最初のこまはカメラを飛ばします。前回の型が残っていると、2回目以降は
+    // 「切り替わっていない」と見なされ、前のカメラ位置から滑って入ってきます
+    this._lastShot = null;
     this.onEvent('replay', { on: true, duration: this.replay.duration, shots: this.replay.shots.length });
     return true;
   }
@@ -654,7 +661,7 @@ export class Game {
   stopReplay() {
     if (!this.replay) return;
     this.replay = null;
-    this.mode = 'racing';
+    this.mode = this._modeBeforeReplay || 'result';
     this.onEvent('replay', { on: false });
   }
 

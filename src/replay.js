@@ -137,6 +137,17 @@ export class Replay {
 
   seek(ms) { this.t = clamp(ms, 0, this.duration); }
 
+  /**
+   * 再生と停止を切り替えます。終端で押したときは頭から流し直します。
+   *
+   * 終端では playing を立て直しても、次の update が「もう終わっている」と
+   * 見て即座に倒すので、押しても何も起きない状態になります。
+   */
+  toggle() {
+    if (!this.playing && this.done) this.t = 0;
+    this.playing = !this.playing;
+  }
+
   /** その時刻の位置。前後の記録を混ぜます */
   sampleAt(tMs) {
     const d = this.data;
