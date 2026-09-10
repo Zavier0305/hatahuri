@@ -589,6 +589,16 @@ kbd{
 #hud-sector.gain{color:var(--ok)}
 #hud-sector.loss{color:var(--dawn)}
 
+/* フォトモードの案内 */
+#photo-hint{
+  position:absolute;left:50%;bottom:34px;transform:translateX(-50%);
+  display:grid;gap:6px;justify-items:center;text-align:center;
+  padding:14px 22px;background:rgba(7,12,23,.82);
+  border:1px solid var(--line-strong);backdrop-filter:blur(6px)
+}
+#photo-hint b{font:700 10px/1 var(--f-data);letter-spacing:.3em;color:var(--dawn)}
+#photo-hint span{font-size:12px;color:#c3d1e3;letter-spacing:.04em}
+
 /* 走行中に出す通信の状態 */
 #hud-net{
   position:absolute;left:20px;top:60px;font:600 11px/1.7 var(--f-data);
@@ -710,6 +720,13 @@ kbd{
   </div>
 
   <div id="hud-net" style="display:none"></div>
+
+  <!-- フォトモードの操作案内。撮る直前に H で消せます -->
+  <div id="photo-hint" class="hidden">
+    <b>フォトモード</b>
+    <span><kbd>←</kbd><kbd>→</kbd> まわす　<kbd>↑</kbd><kbd>↓</kbd> 高さ　<kbd>W</kbd><kbd>S</kbd> 寄る/引く　<kbd>Q</kbd><kbd>E</kbd> 画角</span>
+    <span><kbd>Space</kbd> 保存　<kbd>H</kbd> この案内を消す　<kbd>P</kbd> 走行へ戻る</span>
+  </div>
 
   <div id="speedvignette"></div>
 
@@ -868,6 +885,7 @@ kbd{
           <tr><th>シフトアップ</th><td><kbd>E</kbd> <kbd>Shift</kbd> <span class="pad">パッド RB</span></td></tr>
           <tr><th>シフトダウン</th><td><kbd>Q</kbd> <kbd>Ctrl</kbd> <span class="pad">パッド LB</span></td></tr>
           <tr><th>サイドブレーキ</th><td><kbd>Space</kbd> <span class="pad">パッド A</span></td></tr>
+          <tr><th>フォトモード</th><td><kbd>P</kbd> <span class="pad">止めて構図を作る。Space で保存</span></td></tr>
           <tr><th>勝負を挑む</th><td><kbd>B</kbd> <span class="pad">オンラインで相手がいるとき。もう一度押すと取り消し</span></td></tr>
           <tr><th>後退（R）</th><td>止まってからブレーキを踏み直す。<kbd>↓</kbd> <kbd>S</kbd> でそのまま下がる<br><span class="pad">前へ戻すときは <kbd>↑</kbd> <kbd>W</kbd></span></td></tr>
           <tr><th>PAでの行動</th><td><kbd>F</kbd> <kbd>G</kbd> <kbd>H</kbd> <span class="pad">画面のボタンでも可</span></td></tr>
@@ -9354,6 +9372,12 @@ class Game {
     this.camLook = new THREE.Vector3();
     this.camMode = 0;          // いま実際に使っている視点
     this.userCamMode = 0;      // プレイヤーが選んだ視点（デモで上書きしない）
+    /*
+     * フォトモード。止めて構図を作るための視点です。
+     * 車の周りを回る極座標（方位・仰角・距離）で持ちます。走行中の追走カメラは
+     * 進行方向に紐づいていて、構図を作る用途には向きません。
+     */
+    this.photo = { on: false, yaw: 2.4, pitch: 0.18, dist: 8.5, fov: 40, hint: true };
     this.shake = 0;
 
     // --- ライティング（夜なので控えめ＋発光で見せる）
@@ -9905,6 +9929,61 @@ class Game {
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
+  // ======================= フォトモード =======================
+
+  setPhoto(on) {
+    this.photo.on = !!on;
+    if (this.photo.on) {
+      // 開いた瞬間は、車の斜め後ろから。真横や真後ろだと構図が作りにくいので
+      this.photo.yaw = this.player.vehicle.heading + Math.PI * 0.75;
+      this.photo.pitch = 0.18;
+      this.photo.dist = 8.5;
+      this.photo.fov = 40;
+    }
+    this.onEvent('photo', this.photo.on);
+  }
+
+  /**
+   * @param d.yaw   方位の変化
+   * @param d.pitch 仰角の変化
+   * @param d.dist  距離の変化
+   * @param d.fov   画角の変化
+   */
+  movePhoto(d) {
+    const p = this.photo;
+    if (!p.on) return;
+    p.yaw += d.yaw || 0;
+    p.pitch = clamp(p.pitch + (d.pitch || 0), -0.35, 1.25);
+    p.dist = clamp(p.dist + (d.dist || 0), 1.8, 40);
+    p.fov = clamp(p.fov + (d.fov || 0), 14, 90);
+  }
+
+  updatePhotoCamera() {
+    const v = this.player.vehicle;
+    const p = this.photo;
+    const target = this._camTarget.copy(v.pos);
+    target.y += 0.75;
+    const cp = Math.cos(p.pitch);
+    this.camera.position.set(
+      target.x + Math.sin(p.yaw) * p.dist * cp,
+      target.y + Math.sin(p.pitch) * p.dist,
+      target.z + Math.cos(p.yaw) * p.dist * cp
+    );
+    this.camera.lookAt(target);
+    if (this.camera.fov !== p.fov) { this.camera.fov = p.fov; this.camera.updateProjectionMatrix(); }
+  }
+
+  /**
+   * いまの画面を PNG として返します。
+   *
+   * 直前に描き直してから読み出します。WebGL の描画結果は既定では
+   * 表示のあとに捨てられるので、間を空けると白紙が返ります。
+   */
+  snapshot() {
+    this.render();
+    return this.renderer.domElement.toDataURL('image/png');
+  }
+
   /**
    * 区間を1つ抜けたときの記録。
    * @param i    抜けた区間の番号
@@ -10211,6 +10290,10 @@ class Game {
     const st = this.state;
     if (this.mode === 'idle' || !this.player) return;
     dt = Math.min(dt, 0.05);
+
+    // フォトモードは時間を止めます。構図を作っているあいだに車が進むと
+    // 撮りたい場面が過ぎてしまいます
+    if (this.photo.on) { this.updatePhotoCamera(); return; }
 
     const pv = this.player.vehicle;
 
@@ -10522,6 +10605,7 @@ class Game {
 
   updateCamera(dt) {
     const v = this.player.vehicle;
+    if (this.photo.on) { this.updatePhotoCamera(); return; }
     const cm = CAM_MODES[this.camMode];
     const speed = Math.abs(v.vx);
     const sm = this.track.sample(v.s, this._tmpA);
@@ -11533,6 +11617,45 @@ function saveSectors(payload) {
   applySectors();
 }
 
+// ---------------------------------------------------------------- フォトモード
+
+/** フォトモードの出入り */
+function togglePhoto(on) {
+  if (!game || current !== 'none') return;
+  const next = on === undefined ? !game.photo.on : on;
+  game.setPhoto(next);
+  $('#hud').classList.toggle('hidden', next);
+  $('#photo-hint').classList.toggle('hidden', !next || !game.photo.hint);
+}
+
+/** 撮った画像を保存します */
+function savePhoto() {
+  if (!game || !game.photo.on) return;
+  const url = game.snapshot();
+  const a = document.createElement('a');
+  a.href = url;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+  a.download = `wangan-photo-${stamp}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  hud.message('保存しました', '', 1200);
+}
+
+/** フォトモード中のカメラ操作。押しっぱなしで動かせるよう毎フレーム呼びます */
+function photoControls(dt) {
+  if (!game || !game.photo.on) return;
+  const k = input.keys;                      // Set です
+  const on = (...codes) => codes.some((c) => k.has(c));
+  const spd = 1.6 * dt;
+  game.movePhoto({
+    yaw: (on('ArrowLeft', 'KeyA') ? spd : 0) - (on('ArrowRight', 'KeyD') ? spd : 0),
+    pitch: (on('ArrowUp') ? spd * 0.6 : 0) - (on('ArrowDown') ? spd * 0.6 : 0),
+    dist: (on('KeyS') ? spd * 9 : 0) - (on('KeyW') ? spd * 9 : 0),
+    fov: (on('KeyE') ? spd * 18 : 0) - (on('KeyQ') ? spd * 18 : 0),
+  });
+}
+
 /** B キー。状況に応じて「申し込む」か「受ける」になります */
 function raceKey() {
   const r = game && game.race;
@@ -12019,6 +12142,18 @@ input.onAction = (code) => {
   }
   if (current !== 'none') { menuKey(code); return; }
   // B で勝負の申し込み／承諾。オンラインで相手がいるときだけ効きます
+  // フォトモード中は、走行の操作を横取りします
+  if (game && game.photo.on) {
+    if (code === 'KeyP' || code === 'Escape') { togglePhoto(false); return; }
+    if (code === 'Space') { savePhoto(); return; }
+    if (code === 'KeyH') {
+      game.photo.hint = !game.photo.hint;
+      $('#photo-hint').classList.toggle('hidden', !game.photo.hint);
+      return;
+    }
+    return;
+  }
+  if (code === 'KeyP') { togglePhoto(true); return; }
   if (code === 'KeyB') { raceKey(); return; }
   if (code === 'KeyF') { doPaAction(0); return; }
   if (code === 'KeyG') { doPaAction(1); return; }
@@ -12145,7 +12280,11 @@ function loop(now) {
 
   if (game) {
     const inGame = (current === 'none') && !paused;
-    if (inGame) {
+    if (inGame && game.photo.on) {
+      // 止まっているあいだも、カメラだけは動かします
+      photoControls(dt);
+      game.update(dt, NEUTRAL, null);
+    } else if (inGame) {
       if (!game.state.finished && game.kind !== 'battle') $('#hud').classList.remove('danger');
       const s = input.sample(dt);
       game.update(dt, s, data.settings.sound ? audio : null);

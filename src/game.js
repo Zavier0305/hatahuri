@@ -78,6 +78,12 @@ export class Game {
     this.camLook = new THREE.Vector3();
     this.camMode = 0;          // いま実際に使っている視点
     this.userCamMode = 0;      // プレイヤーが選んだ視点（デモで上書きしない）
+    /*
+     * フォトモード。止めて構図を作るための視点です。
+     * 車の周りを回る極座標（方位・仰角・距離）で持ちます。走行中の追走カメラは
+     * 進行方向に紐づいていて、構図を作る用途には向きません。
+     */
+    this.photo = { on: false, yaw: 2.4, pitch: 0.18, dist: 8.5, fov: 40, hint: true };
     this.shake = 0;
 
     // --- ライティング（夜なので控えめ＋発光で見せる）
@@ -629,6 +635,61 @@ export class Game {
   }
 
   /** モード開始。kind: 'battle' | 'free' | 'timeattack' */
+  // ======================= フォトモード =======================
+
+  setPhoto(on) {
+    this.photo.on = !!on;
+    if (this.photo.on) {
+      // 開いた瞬間は、車の斜め後ろから。真横や真後ろだと構図が作りにくいので
+      this.photo.yaw = this.player.vehicle.heading + Math.PI * 0.75;
+      this.photo.pitch = 0.18;
+      this.photo.dist = 8.5;
+      this.photo.fov = 40;
+    }
+    this.onEvent('photo', this.photo.on);
+  }
+
+  /**
+   * @param d.yaw   方位の変化
+   * @param d.pitch 仰角の変化
+   * @param d.dist  距離の変化
+   * @param d.fov   画角の変化
+   */
+  movePhoto(d) {
+    const p = this.photo;
+    if (!p.on) return;
+    p.yaw += d.yaw || 0;
+    p.pitch = clamp(p.pitch + (d.pitch || 0), -0.35, 1.25);
+    p.dist = clamp(p.dist + (d.dist || 0), 1.8, 40);
+    p.fov = clamp(p.fov + (d.fov || 0), 14, 90);
+  }
+
+  updatePhotoCamera() {
+    const v = this.player.vehicle;
+    const p = this.photo;
+    const target = this._camTarget.copy(v.pos);
+    target.y += 0.75;
+    const cp = Math.cos(p.pitch);
+    this.camera.position.set(
+      target.x + Math.sin(p.yaw) * p.dist * cp,
+      target.y + Math.sin(p.pitch) * p.dist,
+      target.z + Math.cos(p.yaw) * p.dist * cp
+    );
+    this.camera.lookAt(target);
+    if (this.camera.fov !== p.fov) { this.camera.fov = p.fov; this.camera.updateProjectionMatrix(); }
+  }
+
+  /**
+   * いまの画面を PNG として返します。
+   *
+   * 直前に描き直してから読み出します。WebGL の描画結果は既定では
+   * 表示のあとに捨てられるので、間を空けると白紙が返ります。
+   */
+  snapshot() {
+    this.render();
+    return this.renderer.domElement.toDataURL('image/png');
+  }
+
   /**
    * 区間を1つ抜けたときの記録。
    * @param i    抜けた区間の番号
@@ -935,6 +996,10 @@ export class Game {
     const st = this.state;
     if (this.mode === 'idle' || !this.player) return;
     dt = Math.min(dt, 0.05);
+
+    // フォトモードは時間を止めます。構図を作っているあいだに車が進むと
+    // 撮りたい場面が過ぎてしまいます
+    if (this.photo.on) { this.updatePhotoCamera(); return; }
 
     const pv = this.player.vehicle;
 
@@ -1246,6 +1311,7 @@ export class Game {
 
   updateCamera(dt) {
     const v = this.player.vehicle;
+    if (this.photo.on) { this.updatePhotoCamera(); return; }
     const cm = CAM_MODES[this.camMode];
     const speed = Math.abs(v.vx);
     const sm = this.track.sample(v.s, this._tmpA);

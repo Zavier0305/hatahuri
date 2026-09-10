@@ -648,6 +648,45 @@ function saveSectors(payload) {
   applySectors();
 }
 
+// ---------------------------------------------------------------- フォトモード
+
+/** フォトモードの出入り */
+function togglePhoto(on) {
+  if (!game || current !== 'none') return;
+  const next = on === undefined ? !game.photo.on : on;
+  game.setPhoto(next);
+  $('#hud').classList.toggle('hidden', next);
+  $('#photo-hint').classList.toggle('hidden', !next || !game.photo.hint);
+}
+
+/** 撮った画像を保存します */
+function savePhoto() {
+  if (!game || !game.photo.on) return;
+  const url = game.snapshot();
+  const a = document.createElement('a');
+  a.href = url;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+  a.download = `wangan-photo-${stamp}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  hud.message('保存しました', '', 1200);
+}
+
+/** フォトモード中のカメラ操作。押しっぱなしで動かせるよう毎フレーム呼びます */
+function photoControls(dt) {
+  if (!game || !game.photo.on) return;
+  const k = input.keys;                      // Set です
+  const on = (...codes) => codes.some((c) => k.has(c));
+  const spd = 1.6 * dt;
+  game.movePhoto({
+    yaw: (on('ArrowLeft', 'KeyA') ? spd : 0) - (on('ArrowRight', 'KeyD') ? spd : 0),
+    pitch: (on('ArrowUp') ? spd * 0.6 : 0) - (on('ArrowDown') ? spd * 0.6 : 0),
+    dist: (on('KeyS') ? spd * 9 : 0) - (on('KeyW') ? spd * 9 : 0),
+    fov: (on('KeyE') ? spd * 18 : 0) - (on('KeyQ') ? spd * 18 : 0),
+  });
+}
+
 /** B キー。状況に応じて「申し込む」か「受ける」になります */
 function raceKey() {
   const r = game && game.race;
@@ -1134,6 +1173,18 @@ input.onAction = (code) => {
   }
   if (current !== 'none') { menuKey(code); return; }
   // B で勝負の申し込み／承諾。オンラインで相手がいるときだけ効きます
+  // フォトモード中は、走行の操作を横取りします
+  if (game && game.photo.on) {
+    if (code === 'KeyP' || code === 'Escape') { togglePhoto(false); return; }
+    if (code === 'Space') { savePhoto(); return; }
+    if (code === 'KeyH') {
+      game.photo.hint = !game.photo.hint;
+      $('#photo-hint').classList.toggle('hidden', !game.photo.hint);
+      return;
+    }
+    return;
+  }
+  if (code === 'KeyP') { togglePhoto(true); return; }
   if (code === 'KeyB') { raceKey(); return; }
   if (code === 'KeyF') { doPaAction(0); return; }
   if (code === 'KeyG') { doPaAction(1); return; }
@@ -1260,7 +1311,11 @@ function loop(now) {
 
   if (game) {
     const inGame = (current === 'none') && !paused;
-    if (inGame) {
+    if (inGame && game.photo.on) {
+      // 止まっているあいだも、カメラだけは動かします
+      photoControls(dt);
+      game.update(dt, NEUTRAL, null);
+    } else if (inGame) {
       if (!game.state.finished && game.kind !== 'battle') $('#hud').classList.remove('danger');
       const s = input.sample(dt);
       game.update(dt, s, data.settings.sound ? audio : null);
