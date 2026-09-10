@@ -721,14 +721,19 @@ function unlockedRivals() {
   return RIVALS.slice(0, clamp(data.storyStage + 1, 1, RIVALS.length));
 }
 
-function startFree() {
+/**
+ * @param opts.startS ここから走り出します。パーキングエリアでの勝負を
+ *   終えたあと、走っていた場所の近くへ戻すために使います。
+ */
+function startFree(opts = {}) {
   mode = 'free';
+  battleOpts = {};
   preparePlayer();
   game.setRival(null);
   // パーキングエリアに走り屋をたむろさせます。
   // メニューへ戻らずに、走っている世界の中で相手を選べるようにするためです。
   game.setPaRacers(unlockedRivals());
-  game.start('free', { startS: 0, rollingStart: true });
+  game.start('free', { startS: opts.startS ?? 0, rollingStart: true });
   hud.setBattle(false);
   const pa = (game.paSpots || []).length;
   hud.message(game.course.name,
@@ -774,7 +779,9 @@ function doPaAction(i = 0) {
     currentRival = p.rival;
     // 挑んだ相手はもう広場にはいません
     for (const r of game.paRacers || []) if (r.def === p.rival) r.mesh.visible = false;
-    startBattle(p.rival, { here: true, startS });
+    // どこから挑んだかを持たせます。これが無いと、勝負のあと
+    // 走っていたフリーランへ戻る道が無くなります
+    startBattle(p.rival, { here: true, startS, fromPa: true, exitIndex: p.exitIndex });
     return;
   }
   if (p.kind === 'pit') { openPit(); return; }
@@ -873,9 +880,18 @@ function showResult(result, state) {
   ].map(([k, v]) => `<div><span>${k}</span><span>${v}</span></div>`).join('');
 
   const next = $('#res-next');
-  const hasNext = mode === 'battle' && win && data.storyStage < RIVALS.length;
-  next.querySelector('b').textContent = hasNext ? '次のライバルへ' : 'ストーリーへ';
-  next.onclick = () => show('story');
+  // パーキングエリアで挑んだ勝負は、フリーランの途中の出来事です。
+  // ここでストーリー画面へ送ると、走っていた続きへ戻る道が無くなります。
+  const backToFree = mode === 'battle' && battleOpts.fromPa;
+  if (backToFree) {
+    const s0 = battleOpts.startS;
+    next.querySelector('b').textContent = '走行に戻る';
+    next.onclick = () => startFree({ startS: s0 });
+  } else {
+    const hasNext = mode === 'battle' && win && data.storyStage < RIVALS.length;
+    next.querySelector('b').textContent = hasNext ? '次のライバルへ' : 'ストーリーへ';
+    next.onclick = () => show('story');
+  }
   show('result');
 }
 
