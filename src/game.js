@@ -1358,6 +1358,9 @@ export class Game {
     audio && audio.update(pv, dt, {
       inside: CAM_MODES[this.camMode].id === 'hood',
       tunnel: this.track.isTunnel(pv.s),
+      // 一般道はざらついた舗装で、転がり音が大きくなります
+      surface: pv.onSurface || pv.onAlley,
+      wet: this.weather.wetness,
     });
   }
 

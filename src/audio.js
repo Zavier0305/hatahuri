@@ -76,6 +76,18 @@ export class AudioEngine {
     this.wind = mkNoise('bandpass', 700, 0.7, 0);
     this.tire = mkNoise('bandpass', 1800, 6, 0);
     this.turbo = mkNoise('bandpass', 3600, 9, 0);
+    /*
+     * ロードノイズ（転がり音）と雨音。
+     *
+     * これまでタイヤの音は「滑ったとき」しか鳴っていませんでした。
+     * まっすぐ走っているあいだは風切り音だけで、路面の上を転がっている
+     * 感じがありません。実際の車内でいちばん大きいのはこの音です。
+     *
+     * 転がり音は低め（ゴーッ）、雨は高め（サーッ）で分けます。同じ帯域に
+     * 重ねると、ただ音が濁るだけで両方とも聞き取れなくなります。
+     */
+    this.road = mkNoise('lowpass', 520, 0.8, 0);
+    this.rainNoise = mkNoise('highpass', 2400, 0.6, 0);
 
     // トンネル用の反響（ディレイのフィードバック）。区間に入ると混ざります。
     const rev = ctx.createDelay(0.4);
@@ -160,6 +172,17 @@ export class AudioEngine {
     const speed = Math.abs(v.vx);
     this.wind.g.gain.setTargetAtTime(clamp((speed / 95) ** 2 * 0.30, 0, 0.30), t, 0.12);
     this.wind.f.frequency.setTargetAtTime(400 + speed * 12, t, 0.15);
+
+    // --- 転がり音。速度で上がり、荒れた路面と濡れた路面で増えます
+    const wet = clamp(opts.wet || 0, 0, 1);
+    const rough = opts.surface ? 1.35 : 1;      // 一般道はざらついた舗装
+    const roadG = clamp(speed / 78, 0, 1) ** 1.25 * 0.13 * rough * (1 + wet * 0.5);
+    this.road.g.gain.setTargetAtTime(roadG, t, 0.10);
+    // 速度が上がると周波数も上がります（タイヤの回転が速くなるため）
+    this.road.f.frequency.setTargetAtTime(300 + speed * 9, t, 0.12);
+
+    // --- 雨音。走っていなくても降っていれば鳴ります
+    this.rainNoise.g.gain.setTargetAtTime(wet * (0.045 + clamp(speed / 90, 0, 1) * 0.05), t, 0.25);
 
     const slip = clamp(Math.max(v.slipRear, v.slipFront) * 1.6 + v.wheelSpin * 0.8, 0, 1);
     this.tire.g.gain.setTargetAtTime(slip * 0.16 * clamp(speed / 8, 0, 1), t, 0.06);

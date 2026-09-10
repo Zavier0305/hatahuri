@@ -1371,6 +1371,7 @@ async function boot() {
     window.__net = { Net, LoopbackTransport, PusherTransport, roomChannel, sampleState, setClock };
     window.__cars = { CAR_BY_ID, CARS, applyTune, predictSpec };
     window.__card = { drawResultCard, cardData };
+    window.__audio = audio;
   }
 
   // タイトル画面でも背景として走らせておく（デモ走行）
